@@ -55,6 +55,7 @@
     "google-auth-library": "^10.4.0",
     "googleapis": "^161.0.0",
     "mapped-types": "^0.0.1",
+    "mongodb": "^7.0.0",
     "mongoose": "^8.20.1",
     "multer": "^2.0.2",
     "nodemailer": "^7.0.6",

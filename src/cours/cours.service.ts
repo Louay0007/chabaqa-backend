@@ -1995,16 +1995,23 @@ export class CoursService {
       });
 
       if (inscriptionExistante) {
-        return {
+        const existingEnrollmentResponse = {
           message: 'Vous êtes déjà inscrit à ce cours',
           enrollment: {
             id: inscriptionExistante.id,
             userId: inscriptionExistante.userId.toString(),
-            courseId: inscriptionExistante.courseId.toString(),
+            courseId: cours.id, // Use custom id field
             enrolledAt: inscriptionExistante.enrolledAt,
             isActive: inscriptionExistante.isActive,
           },
         };
+
+        console.log('   ⚠️ Already enrolled - returning existing enrollment');
+        console.log('   📤 Enrollment response courseId:', existingEnrollmentResponse.enrollment.courseId);
+        console.log('   📤 Course._id:', cours._id.toString());
+        console.log('   📤 Course.id field:', cours.id);
+
+        return existingEnrollmentResponse;
       }
 
       console.log('   ✅ Aucune inscription existante trouvée');
@@ -2024,22 +2031,27 @@ export class CoursService {
       console.log(`   ✅ Inscription créée: ${inscriptionEnregistree._id}`);
 
       // 6. Ajouter la référence de l'inscription au cours
-      // 6. Ajouter la référence de l'inscription au cours
       cours.ajouterInscription(inscriptionEnregistree._id);
       await cours.save();
 
       console.log('   ✅ Référence ajoutée au cours');
 
-      return {
+      const enrollmentResponse = {
         message: 'Inscription au cours réussie',
         enrollment: {
           id: inscriptionEnregistree.id,
           userId: inscriptionEnregistree.userId.toString(),
-          courseId: inscriptionEnregistree.courseId.toString(),
+          courseId: cours.id, // Use custom id field - frontend uses this for routing
           enrolledAt: inscriptionEnregistree.enrolledAt,
-          isActive: inscriptionEnregistree.isActive
-        }
+          isActive: inscriptionEnregistree.isActive,
+        },
       };
+
+      console.log('   📤 Enrollment response courseId:', enrollmentResponse.enrollment.courseId);
+      console.log('   📤 Course._id:', cours._id.toString());
+      console.log('   📤 Course.id field:', cours.id);
+
+      return enrollmentResponse;
 
     } catch (error) {
       if (error instanceof NotFoundException || error instanceof ForbiddenException || error instanceof BadRequestException) {

@@ -70,7 +70,7 @@ export class SessionService {
           if (timeFilter === 'past' && !isPast) return null;
           
           return {
-            id: session._id.toString(),
+            id: session.id,
             title: sessionData.title || sessionData.name,
             description: sessionData.description,
             thumbnail: sessionData.thumbnail || sessionData.image || 'https://placehold.co/400x300?text=Session',
@@ -116,7 +116,7 @@ export class SessionService {
           if (timeFilter === 'past' && !isPast) return null;
           
           return {
-            id: session._id.toString(),
+            id: session.id,
             title: sessionData.title || sessionData.name,
             description: sessionData.description,
             thumbnail: sessionData.thumbnail || sessionData.image || 'https://placehold.co/400x300?text=Session',

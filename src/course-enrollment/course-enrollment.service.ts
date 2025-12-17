@@ -138,6 +138,47 @@ export class CourseEnrollmentService {
   }
 
   /**
+   * Get all enrollments for a user
+   */
+  async getUserEnrollments(userId: string) {
+    const enrollments = await this.courseEnrollmentModel.find({
+      userId: new Types.ObjectId(userId),
+      isActive: true
+    }).populate('courseId').exec();
+
+    // Transform enrollments with progress data
+    const result: any[] = [];
+    for (const enrollment of enrollments) {
+      const course = enrollment.courseId as any;
+      if (!course) continue;
+
+      // Calculate progress
+      const totalChapters = course.obtenirNombreChapitres ? course.obtenirNombreChapitres() : 
+        course.sections?.reduce((acc: number, section: any) => 
+          acc + (section.chapitres?.length || 0), 0) || 0;
+      
+      const chaptersCompleted = enrollment.progression?.filter(p => p.isCompleted).length || 0;
+      const progress = totalChapters > 0 ? Math.round((chaptersCompleted / totalChapters) * 100) : 0;
+
+      const courseIdValue = course.id || course._id.toString(); // Use custom id field if available
+      
+      result.push({
+        id: enrollment._id.toString(),
+        userId: enrollment.userId.toString(),
+        courseId: courseIdValue,
+        progress,
+        completedChapters: enrollment.progression?.map(p => p.chapterId).filter(Boolean) || [],
+        enrolledAt: enrollment.enrolledAt,
+        lastAccessedAt: enrollment.updatedAt || enrollment.enrolledAt
+      });
+      
+      console.log(`   ✅ Enrollment for course: ${course.titre} -> courseId: ${courseIdValue}`);
+    }
+
+    return { enrollments: result };
+  }
+
+  /**
    * Obtenir la progression d'un utilisateur pour un cours
    */
   async getUserCourseProgress(userId: string, courseId: string) {

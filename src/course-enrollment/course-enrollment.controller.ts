@@ -33,6 +33,25 @@ export class CourseEnrollmentController {
   constructor(private readonly courseEnrollmentService: CourseEnrollmentService) {}
 
   /**
+   * Get all user enrollments
+   * GET /course-enrollment/my-enrollments
+   */
+  @Get('my-enrollments')
+  @ApiOperation({
+    summary: 'Get My Enrollments',
+    description: 'Get all enrollments for the current user.',
+    tags: ['Course Enrollment (User)']
+  })
+  @ApiResponse({ status: 200, description: 'Enrollments retrieved successfully' })
+  async getMyEnrollments(
+    @Request() req: { user: AuthenticatedUser }
+  ) {
+    console.log(`📚 [CourseEnrollmentController] Récupération des inscriptions pour l'utilisateur ${req.user._id}`);
+
+    return await this.courseEnrollmentService.getUserEnrollments(req.user._id);
+  }
+
+  /**
    * Démarrer un chapitre
    * POST /course-enrollment/:courseId/sections/:sectionId/chapters/:chapterId/start
    */

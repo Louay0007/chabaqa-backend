@@ -80,7 +80,7 @@ export class ChallengeService {
           Math.round((Number(participant.completedTasks || 0) / challenge.tasks.length) * 100) : 0;
         
         return {
-          id: challenge._id.toString(),
+          id: challenge.id,
           title: challenge.title,
           description: challenge.description,
           thumbnail: challenge.thumbnail || 'https://placehold.co/400x300?text=Challenge',
