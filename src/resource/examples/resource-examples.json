@@ -1,0 +1,211 @@
+{
+  "article_exemple": {
+    "titre": "Guide complet pour créer une communauté en ligne",
+    "description": "Ce guide détaillé vous accompagne dans toutes les étapes de création et développement d'une communauté en ligne prospère, de la conception à la monétisation.",
+    "type": "Article",
+    "readTime": "12 min de lecture",
+    "category": "Développement communautaire",
+    "thumbnailUrl": "https://example.com/thumbnails/guide-communaute.jpg",
+    "coverImageUrl": "https://example.com/covers/guide-communaute-cover.jpg",
+    "content": {
+      "elements": [
+        {
+          "type": "text",
+          "content": "# Introduction\n\nCréer une communauté en ligne prospère est devenu essentiel pour toute marque ou créateur souhaitant développer son audience et engager ses utilisateurs de manière authentique.",
+          "title": "Introduction",
+          "order": 0
+        },
+        {
+          "type": "image",
+          "content": "https://example.com/images/communaute-active.jpg",
+          "alt": "Exemple de communauté active",
+          "caption": "Une communauté engagée favorise la croissance",
+          "title": "Communauté active",
+          "order": 1
+        },
+        {
+          "type": "text",
+          "content": "## Les fondamentaux\n\nPour réussir dans la création d'une communauté, il faut comprendre les besoins de votre audience cible et créer un environnement où les membres se sentent valorisés.",
+          "title": "Les fondamentaux",
+          "order": 2
+        }
+      ],
+      "excerpt": "Découvrez comment construire une communauté engagée depuis zéro",
+      "tags": ["communauté", "stratégie", "engagement"],
+      "seoMetadata": {
+        "metaTitle": "Guide complet - Créer une communauté en ligne",
+        "metaDescription": "Apprenez à créer une communauté en ligne prospère avec ce guide étape par étape",
+        "canonicalUrl": "https://example.com/guide-creation-communaute",
+        "ogImage": "https://example.com/og-images/guide-communaute.jpg",
+        "keywords": ["communauté", "création", "engagement", "stratégie"]
+      }
+    },
+    "tags": ["communauté", "guide", "stratégie"],
+    "isPublished": true,
+    "isFeature": false,
+    "isPremium": false
+  },
+
+  "video_exemple": {
+    "titre": "Masterclass : Stratégies de monétisation pour créateurs",
+    "description": "Une masterclass complète de 45 minutes qui révèle les meilleures stratégies de monétisation utilisées par les créateurs à succès pour générer des revenus durables.",
+    "type": "Video",
+    "readTime": "45 min de visionnage",
+    "category": "Monétisation",
+    "thumbnailUrl": "https://example.com/thumbnails/masterclass-monetisation.jpg",
+    "coverImageUrl": "https://example.com/covers/masterclass-monetisation-cover.jpg",
+    "content": {
+      "videoUrl": "https://example.com/videos/masterclass-monetisation.mp4",
+      "thumbnailUrl": "https://example.com/thumbnails/masterclass-thumb.jpg",
+      "duration": 2700,
+      "quality": "1080p",
+      "subtitles": [
+        "https://example.com/subtitles/masterclass-fr.vtt",
+        "https://example.com/subtitles/masterclass-en.vtt"
+      ],
+      "videoMetadata": {
+        "resolution": "1920x1080",
+        "bitrate": 5000,
+        "codec": "H.264",
+        "frameRate": 30,
+        "size": 1200000000
+      },
+      "description": [
+        {
+          "type": "text",
+          "content": "# À propos de cette masterclass\n\nDans cette session exclusive, découvrez les stratégies qui ont permis à des milliers de créateurs de générer leurs premiers revenus en ligne.",
+          "title": "À propos",
+          "order": 0
+        },
+        {
+          "type": "text",
+          "content": "## Ce que vous apprendrez\n\n- 7 modèles de monétisation éprouvés\n- Comment fixer vos tarifs\n- Stratégies de vente sans être pushy\n- Outils et plateformes recommandés",
+          "title": "Programme",
+          "order": 1
+        }
+      ],
+      "chapters": [
+        "00:00 - Introduction",
+        "05:30 - Les 7 modèles de monétisation",
+        "15:45 - Tarification stratégique",
+        "25:20 - Techniques de vente authentiques",
+        "35:10 - Outils et ressources",
+        "42:30 - Plan d'action"
+      ]
+    },
+    "tags": ["monétisation", "business", "créateurs", "revenus"],
+    "isPublished": true,
+    "isFeature": true,
+    "isPremium": true
+  },
+
+  "guide_exemple": {
+    "titre": "Guide pratique : Marketing de contenu pour communautés",
+    "description": "Un guide step-by-step pour développer une stratégie de marketing de contenu efficace adaptée aux communautés en ligne, avec templates et exemples concrets.",
+    "type": "Guide",
+    "readTime": "25 min de lecture",
+    "category": "Marketing",
+    "thumbnailUrl": "https://example.com/thumbnails/guide-marketing.jpg",
+    "coverImageUrl": "https://example.com/covers/guide-marketing-cover.jpg",
+    "content": {
+      "sections": [
+        {
+          "title": "Étape 1 : Définir votre stratégie",
+          "description": "Posez les bases d'une stratégie de contenu solide",
+          "elements": [
+            {
+              "type": "text",
+              "content": "## Identifier vos objectifs\n\nAvant de créer du contenu, définissez clairement vos objectifs : engagement, croissance, conversion, ou fidélisation ?",
+              "title": "Objectifs stratégiques",
+              "order": 0
+            },
+            {
+              "type": "image",
+              "content": "https://example.com/images/strategie-contenu.jpg",
+              "alt": "Schéma de stratégie de contenu",
+              "caption": "Les piliers d'une stratégie de contenu réussie",
+              "order": 1
+            }
+          ],
+          "order": 1
+        },
+        {
+          "title": "Étape 2 : Connaître votre audience",
+          "description": "Comprendre les besoins et attentes de votre communauté",
+          "elements": [
+            {
+              "type": "text",
+              "content": "## Persona et analyse d'audience\n\nCréez des personas détaillés et analysez les données de votre communauté existante.",
+              "title": "Analyse d'audience",
+              "order": 0
+            },
+            {
+              "type": "code",
+              "content": "// Exemple de tracking d'engagement\nconst trackEngagement = {\n  likes: 150,\n  comments: 23,\n  shares: 12,\n  saves: 8\n};",
+              "title": "Mesurer l'engagement",
+              "order": 1
+            }
+          ],
+          "order": 2
+        }
+      ],
+      "introduction": [
+        {
+          "type": "text",
+          "content": "# Bienvenue dans ce guide marketing\n\nCe guide vous accompagnera dans la création d'une stratégie de contenu performante pour votre communauté.",
+          "title": "Introduction",
+          "order": 0
+        }
+      ],
+      "conclusion": [
+        {
+          "type": "text",
+          "content": "## Prochaines étapes\n\nMaintenant que vous avez toutes les clés, il est temps de passer à l'action ! Commencez par l'étape 1 et progressez à votre rythme.",
+          "title": "Conclusion",
+          "order": 0
+        }
+      ],
+      "guideMetadata": {
+        "difficulty": "Intermédiaire",
+        "prerequisites": [
+          "Avoir une communauté existante ou en projet",
+          "Bases du marketing digital"
+        ],
+        "learningOutcomes": [
+          "Créer une stratégie de contenu cohérente",
+          "Analyser les performances de vos contenus",
+          "Optimiser l'engagement de votre audience"
+        ],
+        "tools": [
+          "Google Analytics",
+          "Canva ou Figma",
+          "Outils de planification (Trello, Notion)"
+        ],
+        "resources": [
+          "Templates de calendrier éditorial",
+          "Checklist de création de contenu",
+          "Exemples de posts performants"
+        ]
+      }
+    },
+    "tags": ["marketing", "contenu", "stratégie", "communauté"],
+    "isPublished": true,
+    "isFeature": false,
+    "isPremium": false
+  },
+
+  "instructions_utilisation": {
+    "important": "N'incluez JAMAIS de propriété 'payload' dans votre JSON - envoyez directement l'objet",
+    "headers_requis": {
+      "Content-Type": "application/json",
+      "Authorization": "Bearer YOUR_ADMIN_TOKEN"
+    },
+    "endpoint": "POST /resources/create",
+    "types_supportes": {
+      "Article": "Utilisez 'Article', 'article', ou 'ARTICLE'",
+      "Video": "Utilisez 'Video', 'video', ou 'VIDEO'", 
+      "Guide": "Utilisez 'Guide', 'guide', ou 'GUIDE'"
+    },
+    "validation_automatique": "Le système convertira automatiquement les chaînes en valeurs d'enum appropriées"
+  }
+} 

@@ -1,0 +1,31 @@
+services:
+  # ================================
+  # NestJS Backend Service
+  # ================================
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: chabaqa-backend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+      # MongoDB Atlas cloud database
+      MONGO_URI: "mongodb+srv://admin:admin@chabaqa.bmmujoq.mongodb.net/?appName=chabaqa"
+      NODE_ENV: production
+      PORT: 3000
+    volumes:
+      # Persist uploaded files
+      - ./uploads:/app/uploads
+      # Optional: Mount public directory if you have static files
+      - ./public:/app/public
+    healthcheck:
+      test: [ "CMD", "node", "-e", "require('http').get('http://localhost:3000/api/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
