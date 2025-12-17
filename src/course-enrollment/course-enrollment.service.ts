@@ -161,9 +161,32 @@ export class CourseEnrollmentService {
       throw new NotFoundException('Cours non trouvé');
     }
 
-    const totalChapters = course.obtenirNombreChapitres();
+    // Calculate progress based on watch time percentage for each chapter
+    let totalWatchTimeProgress = 0;
+    let totalChapters = 0;
+    
+    for (const section of course.sections) {
+      for (const chapter of section.chapitres) {
+        totalChapters++;
+        const chapterProgress = enrollment.progression.find(p => p.chapterId === chapter.id);
+        
+        if (chapterProgress) {
+          if (chapterProgress.isCompleted) {
+            // Completed chapters count as 100%
+            totalWatchTimeProgress += 100;
+          } else if (chapterProgress.watchTime && chapter.duree) {
+            // Calculate percentage based on watch time vs chapter duration (in seconds)
+            const chapterDurationSeconds = chapter.duree * 60; // duree is in minutes
+            const watchPercentage = Math.min((chapterProgress.watchTime / chapterDurationSeconds) * 100, 100);
+            totalWatchTimeProgress += watchPercentage;
+          }
+          // If no watch time and not completed, contributes 0%
+        }
+      }
+    }
+
+    const progress = totalChapters > 0 ? (totalWatchTimeProgress / totalChapters) : 0;
     const chaptersCompleted = enrollment.progression.filter(p => p.isCompleted).length;
-    const progress = totalChapters > 0 ? (chaptersCompleted / totalChapters) * 100 : 0;
 
     return {
       isEnrolled: true,
@@ -266,6 +289,31 @@ export class CourseEnrollmentService {
     progress.lastAccessedAt = new Date();
     progress.updatedAt = new Date();
 
+    // Auto-complete chapter if watch time reaches 80% of duration
+    if (!progress.isCompleted) {
+      const course = await this.coursModel.findById(courseId);
+      if (course) {
+        // Find the chapter to get its duration
+        let chapter: any = null;
+        for (const section of course.sections) {
+          chapter = section.chapitres.find(c => c.id === chapterId);
+          if (chapter) break;
+        }
+
+        if (chapter && chapter.duree) {
+          const chapterDurationSeconds = chapter.duree * 60; // duree is in minutes
+          const watchPercentage = (watchTime / chapterDurationSeconds) * 100;
+          
+          // Auto-complete if watched 80% or more
+          if (watchPercentage >= 80) {
+            progress.isCompleted = true;
+            progress.completedAt = new Date();
+            console.log(`✅ [CourseEnrollmentService] Auto-completed chapter ${chapterId} (${Math.round(watchPercentage)}% watched)`);
+          }
+        }
+      }
+    }
+
     await enrollment.save();
 
     return {
@@ -273,6 +321,7 @@ export class CourseEnrollmentService {
       message: 'Temps de visionnage mis à jour',
       chapterId: chapterId,
       watchTime: progress.watchTime,
+      isCompleted: progress.isCompleted,
       lastAccessedAt: progress.lastAccessedAt
     };
   }

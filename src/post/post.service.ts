@@ -124,6 +124,7 @@ export class PostService {
     authorId?: string,
     tags?: string[],
     search?: string,
+    userId?: string,
   ): Promise<PostListResponseDto> {
     console.log('🔍 [POST-SERVICE] FindAll called with:', { page, limit, communityId, authorId, tags, search });
 
@@ -155,6 +156,7 @@ export class PostService {
     const [posts, total] = await Promise.all([
       this.postModel
         .find(query)
+        .select('+likedBy') // Explicitly select likedBy array
         .populate('authorId', 'name email profile_picture photo_profil')
         .sort({ createdAt: -1 })
         .skip(skip)
@@ -166,8 +168,13 @@ export class PostService {
     console.log('📝 [POST-SERVICE] Posts fetched with population:', posts.map(p => ({
       id: p.id,
       authorId: p.authorId,
-      authorName: (p.authorId as any)?.name || 'NOT_POPULATED'
+      authorName: (p.authorId as any)?.name || 'NOT_POPULATED',
+      likes: p.likes,
+      likedByCount: p.likedBy?.length || 0,
+      likedByIds: p.likedBy?.map((id: Types.ObjectId) => id.toString()) || []
     })));
+    
+    console.log('👤 [POST-SERVICE] Current userId for like check:', userId);
 
     console.log('📊 [POST-SERVICE] Query results:', {
       postsFound: posts.length,
@@ -204,7 +211,7 @@ export class PostService {
       posts.map(async (post) => {
         try {
           const community = communities.find((c) => c._id.toString() === post.communityId);
-          return await this.transformToResponseDto(post, community);
+          return await this.transformToResponseDto(post, community, userId);
         } catch (error) {
           console.error('❌ [POST-SERVICE] Error transforming post:', post.id, error);
           // Return a basic post structure if transformation fails
@@ -474,13 +481,35 @@ export class PostService {
     }
 
     const userIdObj = new Types.ObjectId(userId);
+    console.log('👍 [POST-SERVICE] Attempting to like post:', {
+      postId: post.id,
+      userId: userId,
+      userIdObj: userIdObj.toString(),
+      currentLikedBy: post.likedBy.map((id: Types.ObjectId) => id.toString()),
+      currentLikes: post.likes
+    });
+    
     const wasLiked = post.likePost(userIdObj);
 
     if (!wasLiked) {
-      throw new BadRequestException('Vous avez déjà liké ce post');
+      console.log('ℹ️ [POST-SERVICE] User already liked this post');
+      // Already liked - return current state without error
+      return {
+        postId: post.id,
+        totalLikes: post.likes,
+        totalComments: post.getCommentsCount(),
+        isLikedByUser: true,
+      };
     }
 
+    console.log('✅ [POST-SERVICE] Like added, saving...', {
+      newLikedBy: post.likedBy.map((id: Types.ObjectId) => id.toString()),
+      newLikes: post.likes
+    });
+    
     await post.save();
+
+    console.log('💾 [POST-SERVICE] Post saved successfully');
 
     return {
       postId: post.id,
@@ -506,7 +535,13 @@ export class PostService {
     const wasUnliked = post.unlikePost(userIdObj);
 
     if (!wasUnliked) {
-      throw new BadRequestException("Vous n'avez pas liké ce post");
+      // Already unliked - return current state without error
+      return {
+        postId: post.id,
+        totalLikes: post.likes,
+        totalComments: post.getCommentsCount(),
+        isLikedByUser: false,
+      };
     }
 
     await post.save();
@@ -547,11 +582,12 @@ export class PostService {
    * Récupérer les posts d'un utilisateur
    */
   async findByUser(
-    userId: string,
+    authorId: string,
     page: number = 1,
     limit: number = 10,
+    currentUserId?: string,
   ): Promise<PostListResponseDto> {
-    return this.findAll(page, limit, undefined, userId);
+    return this.findAll(page, limit, undefined, authorId, undefined, undefined, currentUserId);
   }
 
   /**
@@ -561,6 +597,7 @@ export class PostService {
     communityId: string,
     page: number = 1,
     limit: number = 10,
+    userId?: string,
   ): Promise<PostListResponseDto> {
     console.log('🏘️ [POST-SERVICE] Finding posts for community:', communityId);
     console.log('📄 [POST-SERVICE] Pagination:', { page, limit });
@@ -590,7 +627,7 @@ export class PostService {
         };
       }
 
-      const result = await this.findAll(page, limit, communityId);
+      const result = await this.findAll(page, limit, communityId, undefined, undefined, undefined, userId);
       console.log('✅ [POST-SERVICE] Found posts:', result.posts.length);
       return result;
     } catch (error) {
@@ -615,6 +652,7 @@ export class PostService {
   private async transformToResponseDto(
     post: PostDocument,
     community?: CommunityDocument | null,
+    userId?: string,
   ): Promise<PostResponseDto> {
     try {
       console.log('🔄 [POST-SERVICE] Transforming post:', post.id);
@@ -776,6 +814,25 @@ export class PostService {
 
       const authorIdString = getAuthorIdString();
 
+      // Calculate isLikedByUser based on userId
+      let isLikedByUser = false;
+      if (userId) {
+        try {
+          const userObjectId = new Types.ObjectId(userId);
+          console.log('🔍 [POST-SERVICE] Checking if user liked post:', {
+            postId: post.id,
+            userId: userId,
+            userObjectId: userObjectId.toString(),
+            likedByArray: post.likedBy.map((id: Types.ObjectId) => id.toString()),
+            likedByCount: post.likedBy.length
+          });
+          isLikedByUser = post.isLikedBy(userObjectId);
+          console.log('✅ [POST-SERVICE] isLikedBy result:', isLikedByUser);
+        } catch (error) {
+          console.warn('⚠️ [POST-SERVICE] Invalid userId for like check:', userId);
+        }
+      }
+
       const result = {
         id: post.id,
         title: post.title || '',
@@ -805,7 +862,7 @@ export class PostService {
         },
         isPublished: post.isPublished,
         likes: post.likes || 0,
-        isLikedByUser: false, // Sera défini par l'appelant si nécessaire
+        isLikedByUser,
         comments,
         tags: post.tags || [],
         images: post.images || [],

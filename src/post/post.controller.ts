@@ -100,6 +100,12 @@ export class PostController {
     type: String,
     description: 'Terme de recherche',
   })
+  @ApiQuery({
+    name: 'userId',
+    required: false,
+    type: String,
+    description: 'ID de l\'utilisateur pour vérifier les likes',
+  })
   @ApiResponse({
     status: 200,
     description: 'Liste des posts récupérée avec succès',
@@ -112,8 +118,12 @@ export class PostController {
     @Query('authorId') authorId?: string,
     @Query('tags') tags?: string,
     @Query('search') search?: string,
+    @Query('userId') userId?: string,
+    @Request() req?: any,
   ): Promise<{ success: boolean; data: PostListResponseDto }> {
     const tagsArray = tags ? tags.split(',') : undefined;
+    // Try to get userId from query param, or from authenticated user
+    const effectiveUserId = userId || req?.user?.userId || req?.user?._id;
     const posts = await this.postService.findAll(
       page || 1,
       limit || 10,
@@ -121,6 +131,7 @@ export class PostController {
       authorId,
       tagsArray,
       search,
+      effectiveUserId,
     );
     return { success: true, data: posts };
   }
@@ -129,6 +140,7 @@ export class PostController {
   @ApiOperation({ summary: "Récupérer les posts d'un utilisateur" })
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({ name: 'currentUserId', required: false, type: String, description: 'ID de l\'utilisateur connecté pour vérifier les likes' })
   @ApiResponse({
     status: 200,
     description: "Posts de l'utilisateur récupérés avec succès",
@@ -138,11 +150,16 @@ export class PostController {
     @Param('userId') userId: string,
     @Query('page') page?: number,
     @Query('limit') limit?: number,
+    @Query('currentUserId') currentUserId?: string,
+    @Request() req?: any,
   ): Promise<{ success: boolean; data: PostListResponseDto }> {
+    // Try to get currentUserId from query param, or from authenticated user
+    const effectiveUserId = currentUserId || req?.user?.userId || req?.user?._id;
     const posts = await this.postService.findByUser(
       userId,
       page || 1,
       limit || 10,
+      effectiveUserId,
     );
     return { success: true, data: posts };
   }
@@ -151,6 +168,7 @@ export class PostController {
   @ApiOperation({ summary: "Récupérer les posts d'une communauté" })
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({ name: 'userId', required: false, type: String, description: 'ID de l\'utilisateur pour vérifier les likes' })
   @ApiResponse({
     status: 200,
     description: 'Posts de la communauté récupérés avec succès',
@@ -159,12 +177,15 @@ export class PostController {
   async findByCommunity(
     @Param('communityId') communityId: string,
     @Query('page') page?: number,
-    @Query('limit') limit?: number
+    @Query('limit') limit?: number,
+    @Query('userId') userId?: string,
+    @Request() req?: any,
   ): Promise<{ success: boolean; data: PostListResponseDto }> {
     console.log('📝 [POST-CONTROLLER] Find posts by community request:', {
       communityId,
       page: page || 1,
-      limit: limit || 10
+      limit: limit || 10,
+      userId
     });
     
     try {
@@ -173,10 +194,14 @@ export class PostController {
         throw new Error('Community ID is required');
       }
 
+      // Try to get userId from query param, or from authenticated user
+      const effectiveUserId = userId || req?.user?.userId || req?.user?._id;
+
       const posts = await this.postService.findByCommunity(
         communityId.trim(),
         page || 1,
         limit || 10,
+        effectiveUserId,
       );
       console.log('✅ [POST-CONTROLLER] Successfully found posts:', posts.posts.length);
       return { success: true, data: posts };
@@ -406,7 +431,8 @@ export class PostController {
     @Param('id') postId: string,
     @Request() req,
   ): Promise<{ success: boolean; data: PostStatsResponseDto }> {
-    const stats = await this.postService.likePost(postId, req.user.userId);
+    const userId = req.user._id || req.user.userId;
+    const stats = await this.postService.likePost(postId, userId);
     return { success: true, data: stats };
   }
 
@@ -426,7 +452,8 @@ export class PostController {
     @Param('id') postId: string,
     @Request() req,
   ): Promise<{ success: boolean; data: PostStatsResponseDto }> {
-    const stats = await this.postService.unlikePost(postId, req.user.userId);
+    const userId = req.user._id || req.user.userId;
+    const stats = await this.postService.unlikePost(postId, userId);
     return { success: true, data: stats };
   }
 

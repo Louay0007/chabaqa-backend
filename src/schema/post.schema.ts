@@ -413,7 +413,8 @@ PostSchema.methods.getCommentsCount = function (): number {
 
 // Méthode pour liker un post
 PostSchema.methods.likePost = function (userId: Types.ObjectId): boolean {
-  if (this.likedBy.includes(userId)) {
+  // Use .some() with .equals() for proper ObjectId comparison
+  if (this.likedBy.some((id: Types.ObjectId) => id.equals(userId))) {
     return false; // Déjà liké
   }
 
@@ -424,7 +425,8 @@ PostSchema.methods.likePost = function (userId: Types.ObjectId): boolean {
 
 // Méthode pour unliker un post
 PostSchema.methods.unlikePost = function (userId: Types.ObjectId): boolean {
-  const index = this.likedBy.indexOf(userId);
+  // Use findIndex with .equals() for proper ObjectId comparison
+  const index = this.likedBy.findIndex((id: Types.ObjectId) => id.equals(userId));
   if (index === -1) {
     return false; // Pas liké
   }
@@ -436,5 +438,6 @@ PostSchema.methods.unlikePost = function (userId: Types.ObjectId): boolean {
 
 // Méthode pour vérifier si un utilisateur a liké le post
 PostSchema.methods.isLikedBy = function (userId: Types.ObjectId): boolean {
-  return this.likedBy.includes(userId);
+  // Use .some() with .equals() for proper ObjectId comparison
+  return this.likedBy.some((id: Types.ObjectId) => id.equals(userId));
 };
