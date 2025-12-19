@@ -8,6 +8,8 @@ import { User, UserSchema } from '../../schema/user.schema';
 import { Order, OrderSchema } from '../../schema/order.schema';
 import { PromoService } from '../services/promo.service';
 import { FeeService } from '../services/fee.service';
+import { ManualPaymentService } from '../services/manual-payment.service';
+import { UploadModule } from '../../upload/upload.module';
 
 @Module({
   imports: [
@@ -17,9 +19,10 @@ import { FeeService } from '../services/fee.service';
       { name: User.name, schema: UserSchema },
       { name: Order.name, schema: OrderSchema },
     ]),
+    UploadModule,
   ],
   controllers: [PaymentController],
-  providers: [StripePaymentService, PromoService, FeeService],
-  exports: [StripePaymentService],
+  providers: [StripePaymentService, PromoService, FeeService, ManualPaymentService],
+  exports: [StripePaymentService, ManualPaymentService],
 })
-export class PaymentModule {}
+export class PaymentModule { }

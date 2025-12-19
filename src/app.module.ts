@@ -70,6 +70,7 @@ import { ProgressionModule } from './progression/progression.module';
 import { AchievementModule } from './achievement/achievement.module';
 import { Achievement, AchievementSchema } from './schema/achievement.schema';
 import { UserAchievement, UserAchievementSchema } from './schema/user-achievement.schema';
+import { ManualPaymentService } from './common/services/manual-payment.service';
 
 @Module({
   imports: [
@@ -178,6 +179,7 @@ import { UserAchievement, UserAchievementSchema } from './schema/user-achievemen
     ChallengeService,
     EventService,
     SubscriptionService,
+    ManualPaymentService,
   ],
   exports: [EmailService],
 })

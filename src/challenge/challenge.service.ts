@@ -46,7 +46,7 @@ export class ChallengeService {
     private readonly trackingService: ContentTrackingService,
     private readonly feeService: FeeService,
     private readonly policyService: PolicyService,
-  ) {}
+  ) { }
 
   /**
    * Get challenges for a specific user (participated + created)
@@ -76,9 +76,9 @@ export class ChallengeService {
 
       const transformedParticipated = participatedChallenges.map(challenge => {
         const participant = challenge.participants.find(p => p.userId.toString() === userId);
-        const progress = participant && challenge.tasks && challenge.tasks.length > 0 ? 
+        const progress = participant && challenge.tasks && challenge.tasks.length > 0 ?
           Math.round((Number(participant.completedTasks || 0) / challenge.tasks.length) * 100) : 0;
-        
+
         return {
           id: challenge.id,
           title: challenge.title,
@@ -273,8 +273,8 @@ export class ChallengeService {
     }
 
     // Normalize creatorId to string for comparison
-    const normalizedCreatorId = typeof creatorId === 'object' 
-      ? creatorId.toString() 
+    const normalizedCreatorId = typeof creatorId === 'object'
+      ? creatorId.toString()
       : String(creatorId);
     const communityCreatorId = community.createur?.toString();
 
@@ -743,7 +743,7 @@ export class ChallengeService {
       // Calculer le progrès en pourcentage
       participant.progress = Math.round(
         (participant.completedTasks.length / (challenge.tasks?.length || 1)) *
-          100,
+        100,
       );
       participant.lastActivityAt = new Date();
     }
@@ -1001,8 +1001,11 @@ export class ChallengeService {
     // Mettre à jour la configuration de prix
     if (!challenge.pricing) {
       challenge.pricing = {
+        price: 0,
+        priceType: 'free',
+        isRecurring: false,
         participationFee: 0,
-        currency: 'USD',
+        currency: 'TND',
         depositRequired: false,
         isPremium: false,
         premiumFeatures: {
@@ -1013,6 +1016,7 @@ export class ChallengeService {
           liveSessions: false,
           communityAccess: false,
         },
+        features: [],
         paymentOptions: {
           allowInstallments: false,
         },
@@ -1021,46 +1025,48 @@ export class ChallengeService {
 
     // Mettre à jour les champs fournis
     if (pricingDto.participationFee !== undefined) {
-      challenge.pricing.participationFee = pricingDto.participationFee;
+      challenge.pricing!.participationFee = pricingDto.participationFee;
+      challenge.pricing!.price = pricingDto.participationFee; // Sync price with participation fee
+      challenge.pricing!.priceType = pricingDto.participationFee > 0 ? 'one-time' : 'free';
     }
     if (pricingDto.currency !== undefined) {
-      challenge.pricing.currency = pricingDto.currency;
+      challenge.pricing!.currency = pricingDto.currency;
     }
     if (pricingDto.depositAmount !== undefined) {
-      challenge.pricing.depositAmount = pricingDto.depositAmount;
+      challenge.pricing!.depositAmount = pricingDto.depositAmount;
     }
     if (pricingDto.depositRequired !== undefined) {
-      challenge.pricing.depositRequired = pricingDto.depositRequired;
+      challenge.pricing!.depositRequired = pricingDto.depositRequired;
     }
     if (pricingDto.isPremium !== undefined) {
-      challenge.pricing.isPremium = pricingDto.isPremium;
+      challenge.pricing!.isPremium = pricingDto.isPremium;
     }
     if (pricingDto.completionReward !== undefined) {
-      challenge.pricing.completionReward = pricingDto.completionReward;
+      challenge.pricing!.completionReward = pricingDto.completionReward;
     }
     if (pricingDto.topPerformerBonus !== undefined) {
-      challenge.pricing.topPerformerBonus = pricingDto.topPerformerBonus;
+      challenge.pricing!.topPerformerBonus = pricingDto.topPerformerBonus;
     }
     if (pricingDto.streakBonus !== undefined) {
-      challenge.pricing.streakBonus = pricingDto.streakBonus;
+      challenge.pricing!.streakBonus = pricingDto.streakBonus;
     }
     if (pricingDto.premiumFeatures !== undefined) {
-      challenge.pricing.premiumFeatures = {
-        ...challenge.pricing.premiumFeatures,
+      challenge.pricing!.premiumFeatures = {
+        ...challenge.pricing!.premiumFeatures,
         ...pricingDto.premiumFeatures,
       };
     }
     if (pricingDto.paymentOptions !== undefined) {
-      challenge.pricing.paymentOptions = {
-        ...challenge.pricing.paymentOptions,
+      challenge.pricing!.paymentOptions = {
+        ...challenge.pricing!.paymentOptions,
         ...pricingDto.paymentOptions,
       };
     }
     if (pricingDto.freeTrialDays !== undefined) {
-      challenge.pricing.freeTrialDays = pricingDto.freeTrialDays;
+      challenge.pricing!.freeTrialDays = pricingDto.freeTrialDays;
     }
     if (pricingDto.trialFeatures !== undefined) {
-      challenge.pricing.trialFeatures = pricingDto.trialFeatures;
+      challenge.pricing!.trialFeatures = pricingDto.trialFeatures;
     }
 
     const updatedChallenge = await challenge.save();
@@ -1199,7 +1205,7 @@ export class ChallengeService {
       const now = new Date();
       const trialEndDate = new Date(
         challenge.startDate.getTime() +
-          challenge.pricing.freeTrialDays * 24 * 60 * 60 * 1000,
+        challenge.pricing.freeTrialDays * 24 * 60 * 60 * 1000,
       );
 
       if (now <= trialEndDate) {
@@ -1635,18 +1641,18 @@ export class ChallengeService {
         reason: accessCheck.reason,
         requiredTask: accessCheck.requiredTask
           ? {
-              id: accessCheck.requiredTask.id,
-              title: accessCheck.requiredTask.title,
-              day: accessCheck.requiredTask.day,
-            }
+            id: accessCheck.requiredTask.id,
+            title: accessCheck.requiredTask.title,
+            day: accessCheck.requiredTask.day,
+          }
           : undefined,
         unlockMessage: challenge.unlockMessage,
         nextTask: nextTask
           ? {
-              id: nextTask.id,
-              title: nextTask.title,
-              day: nextTask.day,
-            }
+            id: nextTask.id,
+            title: nextTask.title,
+            day: nextTask.day,
+          }
           : undefined,
       };
     } catch (error) {
@@ -1937,7 +1943,7 @@ export class ChallengeService {
         // Calculer le progrès en pourcentage
         participant.progress = Math.round(
           (participant.completedTasks.length / (challenge.tasks?.length || 1)) *
-            100,
+          100,
         );
         participant.lastActivityAt = new Date();
       }

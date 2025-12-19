@@ -1,10 +1,13 @@
-import { Controller, Post, Body, Query, Get, BadRequestException, UnauthorizedException, Req, UseGuards } from '@nestjs/common';
+import { Controller, Post, Body, Query, Get, BadRequestException, UnauthorizedException, Req, UseGuards, UseInterceptors, UploadedFile } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import * as crypto from 'crypto';
 import { ApiTags, ApiOperation, ApiQuery, ApiBearerAuth } from '@nestjs/swagger';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { FlouciPaymentService } from '../services/flouci-payment.service';
 import { StripePaymentService } from '../services/stripe-payment.service';
+import { ManualPaymentService } from '../services/manual-payment.service';
+import { UploadService } from '../../upload/upload.service';
 import { Community, CommunityDocument } from '../../schema/community.schema';
 import { User, UserDocument } from '../../schema/user.schema';
 import { Order, OrderDocument } from '../../schema/order.schema';
@@ -31,6 +34,8 @@ export class PaymentController {
     private readonly stripe: StripePaymentService,
     private readonly promoService: PromoService,
     private readonly feeService: FeeService,
+    private readonly manualPaymentService: ManualPaymentService,
+    private readonly uploadService: UploadService,
     @InjectModel(Community.name) private communityModel: Model<CommunityDocument>,
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     @InjectModel(Order.name) private orderModel: Model<OrderDocument>,
@@ -44,7 +49,7 @@ export class PaymentController {
     private readonly eventService: EventService,
     private readonly subscriptionService: SubscriptionService,
     @InjectModel(Plan.name) private planModel: Model<PlanDocument>,
-  ) {}
+  ) { }
 
   @Post('init/community')
   @ApiOperation({ summary: 'Initiate Flouci payment for community membership' })
@@ -552,9 +557,9 @@ export class PaymentController {
       successUrl,
       cancelUrl: failUrl,
       customerEmail: user?.email,
-      metadata: { 
-        userId, 
-        contentType: 'community', 
+      metadata: {
+        userId,
+        contentType: 'community',
         contentId: communityId,
         orderId: pendingOrder._id.toString()
       },
@@ -567,12 +572,12 @@ export class PaymentController {
     });
 
     if (!session.success) throw new BadRequestException(session.error);
-    
+
     pendingOrder.paymentId = session.sessionId;
     await pendingOrder.save();
-    
-    return { 
-      checkoutUrl: session.url, 
+
+    return {
+      checkoutUrl: session.url,
       sessionId: session.sessionId,
       provider: 'stripe-link'
     };
@@ -599,7 +604,7 @@ export class PaymentController {
     if (!cours) throw new BadRequestException('Course not found');
     const courseObjectId = cours._id;
     const coursePublicId = cours.id || courseObjectId.toString();
-    
+
     const price = cours.prix || 0;
     if (price <= 0) throw new BadRequestException('Free course');
 
@@ -641,9 +646,9 @@ export class PaymentController {
       successUrl,
       cancelUrl: failUrl,
       customerEmail: user?.email,
-      metadata: { 
-        userId, 
-        contentType: 'course', 
+      metadata: {
+        userId,
+        contentType: 'course',
         contentId: courseId,
         orderId: pendingOrder._id.toString()
       },
@@ -656,12 +661,12 @@ export class PaymentController {
     });
 
     if (!session.success) throw new BadRequestException(session.error);
-    
+
     pendingOrder.paymentId = session.sessionId;
     await pendingOrder.save();
-    
-    return { 
-      checkoutUrl: session.url, 
+
+    return {
+      checkoutUrl: session.url,
       sessionId: session.sessionId,
       provider: 'stripe-link'
     };
@@ -679,11 +684,11 @@ export class PaymentController {
     const userId = (req.user?._id || req.user?.sub || '').toString();
     const plan = await this.planModel.findOne({ tier, isActive: true });
     if (!plan) throw new BadRequestException('Plan not found');
-    
-    const amount = interval === 'year' 
+
+    const amount = interval === 'year'
       ? (plan as any).priceYearlyDT || (plan as any).priceDT * 12
       : (plan as any).priceMonthlyDT || (plan as any).priceDT;
-    
+
     if (amount <= 0) throw new BadRequestException('Invalid amount');
 
     const breakdown = await this.feeService.calculateForAmount(amount, userId);
@@ -719,9 +724,9 @@ export class PaymentController {
       successUrl,
       cancelUrl: failUrl,
       customerEmail: user?.email,
-      metadata: { 
-        userId, 
-        contentType: 'subscription', 
+      metadata: {
+        userId,
+        contentType: 'subscription',
         tier,
         orderId: pendingOrder._id.toString()
       },
@@ -729,12 +734,12 @@ export class PaymentController {
     });
 
     if (!session.success) throw new BadRequestException(session.error);
-    
+
     pendingOrder.paymentId = session.sessionId;
     await pendingOrder.save();
-    
-    return { 
-      checkoutUrl: session.url, 
+
+    return {
+      checkoutUrl: session.url,
       sessionId: session.sessionId,
       provider: 'stripe-link'
     };
@@ -773,8 +778,8 @@ export class PaymentController {
         await this.challengeService.joinChallenge({ challengeId: order.contentId } as any, order.buyerId.toString());
       }
 
-      return { 
-        status: 'paid', 
+      return {
+        status: 'paid',
         paymentMethod: verify.paymentMethod,
         customerId: verify.customerId
       };
@@ -806,7 +811,7 @@ export class PaymentController {
           if (order && order.status !== 'paid') {
             order.status = 'paid';
             await order.save();
-            
+
             // Grant access based on content type
             if (order.contentType === TrackableContentType.COMMUNITY) {
               const community = await this.communityModel.findById(order.contentId);
@@ -821,7 +826,7 @@ export class PaymentController {
           }
         }
         break;
-      
+
       case 'customer.subscription.updated':
       case 'customer.subscription.deleted':
         // Handle subscription changes
@@ -837,7 +842,7 @@ export class PaymentController {
   @ApiBearerAuth()
   async createCustomerPortalSession(@Req() req: any) {
     const userId = (req.user?._id || req.user?.sub || '').toString();
-    
+
     // Get user's Stripe customer ID from their subscription
     const subscription = await this.subscriptionService.getMySubscription(userId);
     if (!subscription?.providerCustomerId) {
@@ -854,6 +859,364 @@ export class PaymentController {
 
     return { portalUrl: portal.url };
   }
+
+  // ==================== MANUAL PAYMENT ENDPOINTS ====================
+
+  @Post('manual/init/community')
+  @ApiOperation({ summary: 'Initiate manual payment (transfer) for community membership' })
+  @ApiQuery({ name: 'promoCode', required: false })
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @UseInterceptors(FileInterceptor('proof'))
+  async initManualCommunityPayment(
+    @Body('communityId') communityId: string,
+    @Req() req: any,
+    @UploadedFile() file: Express.Multer.File,
+    @Query('promoCode') promoCode?: string,
+  ) {
+    if (!file) throw new BadRequestException('Payment proof file is required');
+
+    const userId = (req.user?._id || req.user?.sub || '').toString();
+    const community = await this.communityModel.findById(communityId);
+    if (!community) throw new BadRequestException('Community not found');
+
+    const price = community.fees_of_join || 0;
+    if (price <= 0) throw new BadRequestException('Free community');
+
+    let amount = price;
+    let discountDT = 0;
+    let appliedCode: string | undefined;
+
+    if (promoCode) {
+      const buyer = await this.userModel.findById(userId).select('email');
+      const promo = await this.promoService.validateAndApply(promoCode, price, TrackableContentType.COMMUNITY, community._id.toString(), (buyer as any)?.email);
+      if (promo.valid) {
+        amount = promo.finalAmountDT;
+        discountDT = promo.discountDT;
+        appliedCode = promo.appliedCode;
+      }
+    }
+
+    const breakdown = await this.feeService.calculateForAmount(amount, community.createur.toString());
+    const uploadResult = await this.uploadService.processUploadedFile(file, this.uploadService.generateFilename(file.originalname), { userId });
+
+    const order = await this.orderModel.create({
+      buyerId: new Types.ObjectId(userId),
+      creatorId: community.createur,
+      contentType: TrackableContentType.COMMUNITY,
+      contentId: community._id.toString(),
+      amountDT: breakdown.amountDT,
+      platformPercent: breakdown.platformPercent,
+      platformFixedDT: breakdown.platformFixedDT,
+      platformFeeDT: breakdown.platformFeeDT,
+      creatorNetDT: breakdown.creatorNetDT,
+      promoCode: appliedCode,
+      discountDT,
+      status: 'pending_verification',
+      paymentMethod: 'manual',
+      paymentProof: uploadResult.url
+    });
+
+    return {
+      success: true,
+      message: 'Payment submitted for verification',
+      orderId: order._id
+    };
+  }
+
+  @Post('manual/init/course')
+  @ApiOperation({ summary: 'Initiate manual payment (transfer) for course' })
+  @ApiQuery({ name: 'promoCode', required: false })
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @UseInterceptors(FileInterceptor('proof'))
+  async initManualCoursePayment(
+    @Body('courseId') courseId: string,
+    @Req() req: any,
+    @UploadedFile() file: Express.Multer.File,
+    @Query('promoCode') promoCode?: string,
+  ) {
+    if (!file) throw new BadRequestException('Payment proof file is required');
+
+    const userId = (req.user?._id || req.user?.sub || '').toString();
+
+    let cours: CoursDocument | null = null;
+    if (Types.ObjectId.isValid(courseId)) {
+      cours = await this.coursModel.findById(courseId);
+    }
+    if (!cours) {
+      cours = await this.coursModel.findOne({ id: courseId });
+    }
+    if (!cours) throw new BadRequestException('Course not found');
+
+    const price = cours.prix || 0;
+    if (price <= 0) throw new BadRequestException('Free course');
+
+    let amount = price;
+    let discountDT = 0;
+    let appliedCode: string | undefined;
+
+    if (promoCode) {
+      const buyer = await this.userModel.findById(userId).select('email');
+      const promo = await this.promoService.validateAndApply(promoCode, price, TrackableContentType.COURSE, cours._id.toString(), (buyer as any)?.email);
+      if (promo.valid) {
+        amount = promo.finalAmountDT;
+        discountDT = promo.discountDT;
+        appliedCode = promo.appliedCode;
+      }
+    }
+
+    const breakdown = await this.feeService.calculateForAmount(amount, cours.creatorId.toString());
+    const uploadResult = await this.uploadService.processUploadedFile(file, this.uploadService.generateFilename(file.originalname), { userId });
+
+    const order = await this.orderModel.create({
+      buyerId: new Types.ObjectId(userId),
+      creatorId: cours.creatorId,
+      contentType: TrackableContentType.COURSE,
+      contentId: cours._id.toString(),
+      amountDT: breakdown.amountDT,
+      platformPercent: breakdown.platformPercent,
+      platformFixedDT: breakdown.platformFixedDT,
+      platformFeeDT: breakdown.platformFeeDT,
+      creatorNetDT: breakdown.creatorNetDT,
+      promoCode: appliedCode,
+      discountDT,
+      status: 'pending_verification',
+      paymentMethod: 'manual',
+      paymentProof: uploadResult.url
+    });
+
+    return {
+      success: true,
+      message: 'Payment submitted for verification',
+      orderId: order._id
+    };
+  }
+
+  @Post('manual/init/challenge')
+  @ApiOperation({ summary: 'Initiate manual payment (transfer) for challenge' })
+  @ApiQuery({ name: 'promoCode', required: false })
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @UseInterceptors(FileInterceptor('proof'))
+  async initManualChallengePayment(
+    @Body('challengeId') challengeId: string,
+    @Req() req: any,
+    @UploadedFile() file: Express.Multer.File,
+    @Query('promoCode') promoCode?: string,
+  ) {
+    if (!file) throw new BadRequestException('Payment proof file is required');
+    const userId = (req.user?._id || req.user?.sub || '').toString();
+    const challenge = await this.challengeModel.findById(challengeId);
+    if (!challenge) throw new BadRequestException('Challenge not found');
+
+    const price = challenge.pricing?.price || (challenge as any).prix || 0;
+    if (price <= 0) throw new BadRequestException('Free challenge');
+
+    let amount = price;
+    let discountDT = 0;
+    let appliedCode: string | undefined;
+
+    if (promoCode) {
+      const buyer = await this.userModel.findById(userId).select('email');
+      const promo = await this.promoService.validateAndApply(promoCode, price, TrackableContentType.CHALLENGE, challenge._id.toString(), (buyer as any)?.email);
+      if (promo.valid) {
+        amount = promo.finalAmountDT;
+        discountDT = promo.discountDT;
+        appliedCode = promo.appliedCode;
+      }
+    }
+
+    const breakdown = await this.feeService.calculateForAmount(amount, challenge.creatorId.toString());
+    const uploadResult = await this.uploadService.processUploadedFile(file, this.uploadService.generateFilename(file.originalname), { userId });
+
+    const order = await this.orderModel.create({
+      buyerId: new Types.ObjectId(userId),
+      creatorId: challenge.creatorId,
+      contentType: TrackableContentType.CHALLENGE,
+      contentId: challenge._id.toString(),
+      amountDT: breakdown.amountDT,
+      platformPercent: breakdown.platformPercent,
+      platformFixedDT: breakdown.platformFixedDT,
+      platformFeeDT: breakdown.platformFeeDT,
+      creatorNetDT: breakdown.creatorNetDT,
+      promoCode: appliedCode,
+      discountDT,
+      status: 'pending_verification',
+      paymentMethod: 'manual',
+      paymentProof: uploadResult.url
+    });
+
+    return { success: true, message: 'Payment submitted for verification', orderId: order._id };
+  }
+
+  @Post('manual/init/event')
+  @ApiOperation({ summary: 'Initiate manual payment (transfer) for event' })
+  @ApiQuery({ name: 'promoCode', required: false })
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @UseInterceptors(FileInterceptor('proof'))
+  async initManualEventPayment(
+    @Body('eventId') eventId: string,
+    @Req() req: any,
+    @UploadedFile() file: Express.Multer.File,
+    @Query('promoCode') promoCode?: string,
+  ) {
+    if (!file) throw new BadRequestException('Payment proof file is required');
+    const userId = (req.user?._id || req.user?.sub || '').toString();
+    const event = await this.eventModel.findById(eventId);
+    if (!event) throw new BadRequestException('Event not found');
+
+    const price = event.pricing?.price || (event as any).prix || 0;
+    if (price <= 0) throw new BadRequestException('Free event');
+
+    let amount = price;
+    let discountDT = 0;
+    let appliedCode: string | undefined;
+
+    if (promoCode) {
+      const buyer = await this.userModel.findById(userId).select('email');
+      const promo = await this.promoService.validateAndApply(promoCode, price, TrackableContentType.EVENT, event._id.toString(), (buyer as any)?.email);
+      if (promo.valid) {
+        amount = promo.finalAmountDT;
+        discountDT = promo.discountDT;
+        appliedCode = promo.appliedCode;
+      }
+    }
+
+    const breakdown = await this.feeService.calculateForAmount(amount, event.creatorId.toString());
+    const uploadResult = await this.uploadService.processUploadedFile(file, this.uploadService.generateFilename(file.originalname), { userId });
+
+    const order = await this.orderModel.create({
+      buyerId: new Types.ObjectId(userId),
+      creatorId: event.creatorId,
+      contentType: TrackableContentType.EVENT,
+      contentId: event._id.toString(),
+      amountDT: breakdown.amountDT,
+      platformPercent: breakdown.platformPercent,
+      platformFixedDT: breakdown.platformFixedDT,
+      platformFeeDT: breakdown.platformFeeDT,
+      creatorNetDT: breakdown.creatorNetDT,
+      promoCode: appliedCode,
+      discountDT,
+      status: 'pending_verification',
+      paymentMethod: 'manual',
+      paymentProof: uploadResult.url
+    });
+
+    return { success: true, message: 'Payment submitted for verification', orderId: order._id };
+  }
+
+  @Post('manual/init/product')
+  @ApiOperation({ summary: 'Initiate manual payment (transfer) for product' })
+  @ApiQuery({ name: 'promoCode', required: false })
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @UseInterceptors(FileInterceptor('proof'))
+  async initManualProductPayment(
+    @Body('productId') productId: string,
+    @Req() req: any,
+    @UploadedFile() file: Express.Multer.File,
+    @Query('promoCode') promoCode?: string,
+  ) {
+    if (!file) throw new BadRequestException('Payment proof file is required');
+    const userId = (req.user?._id || req.user?.sub || '').toString();
+    const product = await this.productModel.findById(productId);
+    if (!product) throw new BadRequestException('Product not found');
+
+    const price = product.price || product.pricing?.price || 0;
+    if (price <= 0) throw new BadRequestException('Free product');
+
+    let amount = price;
+    let discountDT = 0;
+    let appliedCode: string | undefined;
+
+    if (promoCode) {
+      const buyer = await this.userModel.findById(userId).select('email');
+      const promo = await this.promoService.validateAndApply(promoCode, price, TrackableContentType.PRODUCT, product._id.toString(), (buyer as any)?.email);
+      if (promo.valid) {
+        amount = promo.finalAmountDT;
+        discountDT = promo.discountDT;
+        appliedCode = promo.appliedCode;
+      }
+    }
+
+    const breakdown = await this.feeService.calculateForAmount(amount, product.creatorId.toString());
+    const uploadResult = await this.uploadService.processUploadedFile(file, this.uploadService.generateFilename(file.originalname), { userId });
+
+    const order = await this.orderModel.create({
+      buyerId: new Types.ObjectId(userId),
+      creatorId: product.creatorId,
+      contentType: TrackableContentType.PRODUCT,
+      contentId: product._id.toString(),
+      amountDT: breakdown.amountDT,
+      platformPercent: breakdown.platformPercent,
+      platformFixedDT: breakdown.platformFixedDT,
+      platformFeeDT: breakdown.platformFeeDT,
+      creatorNetDT: breakdown.creatorNetDT,
+      promoCode: appliedCode,
+      discountDT,
+      status: 'pending_verification',
+      paymentMethod: 'manual',
+      paymentProof: uploadResult.url
+    });
+
+    return { success: true, message: 'Payment submitted for verification', orderId: order._id };
+  }
+
+  @Post('manual/init/session')
+  @ApiOperation({ summary: 'Initiate manual payment (transfer) for session' })
+  @ApiQuery({ name: 'promoCode', required: false })
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @UseInterceptors(FileInterceptor('proof'))
+  async initManualSessionPayment(
+    @Body('sessionId') sessionId: string,
+    @Req() req: any,
+    @UploadedFile() file: Express.Multer.File,
+    @Query('promoCode') promoCode?: string,
+  ) {
+    if (!file) throw new BadRequestException('Payment proof file is required');
+    const userId = (req.user?._id || req.user?.sub || '').toString();
+    const session = await this.sessionModel.findById(sessionId);
+    if (!session) throw new BadRequestException('Session not found');
+
+    const price = session.price || session.pricing?.price || 0;
+    if (price <= 0) throw new BadRequestException('Free session');
+
+    let amount = price;
+    let discountDT = 0;
+    let appliedCode: string | undefined;
+
+    if (promoCode) {
+      const buyer = await this.userModel.findById(userId).select('email');
+      const promo = await this.promoService.validateAndApply(promoCode, price, TrackableContentType.SESSION, session._id.toString(), (buyer as any)?.email);
+      if (promo.valid) {
+        amount = promo.finalAmountDT;
+        discountDT = promo.discountDT;
+        appliedCode = promo.appliedCode;
+      }
+    }
+
+    const breakdown = await this.feeService.calculateForAmount(amount, session.creatorId.toString());
+    const uploadResult = await this.uploadService.processUploadedFile(file, this.uploadService.generateFilename(file.originalname), { userId });
+
+    const order = await this.orderModel.create({
+      buyerId: new Types.ObjectId(userId),
+      creatorId: session.creatorId,
+      contentType: TrackableContentType.SESSION,
+      contentId: session._id.toString(),
+      amountDT: breakdown.amountDT,
+      platformPercent: breakdown.platformPercent,
+      platformFixedDT: breakdown.platformFixedDT,
+      platformFeeDT: breakdown.platformFeeDT,
+      creatorNetDT: breakdown.creatorNetDT,
+      promoCode: appliedCode,
+      discountDT,
+      status: 'pending_verification',
+      paymentMethod: 'manual',
+      paymentProof: uploadResult.url
+    });
+
+  }
 }
-
-

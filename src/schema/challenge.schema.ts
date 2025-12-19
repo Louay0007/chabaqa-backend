@@ -367,6 +367,10 @@ export interface ChallengeDocument extends Document {
   sequentialProgression: boolean;
   unlockMessage?: string;
   pricing?: {
+    price: number;
+    priceType: 'free' | 'one-time' | 'monthly' | 'yearly';
+    isRecurring: boolean;
+    recurringInterval?: 'month' | 'year' | 'week';
     participationFee: number;
     currency: string;
     depositAmount?: number;
@@ -383,6 +387,7 @@ export interface ChallengeDocument extends Document {
       liveSessions: boolean;
       communityAccess: boolean;
     };
+    features: string[];
     paymentOptions: {
       allowInstallments: boolean;
       installmentCount?: number;
@@ -406,7 +411,7 @@ export interface ChallengeDocument extends Document {
   isChallengeActive(): boolean;
   getParticipantCount(): number;
   getCompletedTasksCount(): number;
-  
+
   // Méthodes de pricing
   isFreeChallenge(): boolean;
   isPremiumChallenge(): boolean;
@@ -414,7 +419,7 @@ export interface ChallengeDocument extends Document {
   getDepositAmount(): number;
   calculateDiscount(userType: 'early-bird' | 'group' | 'member'): number;
   canUserAccess(userId: Types.ObjectId, hasPaid: boolean): boolean;
-  
+
   // Méthodes pour la progression séquentielle
   activerProgressionSequentielle(message?: string): void;
   desactiverProgressionSequentielle(): void;
@@ -660,26 +665,26 @@ export class Challenge {
       // Prix de base
       price: { type: Number, default: 0, min: 0 },
       currency: { type: String, enum: ['USD', 'EUR', 'TND'], default: 'TND' },
-      
+
       // Type de prix
       priceType: { type: String, enum: ['free', 'one-time', 'monthly', 'yearly'], default: 'free' },
-      
+
       // Produit récurrent
       isRecurring: { type: Boolean, default: false },
       recurringInterval: { type: String, enum: ['month', 'year', 'week'] },
-      
+
       // Prix de participation (legacy - keep for backward compatibility)
       participationFee: { type: Number, default: 0, min: 0 },
-      
+
       // Système de dépôt
       depositAmount: { type: Number, min: 0 },
       depositRequired: { type: Boolean, default: false },
-      
+
       // Système de récompenses
       completionReward: { type: Number, min: 0 },
       topPerformerBonus: { type: Number, min: 0 },
       streakBonus: { type: Number, min: 0 },
-      
+
       // Défi premium
       isPremium: { type: Boolean, default: false },
       premiumFeatures: {
@@ -690,10 +695,10 @@ export class Challenge {
         liveSessions: { type: Boolean, default: false },
         communityAccess: { type: Boolean, default: false }
       },
-      
+
       // Fonctionnalités incluses
       features: [{ type: String }],
-      
+
       // Options de paiement
       paymentOptions: {
         allowInstallments: { type: Boolean, default: false },
@@ -702,7 +707,7 @@ export class Challenge {
         groupDiscount: { type: Number, min: 0, max: 100 },
         memberDiscount: { type: Number, min: 0, max: 100 }
       },
-      
+
       // Période d'essai
       freeTrialDays: { type: Number, min: 0, max: 30 },
       trialFeatures: [{ type: String }]
@@ -789,41 +794,41 @@ ChallengeSchema.index({ startDate: 1, endDate: 1 });
 ChallengeSchema.index({ category: 1, difficulty: 1 });
 
 // Middleware pour générer l'ID unique avant sauvegarde
-ChallengeSchema.pre('save', function(next) {
+ChallengeSchema.pre('save', function (next) {
   if (this.isNew && !this.id) {
     this.id = new Types.ObjectId().toString();
   }
-  
+
   // Trier les tâches par jour
   if (this.isModified('tasks') && this.tasks) {
     this.tasks.sort((a, b) => a.day - b.day);
   }
-  
+
   // Trier les ressources par ordre
   if (this.isModified('resources') && this.resources) {
     this.resources.sort((a, b) => a.order - b.order);
   }
-  
+
   next();
 });
 
 // Validation personnalisée
-ChallengeSchema.pre('validate', function(next) {
+ChallengeSchema.pre('validate', function (next) {
   if (this.startDate >= this.endDate) {
     next(new Error('La date de début doit être antérieure à la date de fin'));
   }
-  
+
   if (this.maxParticipants && this.participants.length > this.maxParticipants) {
     next(new Error('Le nombre de participants ne peut pas dépasser le maximum autorisé'));
   }
-  
+
   next();
 });
 
 // ============= MÉTHODES POUR LES PARTICIPANTS =============
 
 // Méthode pour ajouter un participant
-ChallengeSchema.methods.addParticipant = function(userId: Types.ObjectId): void {
+ChallengeSchema.methods.addParticipant = function (userId: Types.ObjectId): void {
   if (!this.isParticipant(userId)) {
     const participant: ChallengeParticipant = {
       id: new Types.ObjectId().toString(),
@@ -840,17 +845,17 @@ ChallengeSchema.methods.addParticipant = function(userId: Types.ObjectId): void 
 };
 
 // Méthode pour supprimer un participant
-ChallengeSchema.methods.removeParticipant = function(userId: Types.ObjectId): void {
+ChallengeSchema.methods.removeParticipant = function (userId: Types.ObjectId): void {
   this.participants = this.participants.filter(participant => !participant.userId.equals(userId));
 };
 
 // Méthode pour vérifier si un utilisateur est participant
-ChallengeSchema.methods.isParticipant = function(userId: Types.ObjectId): boolean {
+ChallengeSchema.methods.isParticipant = function (userId: Types.ObjectId): boolean {
   return this.participants.some(participant => participant.userId.equals(userId));
 };
 
 // Méthode pour mettre à jour le progrès d'un participant
-ChallengeSchema.methods.updateParticipantProgress = function(userId: Types.ObjectId, progress: number): void {
+ChallengeSchema.methods.updateParticipantProgress = function (userId: Types.ObjectId, progress: number): void {
   const participant = this.participants.find(p => p.userId.equals(userId));
   if (participant) {
     participant.progress = Math.min(100, Math.max(0, progress));
@@ -861,7 +866,7 @@ ChallengeSchema.methods.updateParticipantProgress = function(userId: Types.Objec
 // ============= MÉTHODES POUR LES TÂCHES =============
 
 // Méthode pour ajouter une tâche
-ChallengeSchema.methods.addTask = function(task: ChallengeTask): void {
+ChallengeSchema.methods.addTask = function (task: ChallengeTask): void {
   if (!task.id) {
     task.id = new Types.ObjectId().toString();
   }
@@ -871,14 +876,14 @@ ChallengeSchema.methods.addTask = function(task: ChallengeTask): void {
 };
 
 // Méthode pour supprimer une tâche
-ChallengeSchema.methods.removeTask = function(taskId: string): void {
+ChallengeSchema.methods.removeTask = function (taskId: string): void {
   this.tasks = this.tasks.filter(task => task.id !== taskId);
 };
 
 // ============= MÉTHODES POUR LES POSTS =============
 
 // Méthode pour ajouter un post
-ChallengeSchema.methods.addPost = function(post: ChallengePost): void {
+ChallengeSchema.methods.addPost = function (post: ChallengePost): void {
   if (!post.id) {
     post.id = new Types.ObjectId().toString();
   }
@@ -887,54 +892,54 @@ ChallengeSchema.methods.addPost = function(post: ChallengePost): void {
 };
 
 // Méthode pour supprimer un post
-ChallengeSchema.methods.removePost = function(postId: string): void {
+ChallengeSchema.methods.removePost = function (postId: string): void {
   this.posts = this.posts.filter(post => post.id !== postId);
 };
 
 // ============= MÉTHODES UTILITAIRES =============
 
 // Méthode pour vérifier si le défi est actif
-ChallengeSchema.methods.isChallengeActive = function(): boolean {
+ChallengeSchema.methods.isChallengeActive = function (): boolean {
   const now = new Date();
   return this.isActive && this.startDate <= now && this.endDate >= now;
 };
 
 // Méthode pour obtenir le nombre de participants
-ChallengeSchema.methods.getParticipantCount = function(): number {
+ChallengeSchema.methods.getParticipantCount = function (): number {
   return this.participants.length;
 };
 
 // Méthode pour obtenir le nombre de tâches complétées
-ChallengeSchema.methods.getCompletedTasksCount = function(): number {
+ChallengeSchema.methods.getCompletedTasksCount = function (): number {
   return this.tasks ? this.tasks.filter(task => task.isCompleted).length : 0;
 };
 
 // ============= MÉTHODES DE PRICING =============
 
 // Méthode pour vérifier si le défi est gratuit
-ChallengeSchema.methods.isFreeChallenge = function(): boolean {
+ChallengeSchema.methods.isFreeChallenge = function (): boolean {
   return !this.pricing || this.pricing.participationFee === 0;
 };
 
 // Méthode pour vérifier si le défi est premium
-ChallengeSchema.methods.isPremiumChallenge = function(): boolean {
+ChallengeSchema.methods.isPremiumChallenge = function (): boolean {
   return this.pricing && this.pricing.isPremium;
 };
 
 // Méthode pour obtenir le prix de participation
-ChallengeSchema.methods.getParticipationFee = function(): number {
+ChallengeSchema.methods.getParticipationFee = function (): number {
   return this.pricing ? this.pricing.participationFee : 0;
 };
 
 // Méthode pour obtenir le montant du dépôt
-ChallengeSchema.methods.getDepositAmount = function(): number {
+ChallengeSchema.methods.getDepositAmount = function (): number {
   return this.pricing && this.pricing.depositRequired ? this.pricing.depositAmount || 0 : 0;
 };
 
 // Méthode pour calculer les remises
-ChallengeSchema.methods.calculateDiscount = function(userType: 'early-bird' | 'group' | 'member'): number {
+ChallengeSchema.methods.calculateDiscount = function (userType: 'early-bird' | 'group' | 'member'): number {
   if (!this.pricing || !this.pricing.paymentOptions) return 0;
-  
+
   const options = this.pricing.paymentOptions;
   switch (userType) {
     case 'early-bird':
@@ -949,13 +954,13 @@ ChallengeSchema.methods.calculateDiscount = function(userType: 'early-bird' | 'g
 };
 
 // Méthode pour vérifier l'accès utilisateur
-ChallengeSchema.methods.canUserAccess = function(userId: Types.ObjectId, hasPaid: boolean): boolean {
+ChallengeSchema.methods.canUserAccess = function (userId: Types.ObjectId, hasPaid: boolean): boolean {
   // Si le défi est gratuit, accès libre
   if (this.isFreeChallenge()) return true;
-  
+
   // Si l'utilisateur a payé, accès complet
   if (hasPaid) return true;
-  
+
   // Si il y a une période d'essai et l'utilisateur n'a pas encore payé
   if (this.pricing && this.pricing.freeTrialDays && this.pricing.freeTrialDays > 0) {
     // Vérifier si l'utilisateur est dans la période d'essai
@@ -963,14 +968,14 @@ ChallengeSchema.methods.canUserAccess = function(userId: Types.ObjectId, hasPaid
     const trialEndDate = new Date(this.startDate.getTime() + (this.pricing.freeTrialDays * 24 * 60 * 60 * 1000));
     return now <= trialEndDate;
   }
-  
+
   return false;
 };
 
 // ============= MÉTHODES POUR LA PROGRESSION SÉQUENTIELLE =============
 
 // Méthode pour activer la progression séquentielle
-ChallengeSchema.methods.activerProgressionSequentielle = function(message?: string) {
+ChallengeSchema.methods.activerProgressionSequentielle = function (message?: string) {
   this.sequentialProgression = true;
   if (message) {
     this.unlockMessage = message;
@@ -978,67 +983,67 @@ ChallengeSchema.methods.activerProgressionSequentielle = function(message?: stri
 };
 
 // Méthode pour désactiver la progression séquentielle
-ChallengeSchema.methods.desactiverProgressionSequentielle = function() {
+ChallengeSchema.methods.desactiverProgressionSequentielle = function () {
   this.sequentialProgression = false;
   this.unlockMessage = undefined;
 };
 
 // Méthode pour obtenir la tâche précédente
-ChallengeSchema.methods.obtenirTachePrecedente = function(taskId: string): ChallengeTask | undefined {
+ChallengeSchema.methods.obtenirTachePrecedente = function (taskId: string): ChallengeTask | undefined {
   if (!this.tasks || this.tasks.length === 0) {
     return undefined;
   }
-  
+
   // Trier les tâches par jour
   const tasksTriees = [...this.tasks].sort((a, b) => a.day - b.day);
-  
+
   // Trouver l'index de la tâche actuelle
   const indexActuel = tasksTriees.findIndex(task => task.id === taskId);
-  
+
   if (indexActuel <= 0) {
     return undefined; // Première tâche ou tâche non trouvée
   }
-  
+
   return tasksTriees[indexActuel - 1];
 };
 
 // Méthode pour obtenir la tâche suivante
-ChallengeSchema.methods.obtenirTacheSuivante = function(taskId: string): ChallengeTask | undefined {
+ChallengeSchema.methods.obtenirTacheSuivante = function (taskId: string): ChallengeTask | undefined {
   if (!this.tasks || this.tasks.length === 0) {
     return undefined;
   }
-  
+
   // Trier les tâches par jour
   const tasksTriees = [...this.tasks].sort((a, b) => a.day - b.day);
-  
+
   // Trouver l'index de la tâche actuelle
   const indexActuel = tasksTriees.findIndex(task => task.id === taskId);
-  
+
   if (indexActuel === -1 || indexActuel === tasksTriees.length - 1) {
     return undefined; // Dernière tâche ou tâche non trouvée
   }
-  
+
   return tasksTriees[indexActuel + 1];
 };
 
 // Méthode pour vérifier l'accès à une tâche
-ChallengeSchema.methods.verifierAccesTache = function(taskId: string, completedTasks: string[]): { hasAccess: boolean; reason: string; requiredTask?: ChallengeTask } {
+ChallengeSchema.methods.verifierAccesTache = function (taskId: string, completedTasks: string[]): { hasAccess: boolean; reason: string; requiredTask?: ChallengeTask } {
   // Si la progression séquentielle n'est pas activée, accès libre
   if (!this.sequentialProgression) {
     return { hasAccess: true, reason: 'sequential_disabled' };
   }
-  
+
   // Obtenir la tâche précédente
   const tachePrecedente = this.obtenirTachePrecedente(taskId);
-  
+
   // Si c'est la première tâche, accès libre
   if (!tachePrecedente) {
     return { hasAccess: true, reason: 'first_task' };
   }
-  
+
   // Vérifier si la tâche précédente est complétée
   const isCompleted = completedTasks.includes(tachePrecedente.id);
-  
+
   return {
     hasAccess: isCompleted,
     reason: isCompleted ? 'previous_completed' : 'previous_not_completed',

@@ -45,10 +45,13 @@ export class Order {
   paymentId?: string;
 
   @Prop({ type: String })
-  paymentMethod?: string;
+  paymentMethod?: string; // e.g. 'flouci', 'stripe', 'manual', 'offline'
 
-  @Prop({ type: String, default: 'paid' })
-  status: 'paid' | 'refunded' | 'pending';
+  @Prop({ type: String, default: 'pending' })
+  status: 'paid' | 'refunded' | 'pending' | 'pending_verification' | 'cancelled';
+
+  @Prop({ type: String })
+  paymentProof?: string; // URL of the uploaded proof file
 }
 
 export const OrderSchema = SchemaFactory.createForClass(Order);

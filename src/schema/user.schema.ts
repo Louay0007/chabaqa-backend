@@ -251,6 +251,19 @@ export class User {
   profile_picture: string;
 
   /**
+   * Coordonnées bancaires pour les paiements manuels
+   */
+  @Prop({
+    type: Object,
+    required: false
+  })
+  bankDetails?: {
+    rib: string;
+    bankName?: string;
+    ownerName?: string;
+  };
+
+  /**
    * Indique si l'authentification à deux facteurs est activée
    */
   @Prop({ default: false })
