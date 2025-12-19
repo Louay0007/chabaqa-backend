@@ -10,6 +10,7 @@ import { FeeModule } from '../common/modules/fee.module';
 import { OrderSchema } from '../schema/order.schema';
 import { PolicyModule } from '../common/modules/policy.module';
 import { PromoModule } from '../common/modules/promo.module';
+import { UploadModule } from '../upload/upload.module';
 
 @Module({
   imports: [
@@ -22,10 +23,11 @@ import { PromoModule } from '../common/modules/promo.module';
     AuthModule,
     FeeModule,
     PolicyModule,
-    PromoModule
+    PromoModule,
+    UploadModule
   ],
   controllers: [ProductController],
   providers: [ProductService],
   exports: [ProductService]
 })
-export class ProductModule {}
+export class ProductModule { }

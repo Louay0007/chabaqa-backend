@@ -17,6 +17,7 @@ import { FeeService } from '../common/services/fee.service';
 import { PromoService } from '../common/services/promo.service';
 import { NotificationService } from '../notification/notification.service';
 import { AchievementService } from '../achievement/achievement.service';
+import { UploadService } from '../upload/upload.service';
 
 @Injectable()
 export class CoursService {
@@ -33,6 +34,7 @@ export class CoursService {
     private readonly promoService: PromoService,
     private readonly notificationService: NotificationService,
     private readonly achievementService: AchievementService,
+    private readonly uploadService: UploadService,
   ) { }
 
   async getCourses(page: number = 1, limit: number = 10, category?: string, niveau?: string, search?: string) {
@@ -58,7 +60,7 @@ export class CoursService {
     const [courses, total] = await Promise.all([
       this.coursModel
         .find(query)
-        .populate('creatorId', 'name email profile_picture')
+        .populate('creatorId', 'name email profile_picture photo_profil')
         .select('-sections -learningObjectives -requirements')
         .sort({ createdAt: -1 })
         .skip(skip)
@@ -78,10 +80,11 @@ export class CoursService {
       duree: course.duree,
       creator: {
         name: (course.creatorId as any)?.name || 'Unknown',
-        avatar: (course.creatorId as any)?.profile_picture || 'https://placehold.co/64x64?text=MM'
+        avatar: this.uploadService.ensureAbsoluteUrl((course.creatorId as any)?.profile_picture || (course.creatorId as any)?.photo_profil) || 'https://placehold.co/64x64?text=MM'
       },
       createdAt: course.createdAt,
-      image: course.thumbnail || 'https://placehold.co/400x300?text=Course'
+      image: this.uploadService.ensureAbsoluteUrl(course.thumbnail) || 'https://placehold.co/400x300?text=Course',
+      thumbnail: this.uploadService.ensureAbsoluteUrl(course.thumbnail) || 'https://placehold.co/400x300?text=Course'
     }));
 
     return {
@@ -338,7 +341,7 @@ export class CoursService {
     // Essayer de trouver par _id (MongoDB ID)
     if (Types.ObjectId.isValid(coursId)) {
       cours = await this.coursModel.findById(coursId)
-        .populate('creatorId', 'name email profile_picture')
+        .populate('creatorId', 'name email profile_picture photo_profil')
         .exec();
     }
 
@@ -346,7 +349,7 @@ export class CoursService {
     if (!cours) {
       console.log(`   ⚠️ Non trouvé par _id, recherche par champ 'id': ${coursId}`);
       cours = await this.coursModel.findOne({ id: coursId })
-        .populate('creatorId', 'name email profile_picture')
+        .populate('creatorId', 'name email profile_picture photo_profil')
         .exec();
     }
 
@@ -416,7 +419,7 @@ export class CoursService {
     const [cours, total] = await Promise.all([
       this.coursModel
         .find(filtres)
-        .populate('creatorId', 'name email profile_picture')
+        .populate('creatorId', 'name email profile_picture photo_profil')
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
@@ -448,7 +451,7 @@ export class CoursService {
     const [cours, total] = await Promise.all([
       this.coursModel
         .find({ creatorId: new Types.ObjectId(creatorId) })
-        .populate('creatorId', 'name email profile_picture')
+        .populate('creatorId', 'name email profile_picture photo_profil')
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
@@ -575,7 +578,7 @@ export class CoursService {
     if (type === 'created' || type === 'all') {
       const createdCourses = await this.coursModel
         .find({ creatorId: new Types.ObjectId(userId) })
-        .populate('creatorId', 'name email profile_picture')
+        .populate('creatorId', 'name email profile_picture photo_profil')
         .sort({ createdAt: -1 })
         .exec();
 
@@ -834,7 +837,7 @@ export class CoursService {
           id: chapitre.id,
           titre: chapitre.titre,
           description: chapitre.contenu,
-          videoUrl: chapitre.videoUrl,
+          videoUrl: this.uploadService.ensureAbsoluteUrl(chapitre.videoUrl),
           isPaid: !chapitre.isPreview, // Inverse de isPreview
           ordre: chapitre.ordre,
           duree: chapitre.duree?.toString(),
@@ -856,7 +859,7 @@ export class CoursService {
             id: creatorData._id?.toString() || '',
             name: creatorData.name,
             email: creatorData.email,
-            avatar: creatorData.profile_picture || creatorData.photo_profil
+            avatar: this.uploadService.ensureAbsoluteUrl(creatorData.profile_picture || creatorData.photo_profil)
           };
         }
       }
@@ -866,7 +869,7 @@ export class CoursService {
         id: cours.id || cours._id.toString(),
         titre: cours.titre,
         description: cours.description,
-        thumbnail: cours.thumbnail,
+        thumbnail: this.uploadService.ensureAbsoluteUrl(cours.thumbnail),
         isPaid: cours.prix > 0,
         prix: cours.prix,
         isPaidCourse: (cours as any).isPaidCourse || cours.prix > 0,
@@ -890,7 +893,7 @@ export class CoursService {
               id: chapitre.id,
               titre: chapitre.titre,
               description: chapitre.contenu,
-              videoUrl: chapitre.videoUrl,
+              videoUrl: this.uploadService.ensureAbsoluteUrl(chapitre.videoUrl),
               isPaid: !chapitre.isPreview,
               ordre: chapitre.ordre,
               duree: chapitre.duree?.toString(),
@@ -903,7 +906,7 @@ export class CoursService {
                 id: res.id,
                 titre: res.titre,
                 type: res.type,
-                url: res.url,
+                url: this.uploadService.ensureAbsoluteUrl(res.url),
                 description: res.description,
                 ordre: res.ordre
               })) : [],
@@ -930,7 +933,7 @@ export class CoursService {
         id: cours.id || cours._id.toString(),
         titre: cours.titre || 'Unknown Course',
         description: cours.description || '',
-        thumbnail: cours.thumbnail,
+        thumbnail: this.uploadService.ensureAbsoluteUrl(cours.thumbnail),
         isPaid: cours.prix > 0,
         prix: cours.prix || 0,
         isPaidCourse: (cours as any).isPaidCourse || cours.prix > 0,
@@ -1073,19 +1076,19 @@ export class CoursService {
         ordre: addSectionDto.ordre,
         chapitres: Array.isArray(addSectionDto.chapitres)
           ? addSectionDto.chapitres.map((chapitre) => ({
-              id: new Types.ObjectId().toString(),
-              titre: chapitre.titre,
-              contenu: chapitre.description || '',
-              videoUrl: chapitre.videoUrl,
-              duree: chapitre.duree ? this.convertirDureeEnMinutes(chapitre.duree) : undefined,
-              sectionId: new Types.ObjectId().toString(),
-              ordre: chapitre.ordre,
-              isPreview: chapitre.isPaid === false,
-              prix: chapitre.isPaid ? cours.prix : 0,
-              notes: chapitre.notes,
-              ressources: [],
-              createdAt: new Date(),
-            }))
+            id: new Types.ObjectId().toString(),
+            titre: chapitre.titre,
+            contenu: chapitre.description || '',
+            videoUrl: chapitre.videoUrl,
+            duree: chapitre.duree ? this.convertirDureeEnMinutes(chapitre.duree) : undefined,
+            sectionId: new Types.ObjectId().toString(),
+            ordre: chapitre.ordre,
+            isPreview: chapitre.isPaid === false,
+            prix: chapitre.isPaid ? cours.prix : 0,
+            notes: chapitre.notes,
+            ressources: [],
+            createdAt: new Date(),
+          }))
           : [],
         createdAt: new Date(),
       };

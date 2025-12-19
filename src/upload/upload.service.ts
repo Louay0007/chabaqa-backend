@@ -27,7 +27,10 @@ export interface UploadResult {
 @Injectable()
 export class UploadService {
   private readonly uploadPath = 'uploads';
-  private readonly baseUrl = process.env.BASE_URL || 'http://localhost:3000';
+  private readonly baseUrl =
+    process.env.SERVER_URL ||
+    process.env.BASE_URL ||
+    `http://localhost:${process.env.PORT || 3000}`;
   private readonly storageUsageMap = new Map<string, number>(); // legacy in-memory (fallback)
 
   // Configuration des types de fichiers autorisés
@@ -58,7 +61,7 @@ export class UploadService {
    */
   private ensureUploadDirectories(): void {
     const baseDir = join(process.cwd(), this.uploadPath);
-    
+
     if (!existsSync(baseDir)) {
       mkdirSync(baseDir, { recursive: true });
     }
@@ -77,13 +80,13 @@ export class UploadService {
    */
   getFileType(filename: string): FileType {
     const extension = extname(filename).toLowerCase();
-    
+
     for (const [type, extensions] of Object.entries(this.allowedTypes)) {
       if (extensions.includes(extension)) {
         return type as FileType;
       }
     }
-    
+
     throw new BadRequestException(`Type de fichier non supporté: ${extension}`);
   }
 
@@ -92,7 +95,7 @@ export class UploadService {
    */
   validateFile(file: Express.Multer.File): FileType {
     const fileType = this.getFileType(file.originalname);
-    
+
     // Vérifier la taille
     if (file.size > this.maxSizes[fileType]) {
       const maxSizeMB = this.maxSizes[fileType] / (1024 * 1024);
@@ -110,7 +113,7 @@ export class UploadService {
     };
 
     const allowedMimeTypes = validMimeTypes[fileType] || [];
-    const isValidMimeType = allowedMimeTypes.some(mimePrefix => 
+    const isValidMimeType = allowedMimeTypes.some(mimePrefix =>
       file.mimetype.startsWith(mimePrefix) || file.mimetype === mimePrefix
     );
 
@@ -159,6 +162,41 @@ export class UploadService {
    */
   generateFileUrl(filename: string, fileType: FileType): string {
     return `${this.baseUrl}/uploads/${fileType}/${filename}`;
+  }
+
+  /**
+   * S'assurer qu'une URL est absolue en utilisant la baseUrl actuelle
+   */
+  ensureAbsoluteUrl(url: string | any): string {
+    if (!url || typeof url !== 'string') return url;
+
+    const originalUrl = url;
+    let result = url;
+
+    // Si l'URL est déjà absolue (starts with http)
+    if (url.startsWith('http')) {
+      try {
+        const urlObj = new URL(url);
+        const currentOrigin = new URL(this.baseUrl).origin;
+
+        // Si l'URL contient /uploads/ mais pointe vers un autre domaine (ex: ancien localhost)
+        // on la redirige vers le domaine actuel
+        if (urlObj.pathname.includes('/uploads/') && urlObj.origin !== currentOrigin) {
+          result = `${this.baseUrl}${urlObj.pathname}${urlObj.search}`;
+        }
+      } catch (e) {
+        // En cas d'URL malformée, on retourne l'original
+      }
+    } else if (url.startsWith('/uploads/') || url.startsWith('uploads/')) {
+      // Si c'est un chemin relatif commençant par /uploads ou uploads
+      const cleanPath = url.startsWith('/') ? url : `/${url}`;
+      result = `${this.baseUrl}${cleanPath}`;
+    }
+
+    if (originalUrl !== result) {
+      console.log(`[UploadService] transformed: ${originalUrl} -> ${result}`);
+    }
+    return result;
   }
 
   /**
@@ -227,7 +265,7 @@ export class UploadService {
     try {
       const fs = require('fs').promises;
       const filePath = join(this.getDestinationPath(fileType), filename);
-      
+
       if (existsSync(filePath)) {
         await fs.unlink(filePath);
         return true;
@@ -244,14 +282,14 @@ export class UploadService {
    */
   getFileInfo(filename: string, fileType: FileType): UploadResult | null {
     const filePath = join(this.getDestinationPath(fileType), filename);
-    
+
     if (!existsSync(filePath)) {
       return null;
     }
 
     const fs = require('fs');
     const stats = fs.statSync(filePath);
-    
+
     return {
       filename,
       originalName: filename,
@@ -362,7 +400,7 @@ export class UploadService {
       '.wav': 'audio/wav',
       '.ogg': 'audio/ogg'
     };
-    
+
     return mimeTypes[extension] || 'application/octet-stream';
   }
 

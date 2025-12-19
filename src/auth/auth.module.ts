@@ -13,6 +13,7 @@ import { RevokedToken, RevokedTokenSchema } from '../schema/revoked-token.schema
 import { EmailService } from '../common/services/email.service';
 import { TokenBlacklistService } from '../common/services/token-blacklist.service';
 import { UserLoginActivityModule } from '../user-login-activity/user-login-activity.module';
+import { UploadModule } from '../upload/upload.module';
 
 @Module({
   imports: [
@@ -28,9 +29,10 @@ import { UserLoginActivityModule } from '../user-login-activity/user-login-activ
       signOptions: { expiresIn: '2h' },
     }),
     UserLoginActivityModule,
+    UploadModule,
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy, GoogleStrategy, EmailService, TokenBlacklistService, JwtAuthGuard],
   exports: [AuthService, TokenBlacklistService, JwtAuthGuard],
 })
-export class AuthModule {} 
+export class AuthModule { } 

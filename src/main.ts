@@ -3,6 +3,7 @@ import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import cookieParser from 'cookie-parser';
+import cors from 'cors';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import * as express from 'express';
 import { SecurityMiddleware } from './common/middleware/security.middleware';
@@ -13,7 +14,7 @@ async function bootstrap() {
 
 
   app.use(express.static('public'));
-  app.use('/uploads', express.static('uploads'));
+  app.use('/uploads', cors(), express.static('uploads'));
 
 
   app.use(express.json({ limit: '50mb' }));

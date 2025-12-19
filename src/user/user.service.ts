@@ -9,6 +9,7 @@ import { ForgotPasswordDto } from 'src/dto-user/forgot-password.dto';
 import { ResetPasswordDto } from 'src/dto-user/reset-password.dto';
 import { EmailService } from 'src/common/services/email.service';
 import { VerificationCode, VerificationCodeDocument } from 'src/schema/verification-code.schema';
+import { UploadService } from '../upload/upload.service';
 
 @Injectable()
 export class UserService {
@@ -16,6 +17,7 @@ export class UserService {
     @InjectModel('User') private userModel: Model<IUser>,
     @InjectModel('VerificationCode') private verificationCodeModel: Model<VerificationCodeDocument>,
     private emailService: EmailService,
+    private uploadService: UploadService,
   ) { }
 
   /**
@@ -82,7 +84,12 @@ export class UserService {
   // get all users
   async getAllUsers(): Promise<IUser[]> {
     const users = await this.userModel.find();
-    return users;
+    return users.map(user => {
+      const u = user.toObject();
+      u.photo_profil = this.uploadService.ensureAbsoluteUrl(u.photo_profil);
+      u.profile_picture = this.uploadService.ensureAbsoluteUrl(u.profile_picture);
+      return u as IUser;
+    });
   }
 
   // get user by id
@@ -91,7 +98,10 @@ export class UserService {
     if (!user) {
       throw new NotFoundException(`User #${id} not found`);
     }
-    return user;
+    const u = user.toObject();
+    u.photo_profil = this.uploadService.ensureAbsoluteUrl(u.photo_profil);
+    u.profile_picture = this.uploadService.ensureAbsoluteUrl(u.profile_picture);
+    return u as IUser;
   }
 
   // get user by username/handle (email local-part)
@@ -103,7 +113,10 @@ export class UserService {
     if (!user) {
       throw new NotFoundException(`User with handle '${handle}' not found`);
     }
-    return user;
+    const u = user.toObject();
+    u.photo_profil = this.uploadService.ensureAbsoluteUrl(u.photo_profil);
+    u.profile_picture = this.uploadService.ensureAbsoluteUrl(u.profile_picture);
+    return u as IUser;
   }
 
 

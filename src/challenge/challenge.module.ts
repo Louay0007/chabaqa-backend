@@ -10,6 +10,7 @@ import { TrackingModule } from '../common/modules/tracking.module';
 import { FeeModule } from '../common/modules/fee.module';
 import { OrderSchema } from '../schema/order.schema';
 import { PolicyModule } from '../common/modules/policy.module';
+import { UploadModule } from '../upload/upload.module';
 
 @Module({
   imports: [
@@ -23,9 +24,10 @@ import { PolicyModule } from '../common/modules/policy.module';
     TrackingModule,
     FeeModule,
     PolicyModule,
+    UploadModule,
   ],
   controllers: [ChallengeController],
   providers: [ChallengeService],
   exports: [ChallengeService],
 })
-export class ChallengeModule {}
+export class ChallengeModule { }

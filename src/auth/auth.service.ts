@@ -11,6 +11,7 @@ import { EmailService } from '../common/services/email.service';
 import { VerificationCodeSchema } from '../schema/verification-code.schema';
 import { UserLoginActivityService } from '../user-login-activity/user-login-activity.service';
 import { RegisterDto } from '../dto-user/register.dto';
+import { UploadService } from '../upload/upload.service';
 
 @Injectable()
 export class AuthService {
@@ -21,6 +22,7 @@ export class AuthService {
     private jwtService: JwtService,
     private emailService: EmailService,
     private userLoginActivityService: UserLoginActivityService,
+    private uploadService: UploadService,
   ) { }
 
   async loginWithGoogle(oauthUser: {
@@ -62,6 +64,7 @@ export class AuthService {
       name: user.name,
       email: user.email,
       role: user.role,
+      avatar: this.uploadService.ensureAbsoluteUrl(user.profile_picture || user.photo_profil || ''),
       createdAt: user.createdAt,
     };
     return {
@@ -129,6 +132,7 @@ export class AuthService {
       name: user.name,
       email: user.email,
       role: user.role,
+      avatar: this.uploadService.ensureAbsoluteUrl(user.profile_picture || user.photo_profil || ''),
       createdAt: user.createdAt,
     };
 

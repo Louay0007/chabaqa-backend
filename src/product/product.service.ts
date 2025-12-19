@@ -17,6 +17,7 @@ import { FeeService } from '../common/services/fee.service';
 import { TrackableContentType } from '../schema/content-tracking.schema';
 import { PolicyService } from '../common/services/policy.service';
 import { PromoService } from '../common/services/promo.service';
+import { UploadService } from '../upload/upload.service';
 
 @Injectable()
 export class ProductService {
@@ -28,6 +29,7 @@ export class ProductService {
     private readonly feeService: FeeService,
     private readonly policyService: PolicyService,
     private readonly promoService: PromoService,
+    private readonly uploadService: UploadService,
   ) { }
 
   /**
@@ -584,6 +586,9 @@ export class ProductService {
    * Transformer un document Product en DTO de réponse
    */
   private async transformToResponseDto(product: ProductDocument, community?: CommunityDocument | null): Promise<ProductResponseDto> {
+    // Ensure absolute URLs for images
+    const images = (product.images || []).map(img => this.uploadService.ensureAbsoluteUrl(img));
+
     // Transformer les variantes
     const variants = product.variants?.map(variant => ({
       id: variant.id,
@@ -594,10 +599,10 @@ export class ProductService {
     })) || [];
 
     // Transformer les fichiers
-    const files = product.files?.map(file => ({
+    const files = (product.files || []).map(file => ({
       id: file.id,
       name: file.name,
-      url: file.url,
+      url: this.uploadService.ensureAbsoluteUrl(file.url),
       type: file.type,
       size: file.size,
       description: file.description,
@@ -605,7 +610,7 @@ export class ProductService {
       downloadCount: file.downloadCount,
       isActive: file.isActive,
       uploadedAt: file.uploadedAt.toISOString()
-    })) || [];
+    }));
 
     // Récupérer les informations du créateur
     const creator = await this.userModel.findById(product.creatorId).select('name email profile_picture');
@@ -631,14 +636,14 @@ export class ProductService {
         id: product.creatorId.toString(),
         name: creator?.name || 'Créateur inconnu',
         email: creator?.email || '',
-        avatar: creator?.profile_picture
+        avatar: this.uploadService.ensureAbsoluteUrl(creator?.profile_picture || creator?.photo_profil)
       },
       isPublished: product.isPublished,
       inventory: product.inventory,
       sales: product.sales,
       category: product.category,
       type: product.type,
-      images: product.images,
+      images: images,
       variants: variants,
       files: files,
       rating: product.rating,

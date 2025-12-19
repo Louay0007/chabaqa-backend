@@ -1,11 +1,11 @@
-import { 
-  Controller, 
-  Post, 
-  Get, 
-  Put, 
-  Param, 
-  Body, 
-  UseGuards, 
+import {
+  Controller,
+  Post,
+  Get,
+  Put,
+  Param,
+  Body,
+  UseGuards,
   Request,
   HttpStatus,
   HttpCode
@@ -30,7 +30,7 @@ interface AuthenticatedUser {
 @ApiTags('Course Enrollment (User)')
 @ApiBearerAuth('JWT-auth')
 export class CourseEnrollmentController {
-  constructor(private readonly courseEnrollmentService: CourseEnrollmentService) {}
+  constructor(private readonly courseEnrollmentService: CourseEnrollmentService) { }
 
   /**
    * Get all user enrollments
@@ -155,29 +155,37 @@ export class CourseEnrollmentController {
   })
   @ApiParam({ name: 'courseId', description: 'Course ID' })
   @ApiParam({ name: 'chapterId', description: 'Chapter ID' })
-  @ApiBody({ 
-    schema: { 
-      type: 'object', 
-      properties: { watchTime: { type: 'number' } } 
-    } 
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        watchTime: { type: 'number', description: 'Watch time in seconds' },
+        videoDuration: { type: 'number', description: 'Video duration in seconds (optional)' }
+      },
+      required: ['watchTime']
+    }
   })
   @ApiResponse({ status: 200, description: 'Watch time updated successfully' })
   async updateWatchTime(
     @Request() req: { user: AuthenticatedUser },
     @Param('courseId') courseId: string,
     @Param('chapterId') chapterId: string,
-    @Body() body: { watchTime: number }
+    @Body() body: { watchTime: number; videoDuration?: number }
   ) {
     console.log(`⏱️ [CourseEnrollmentController] Mise à jour du temps de visionnage pour le chapitre ${chapterId}`);
     console.log(`   👤 Utilisateur: ${req.user._id}`);
     console.log(`   📚 Cours: ${courseId}`);
     console.log(`   ⏰ Temps: ${body.watchTime} secondes`);
+    if (body.videoDuration) {
+      console.log(`   📐 Durée vidéo: ${body.videoDuration} secondes`);
+    }
 
     return await this.courseEnrollmentService.updateWatchTime(
       req.user._id,
       courseId,
       chapterId,
-      body.watchTime
+      body.watchTime,
+      body.videoDuration
     );
   }
 
@@ -254,17 +262,17 @@ export class CourseEnrollmentController {
   })
   @ApiParam({ name: 'courseId', description: 'Course ID' })
   @ApiResponse({ status: 200, description: 'Course completed successfully' })
-async completeCourse(
-  @Request() req: { user: AuthenticatedUser },
-  @Param('courseId') courseId: string
-) {
-  console.log(`🎓 [CourseEnrollmentController] Marquage du cours ${courseId} comme terminé`);
-  console.log(`   👤 Utilisateur: ${req.user._id}`);
+  async completeCourse(
+    @Request() req: { user: AuthenticatedUser },
+    @Param('courseId') courseId: string
+  ) {
+    console.log(`🎓 [CourseEnrollmentController] Marquage du cours ${courseId} comme terminé`);
+    console.log(`   👤 Utilisateur: ${req.user._id}`);
 
-  return await this.courseEnrollmentService.completeCourse(
-    req.user._id,
-    courseId
-  );
-}
+    return await this.courseEnrollmentService.completeCourse(
+      req.user._id,
+      courseId
+    );
+  }
 
 }

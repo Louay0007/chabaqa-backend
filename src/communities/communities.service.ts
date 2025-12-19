@@ -4,6 +4,7 @@ import { Model, Types } from 'mongoose';
 import { Community, CommunityDocument } from '../schema/community.schema';
 import { User, UserDocument } from '../schema/user.schema';
 import { Post, PostDocument } from '../schema/post.schema';
+import { UploadService } from '../upload/upload.service';
 
 export interface CommunityFilters {
   search?: string;
@@ -29,6 +30,7 @@ export class CommunitiesService {
     @InjectModel(Community.name) private communityModel: Model<CommunityDocument>,
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     @InjectModel(Post.name) private postModel: Model<PostDocument>,
+    private readonly uploadService: UploadService,
   ) { }
 
   /**
@@ -74,8 +76,8 @@ export class CommunitiesService {
           id: community._id.toString(),
           slug: communityData.slug,
           name: communityData.name || communityData.nom,
-          logo: communityData.logo || communityData.image,
-          coverImage: communityData.coverImage || communityData.cover || communityData.image,
+          logo: this.uploadService.ensureAbsoluteUrl(communityData.logo || communityData.image),
+          coverImage: this.uploadService.ensureAbsoluteUrl(communityData.coverImage || communityData.cover || communityData.image),
           shortDescription: communityData.shortDescription || communityData.description,
           membersCount: communityData.members?.length || 0,
           role,
@@ -83,7 +85,7 @@ export class CommunitiesService {
           joinedAt: communityData.createdAt, // Approximate join date
           creator: {
             name: communityData.createur?.name || 'Unknown',
-            avatar: communityData.createur?.profile_picture || 'https://placehold.co/64x64?text=MM'
+            avatar: this.uploadService.ensureAbsoluteUrl(communityData.createur?.profile_picture || communityData.createur?.photo_profil || 'https://placehold.co/64x64?text=MM')
           }
         };
       });
@@ -106,8 +108,8 @@ export class CommunitiesService {
           id: community._id.toString(),
           slug: communityData.slug,
           name: communityData.name || communityData.nom,
-          logo: communityData.logo || communityData.image,
-          coverImage: communityData.coverImage || communityData.cover || communityData.image,
+          logo: this.uploadService.ensureAbsoluteUrl(communityData.logo || communityData.image),
+          coverImage: this.uploadService.ensureAbsoluteUrl(communityData.coverImage || communityData.cover || communityData.image),
           shortDescription: communityData.shortDescription || communityData.description,
           membersCount: communityData.members?.length || 0,
           role: 'owner',
@@ -115,7 +117,7 @@ export class CommunitiesService {
           createdAt: community.createdAt,
           creator: {
             name: communityData.createur?.name || 'Unknown',
-            avatar: communityData.createur?.profile_picture || 'https://placehold.co/64x64?text=MM'
+            avatar: this.uploadService.ensureAbsoluteUrl(communityData.createur?.profile_picture || communityData.createur?.photo_profil || 'https://placehold.co/64x64?text=MM')
           }
         };
       });
@@ -327,7 +329,7 @@ export class CommunitiesService {
           slug: community.slug,
           name: community.name,
           creator: (community.createur as any)?.name || 'Unknown',
-          creatorAvatar: (community.createur as any)?.profile_picture || 'https://placehold.co/64x64?text=MM',
+          creatorAvatar: this.uploadService.ensureAbsoluteUrl((community.createur as any)?.profile_picture || (community.createur as any)?.photo_profil || 'https://placehold.co/64x64?text=MM'),
           description: community.short_description,
           category: community.category,
           type: 'community',
@@ -335,8 +337,8 @@ export class CommunitiesService {
           rating: (community as any).averageRating || 0,
           price: community.pricing?.price || community.fees_of_join || 0,
           priceType: community.priceType,
-          image: imageUrl, // Will be empty string if no real image available
-          logo: community.logo, // Also include logo field
+          image: this.uploadService.ensureAbsoluteUrl(imageUrl), // Will be empty string if no real image available
+          logo: this.uploadService.ensureAbsoluteUrl(community.logo), // Also include logo field
           tags: community.tags,
           featured: community.featured,
           verified: community.isVerified,
@@ -434,7 +436,7 @@ export class CommunitiesService {
       name: community.name,
       creator: (community.createur as any).name || 'Unknown',
       creatorId: (community.createur as any)._id?.toString() || '1', // Add creatorId field
-      creatorAvatar: (community.createur as any).profile_picture || 'https://placehold.co/64x64?text=MM',
+      creatorAvatar: this.uploadService.ensureAbsoluteUrl((community.createur as any).profile_picture || (community.createur as any).photo_profil || 'https://placehold.co/64x64?text=MM'),
       description: community.short_description,
       longDescription: community.long_description,
       category: community.category,
@@ -443,8 +445,8 @@ export class CommunitiesService {
       rating: (community as any).averageRating || 0,
       price: community.pricing?.price || community.fees_of_join || 0,
       priceType: community.priceType,
-      image: community.photo_de_couverture,
-      coverImage: community.photo_de_couverture,
+      image: this.uploadService.ensureAbsoluteUrl(community.photo_de_couverture),
+      coverImage: this.uploadService.ensureAbsoluteUrl(community.photo_de_couverture),
       tags: community.tags,
       featured: community.featured,
       verified: community.isVerified,
@@ -467,8 +469,8 @@ export class CommunitiesService {
         showFAQ: community.settings?.showFAQ || true,
         enableAnimations: community.settings?.enableAnimations || true,
         enableParallax: community.settings?.enableParallax || false,
-        logo: community.settings?.logo || community.logo,
-        heroBackground: community.settings?.heroBackground || community.photo_de_couverture,
+        logo: this.uploadService.ensureAbsoluteUrl(community.settings?.logo || community.logo),
+        heroBackground: this.uploadService.ensureAbsoluteUrl(community.settings?.heroBackground || community.photo_de_couverture),
         gallery: community.settings?.gallery || [],
         videoUrl: community.settings?.videoUrl,
         socialLinks: community.settings?.socialLinks || {},
@@ -514,7 +516,7 @@ export class CommunitiesService {
       id: index + 1, // Numeric ID as per API spec
       communityId: 1, // Default community ID
       author: (post.authorId as any).name || 'Unknown',
-      authorAvatar: (post.authorId as any).profile_picture || '/placeholder.svg?height=40&width=40',
+      authorAvatar: this.uploadService.ensureAbsoluteUrl((post.authorId as any).profile_picture || (post.authorId as any).photo_profil || '/placeholder.svg?height=40&width=40'),
       content: post.content,
       timestamp: this.formatTimestamp(post.createdAt),
       likes: post.likes || 0,

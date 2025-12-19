@@ -12,6 +12,11 @@ export interface IUser {
   readonly password: string;
   readonly role: UserRole;
   readonly createdAt: Date;
+  photo_profil?: string;
+  profile_picture?: string;
+  readonly ville?: string;
+  readonly pays?: string;
+  readonly bio?: string;
 }
 
 
