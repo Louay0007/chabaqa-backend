@@ -70,19 +70,31 @@ export class AuthController {
     }
   }
 
-  @UseGuards(JwtAuthGuard)
   @Post('logout')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'User Logout',
     description: 'Logout user (client should remove token).',
   })
-  @ApiBearerAuth('JWT-auth')
   @ApiResponse({ status: 200, description: 'Logout successful' })
   async logout() {
     return {
       success: true,
       message: 'Déconnexion réussie.',
+    };
+  }
+
+  @Post('revoke-all-tokens')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Revoke All Tokens',
+    description: 'Revoke all user tokens (Placeholder for stateless JWT).',
+  })
+  @ApiResponse({ status: 200, description: 'Tokens revoked successfully' })
+  async revokeAllTokens() {
+    return {
+      success: true,
+      message: 'Tous les tokens ont été révoqués.',
     };
   }
 

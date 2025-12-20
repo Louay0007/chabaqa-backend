@@ -3,6 +3,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Payout, PayoutDocument, PayoutStatus, PayoutMethod } from '../schema/payout.schema';
 import { User, UserDocument } from '../schema/user.schema';
+import { Order, OrderDocument } from '../schema/order.schema';
 
 export interface CreatePayoutDto {
   creatorId: string;
@@ -37,7 +38,8 @@ export class PayoutService {
   constructor(
     @InjectModel(Payout.name) private readonly payoutModel: Model<PayoutDocument>,
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
-  ) {}
+    @InjectModel(Order.name) private readonly orderModel: Model<OrderDocument>,
+  ) { }
 
   /**
    * Generate a unique reference ID for payouts
@@ -201,23 +203,42 @@ export class PayoutService {
       ...query
     });
 
-    // Calculate available balance (pending + scheduled payouts)
-    const availableBalance = await this.payoutModel
-      .aggregate([
-        {
-          $match: {
-            creatorId: new Types.ObjectId(creatorId),
-            status: { $in: [PayoutStatus.PENDING, PayoutStatus.SCHEDULED] }
-          }
-        },
-        {
-          $group: {
-            _id: null,
-            total: { $sum: '$amount' }
-          }
+    // Calculate total lifetime earnings from paid orders
+    const totalEarningsResult = await this.orderModel.aggregate([
+      {
+        $match: {
+          creatorId: new Types.ObjectId(creatorId),
+          status: 'paid'
         }
-      ])
-      .exec();
+      },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: '$creatorNetDT' }
+        }
+      }
+    ]);
+    const totalEarnings = totalEarningsResult[0]?.total || 0;
+
+    // Calculate total payouts (completed + pending + scheduled)
+    // We exclude FAILED and CANCELLED as those funds should return to balance
+    const totalPayoutsResult = await this.payoutModel.aggregate([
+      {
+        $match: {
+          creatorId: new Types.ObjectId(creatorId),
+          status: { $in: [PayoutStatus.COMPLETED, PayoutStatus.PENDING, PayoutStatus.SCHEDULED] }
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: '$amount' }
+        }
+      }
+    ]);
+    const totalPayouts = totalPayoutsResult[0]?.total || 0;
+
+    const availableBalance = Math.max(0, totalEarnings - totalPayouts);
 
     // Get next scheduled payout
     const nextPayout = await this.payoutModel
@@ -232,7 +253,7 @@ export class PayoutService {
     return {
       payouts: result.payouts,
       total: result.total,
-      availableBalance: availableBalance[0]?.total || 0,
+      availableBalance: availableBalance || 0,
       nextPayout: nextPayout || undefined
     };
   }
@@ -272,7 +293,7 @@ export class PayoutService {
 
     payout.status = PayoutStatus.COMPLETED;
     payout.processedAt = new Date();
-    payout.adminNotes = processedBy 
+    payout.adminNotes = processedBy
       ? `Processed by ${processedBy} on ${new Date().toISOString()}`
       : `Processed automatically on ${new Date().toISOString()}`;
 
@@ -371,12 +392,12 @@ export class PayoutService {
       totalAmount: 0
     };
 
-    const successRate = result.totalPayouts > 0 
-      ? (result.completedPayouts / result.totalPayouts) * 100 
+    const successRate = result.totalPayouts > 0
+      ? (result.completedPayouts / result.totalPayouts) * 100
       : 0;
-    
-    const averagePayout = result.totalPayouts > 0 
-      ? result.totalAmount / result.totalPayouts 
+
+    const averagePayout = result.totalPayouts > 0
+      ? result.totalAmount / result.totalPayouts
       : 0;
 
     return {

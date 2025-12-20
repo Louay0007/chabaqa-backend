@@ -27,7 +27,7 @@ export class SessionService {
     private readonly promoService: PromoService,
     private readonly policyService: PolicyService,
     private readonly googleCalendarService: GoogleCalendarService,
-  ) {}
+  ) { }
 
   /**
    * Get sessions for a specific user (booked + created)
@@ -64,11 +64,11 @@ export class SessionService {
           const startTime = new Date(sessionData.startTime || sessionData.dateTime);
           const isUpcoming = startTime > now;
           const isPast = startTime <= now;
-          
+
           // Apply time filter
           if (timeFilter === 'upcoming' && !isUpcoming) return null;
           if (timeFilter === 'past' && !isPast) return null;
-          
+
           return {
             id: session.id,
             title: sessionData.title || sessionData.name,
@@ -110,11 +110,11 @@ export class SessionService {
           const startTime = new Date(sessionData.startTime || sessionData.dateTime);
           const isUpcoming = startTime > now;
           const isPast = startTime <= now;
-          
+
           // Apply time filter
           if (timeFilter === 'upcoming' && !isUpcoming) return null;
           if (timeFilter === 'past' && !isPast) return null;
-          
+
           return {
             id: session.id,
             title: sessionData.title || sessionData.name,
@@ -146,12 +146,12 @@ export class SessionService {
     allSessions.sort((a, b) => {
       const dateA = new Date(a.startTime);
       const dateB = new Date(b.startTime);
-      
+
       // If both are upcoming or both are past, sort by date
       if ((dateA > now && dateB > now) || (dateA <= now && dateB <= now)) {
         return dateA.getTime() - dateB.getTime();
       }
-      
+
       // Upcoming sessions come first
       return dateA > now ? -1 : 1;
     });
@@ -445,33 +445,43 @@ export class SessionService {
     session.addBooking(booking);
     // Si la session est payante, appliquer promo puis créer une commande avec calcul des frais
     if (session.price && session.price > 0) {
-      let effective = session.price;
-      let discountDT = 0;
-      let appliedCode: string | undefined;
-      if (promoCode) {
-        const buyer = await this.userModel.findById(userId).select('email');
-        const promo = await this.promoService.validateAndApply(promoCode, session.price, TrackableContentType.SESSION, session._id.toString(), (buyer as any)?.email);
-        if (promo.valid) {
-          effective = promo.finalAmountDT;
-          discountDT = promo.discountDT;
-          appliedCode = promo.appliedCode;
-        }
-      }
-      const breakdown = await this.feeService.calculateForAmount(effective, session.creatorId.toString());
-      await this.orderModel.create({
+      // Check for existing paid order first
+      const existingOrder = await this.orderModel.findOne({
         buyerId: new Types.ObjectId(userId),
-        creatorId: session.creatorId,
         contentType: TrackableContentType.SESSION,
         contentId: session._id.toString(),
-        amountDT: breakdown.amountDT,
-        platformPercent: breakdown.platformPercent,
-        platformFixedDT: breakdown.platformFixedDT,
-        platformFeeDT: breakdown.platformFeeDT,
-        creatorNetDT: breakdown.creatorNetDT,
-        promoCode: appliedCode,
-        discountDT,
         status: 'paid'
       });
+
+      if (!existingOrder) {
+        let effective = session.price;
+        let discountDT = 0;
+        let appliedCode: string | undefined;
+        if (promoCode) {
+          const buyer = await this.userModel.findById(userId).select('email');
+          const promo = await this.promoService.validateAndApply(promoCode, session.price, TrackableContentType.SESSION, session._id.toString(), (buyer as any)?.email);
+          if (promo.valid) {
+            effective = promo.finalAmountDT;
+            discountDT = promo.discountDT;
+            appliedCode = promo.appliedCode;
+          }
+        }
+        const breakdown = await this.feeService.calculateForAmount(effective, session.creatorId.toString());
+        await this.orderModel.create({
+          buyerId: new Types.ObjectId(userId),
+          creatorId: session.creatorId,
+          contentType: TrackableContentType.SESSION,
+          contentId: session._id.toString(),
+          amountDT: breakdown.amountDT,
+          platformPercent: breakdown.platformPercent,
+          platformFixedDT: breakdown.platformFixedDT,
+          platformFeeDT: breakdown.platformFeeDT,
+          creatorNetDT: breakdown.creatorNetDT,
+          promoCode: appliedCode,
+          discountDT,
+          status: 'paid'
+        });
+      }
     }
     await session.save();
 
@@ -879,10 +889,10 @@ export class SessionService {
     try {
       const attendee = await this.userModel.findById(userId).select('email');
       const creator = await this.userModel.findById(session.creatorId).select('email');
-      
+
       if (attendee?.email && creator?.email) {
         const endTime = new Date(slot.startTime.getTime() + session.duration * 60000);
-        
+
         const { meetLink } = await this.googleCalendarService.createCalendarEventWithMeet(
           session.creatorId.toString(),
           sessionId,
@@ -953,7 +963,7 @@ export class SessionService {
     }
 
     // Annuler la réservation correspondante si elle existe
-    const correspondingBooking = session.bookings.find(booking => 
+    const correspondingBooking = session.bookings.find(booking =>
       booking.scheduledAt.getTime() === slot.startTime.getTime() &&
       booking.userId.toString() === userId
     );
@@ -975,7 +985,7 @@ export class SessionService {
   private async transformToResponseDto(session: SessionDocument, community?: CommunityDocument | null): Promise<SessionResponseDto> {
     // Récupérer les informations du créateur
     const creator = await this.userModel.findById(session.creatorId).select('name email profile_picture');
-    
+
     // Transformer les réservations
     const bookingUserIds = session.bookings.map(b => b.userId);
     const bookingUsers = await this.userModel.find({ _id: { $in: bookingUserIds } }).select('name email profile_picture');
@@ -1048,7 +1058,7 @@ export class SessionService {
    */
   private transformToAvailableSlotsResponseDto(session: SessionDocument, startDate?: Date, endDate?: Date): AvailableSlotsResponseDto {
     let slots = session.availableSlots || [];
-    
+
     // Filtrer par plage de dates si spécifiée
     if (startDate) {
       slots = slots.filter(slot => slot.startTime >= startDate);

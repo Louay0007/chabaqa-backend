@@ -620,25 +620,34 @@ export class ChallengeService {
       throw new BadRequestException('Vous êtes déjà participant à ce défi');
     }
 
-    // Si participation payante, créer un order avec fees
+    // Si participation payante, créer un order avec fees s'il n'existe pas déjà
     const price = challenge.pricing?.participationFee || 0;
     if (price > 0) {
-      const breakdown = await this.feeService.calculateForAmount(
-        price,
-        challenge.creatorId.toString(),
-      );
-      await (this.challengeModel as any).db.model('Order').create({
+      const existingOrder = await (this.challengeModel as any).db.model('Order').findOne({
         buyerId: new Types.ObjectId(userId),
-        creatorId: challenge.creatorId,
         contentType: TrackableContentType.CHALLENGE,
         contentId: challenge._id.toString(),
-        amountDT: breakdown.amountDT,
-        platformPercent: breakdown.platformPercent,
-        platformFixedDT: breakdown.platformFixedDT,
-        platformFeeDT: breakdown.platformFeeDT,
-        creatorNetDT: breakdown.creatorNetDT,
         status: 'paid',
       });
+
+      if (!existingOrder) {
+        const breakdown = await this.feeService.calculateForAmount(
+          price,
+          challenge.creatorId.toString(),
+        );
+        await (this.challengeModel as any).db.model('Order').create({
+          buyerId: new Types.ObjectId(userId),
+          creatorId: challenge.creatorId,
+          contentType: TrackableContentType.CHALLENGE,
+          contentId: challenge._id.toString(),
+          amountDT: breakdown.amountDT,
+          platformPercent: breakdown.platformPercent,
+          platformFixedDT: breakdown.platformFixedDT,
+          platformFeeDT: breakdown.platformFeeDT,
+          creatorNetDT: breakdown.creatorNetDT,
+          status: 'paid',
+        });
+      }
     }
 
     // Ajouter le participant

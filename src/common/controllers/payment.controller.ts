@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Query, Get, BadRequestException, UnauthorizedException, Req, UseGuards, UseInterceptors, UploadedFile } from '@nestjs/common';
+import { Controller, Post, Body, Query, Get, BadRequestException, UnauthorizedException, Req, UseGuards, UseInterceptors, UploadedFile, Param } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import * as crypto from 'crypto';
 import { ApiTags, ApiOperation, ApiQuery, ApiBearerAuth } from '@nestjs/swagger';
@@ -1218,5 +1218,62 @@ export class PaymentController {
       paymentProof: uploadResult.url
     });
 
+    return {
+      success: true,
+      message: 'Payment submitted for verification',
+      orderId: order._id
+    };
+  }
+
+  @Get('manual/pending')
+  @ApiOperation({ summary: 'Get pending manual payments for the logged-in creator' })
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  async getPendingManualPayments(@Req() req: any) {
+    const userId = (req.user?._id || req.user?.sub || '').toString();
+    const payments = await this.manualPaymentService.getPendingPaymentsForCreator(userId);
+    return { success: true, data: payments };
+  }
+
+  @Post('manual/verify/:orderId')
+  @ApiOperation({ summary: 'Verify (approve or reject) a manual payment' })
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  async verifyManualPayment(
+    @Param('orderId') orderId: string,
+    @Body('action') action: 'approve' | 'reject',
+    @Req() req: any
+  ) {
+    const userId = (req.user?._id || req.user?.sub || '').toString();
+    if (!['approve', 'reject'].includes(action)) {
+      throw new BadRequestException('Invalid action. Must be "approve" or "reject"');
+    }
+
+    try {
+      const order = await this.manualPaymentService.verifyPayment(orderId, userId, action);
+
+      // If approved, trigger content access granting logic if needed
+      if (action === 'approve') {
+        if (order.contentType === TrackableContentType.COMMUNITY) {
+          const community = await this.communityModel.findById(order.contentId);
+          if (community) {
+            community.addMember(order.buyerId);
+            await community.save();
+          }
+        } else if (order.contentType === TrackableContentType.SUBSCRIPTION) {
+          // contentId holds plan tier string
+          const tier = (order.contentId || 'STARTER') as PlanTier;
+          await this.subscriptionService.upgradePlan(order.buyerId.toString(), tier);
+        } else if (order.contentType === TrackableContentType.COURSE) {
+          await this.coursService.inscrireAuCours(order.contentId, order.buyerId.toString());
+        } else if (order.contentType === TrackableContentType.CHALLENGE) {
+          await this.challengeService.joinChallenge({ challengeId: order.contentId } as any, order.buyerId.toString());
+        }
+      }
+
+      return { success: true, message: `Payment ${action}ed successfully`, order };
+    } catch (error: any) {
+      throw new BadRequestException(error.message || 'Failed to verify payment');
+    }
   }
 }
