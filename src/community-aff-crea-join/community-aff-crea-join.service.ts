@@ -140,7 +140,9 @@ export class CommunityAffCreaJoinService {
           showFAQ: true,
           enableAnimations: true,
           enableParallax: false,
-          logo: communityDataAvecLogo.logo || 'https://via.placeholder.com/150',
+          logo: this.uploadService.ensureAbsoluteUrl(
+            communityDataAvecLogo.logo || 'https://via.placeholder.com/150'
+          ),
           heroBackground: 'https://via.placeholder.com/1200x600',
           gallery: [],
           videoUrl: '',
@@ -155,13 +157,21 @@ export class CommunityAffCreaJoinService {
         admins: [new Types.ObjectId(userId)],
         membersCount: 1,
 
-        // Valeurs par défaut pour les champs requis du schéma
-        logo: communityDataAvecLogo.logo || socialLinks.website || socialLinks.instagram || socialLinks.facebook || 'https://via.placeholder.com/150',
-        photo_de_couverture: communityDataAvecLogo.coverImage || 'https://via.placeholder.com/800x400',
-        creatorAvatar: user.profile_picture || 'https://via.placeholder.com/100',
+        // Valeurs par défaut pour les champs requis du schéma avec URLs absolues
+        logo: this.uploadService.ensureAbsoluteUrl(
+          communityDataAvecLogo.logo || socialLinks.website || socialLinks.instagram || socialLinks.facebook || 'https://via.placeholder.com/150'
+        ),
+        photo_de_couverture: this.uploadService.ensureAbsoluteUrl(
+          communityDataAvecLogo.coverImage || 'https://via.placeholder.com/800x400'
+        ),
+        creatorAvatar: this.uploadService.ensureAbsoluteUrl(
+          user.profile_picture || 'https://via.placeholder.com/100'
+        ),
         category: communityDataAvecLogo.category || 'Général',
         priceType: communityDataAvecLogo.joinFee === 'paid' ? 'one-time' : 'free',
-        image: communityDataAvecLogo.image || 'https://via.placeholder.com/600x400',
+        image: this.uploadService.ensureAbsoluteUrl(
+          communityDataAvecLogo.image || 'https://via.placeholder.com/600x400'
+        ),
         tags: communityDataAvecLogo.tags || [communityDataAvecLogo.country],
         featured: false,
 
@@ -243,23 +253,37 @@ export class CommunityAffCreaJoinService {
    * @returns Communauté transformée pour le frontend
    */
   private transformCommunityForFrontend(community: CommunityDocument): any {
+    // Extract logo with proper fallback chain and ensure absolute URL
+    const logoUrl = this.uploadService.ensureAbsoluteUrl(
+      community.settings?.logo ||
+      community.logo ||
+      'https://via.placeholder.com/150?text=Community'
+    );
+
     return {
       _id: community._id,
       id: community._id.toString(),
       slug: community.slug,
       name: community.name,
+      logo: logoUrl, // ✨ Top-level logo field for easy access
       creator: {
         id: community.createur.toString(),
         name: (community.createur as any)?.name || 'Unknown Creator',
-        avatar: (community.createur as any)?.profile_picture || 'https://placehold.co/64x64?text=U',
+        avatar: this.uploadService.ensureAbsoluteUrl(
+          (community.createur as any)?.profile_picture || 'https://placehold.co/64x64?text=U'
+        ),
         verified: false, // TODO: Add verified status
       },
       creatorId: community.createur.toString(),
-      creatorAvatar: (community.createur as any)?.profile_picture || community.creatorAvatar,
+      creatorAvatar: this.uploadService.ensureAbsoluteUrl(
+        (community.createur as any)?.profile_picture || community.creatorAvatar
+      ),
       description: community.short_description,
       longDescription: community.longDescription || community.short_description,
-      coverImage: community.coverImage || community.photo_de_couverture,
-      image: community.image,
+      coverImage: this.uploadService.ensureAbsoluteUrl(
+        community.coverImage || community.photo_de_couverture
+      ),
+      image: this.uploadService.ensureAbsoluteUrl(community.image),
       category: community.category,
       members: community.membersCount,
       rating: community.rating || 0,
@@ -288,9 +312,11 @@ export class CommunityAffCreaJoinService {
         showFAQ: community.settings?.showFAQ ?? true,
         enableAnimations: community.settings?.enableAnimations ?? true,
         enableParallax: community.settings?.enableParallax ?? false,
-        logo: community.settings?.logo || community.logo,
-        heroBackground: community.settings?.heroBackground || 'https://via.placeholder.com/1200x600',
-        gallery: community.settings?.gallery || [],
+        logo: logoUrl, // Use the same logo URL for consistency
+        heroBackground: this.uploadService.ensureAbsoluteUrl(
+          community.settings?.heroBackground || 'https://via.placeholder.com/1200x600'
+        ),
+        gallery: (community.settings?.gallery || []).map(url => this.uploadService.ensureAbsoluteUrl(url)),
         videoUrl: community.settings?.videoUrl || '',
         socialLinks: {
           twitter: community.settings?.socialLinks?.twitter || '',
