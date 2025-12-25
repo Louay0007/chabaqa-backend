@@ -103,7 +103,9 @@ export class EventService {
     const filter: any = {};
 
     if (communityId) {
-      filter.communityId = new Types.ObjectId(communityId);
+      filter.communityId = Types.ObjectId.isValid(communityId)
+        ? new Types.ObjectId(communityId)
+        : communityId;
     }
     if (category) {
       filter.category = category;
@@ -180,8 +182,23 @@ export class EventService {
   /**
    * Récupérer les événements d'un créateur
    */
-  async findByCreator(creatorId: string, page: number = 1, limit: number = 10): Promise<EventListResponseDto> {
-    return this.findAll(page, limit, undefined, undefined, undefined, undefined, undefined, undefined, creatorId);
+  async findByCreator(
+    creatorId: string,
+    page: number = 1,
+    limit: number = 10,
+    communityId?: string
+  ): Promise<EventListResponseDto> {
+    return this.findAll(
+      page,
+      limit,
+      communityId,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      creatorId
+    );
   }
 
   /**

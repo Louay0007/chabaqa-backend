@@ -441,22 +441,33 @@ export class CoursService {
   /**
    * Obtenir les cours créés par un utilisateur
    */
-  async obtenirCoursParCreateur(creatorId: string, page: number = 1, limit: number = 10) {
+  async obtenirCoursParCreateur(creatorId: string, page: number = 1, limit: number = 10, communityId?: string) {
     const skip = (page - 1) * limit;
 
     console.log('🔧 DEBUG - obtenirCoursParCreateur');
     console.log(`   👤 Creator ID: ${creatorId}`);
     console.log(`   📄 Page: ${page}, Limit: ${limit}`);
+    if (communityId) {
+      console.log(`   🏢 Community filter: ${communityId}`);
+    }
+
+    const baseFilter: any = { creatorId: new Types.ObjectId(creatorId) };
+    if (communityId) {
+      // Accept either ObjectId or string id
+      baseFilter.communityId = Types.ObjectId.isValid(communityId)
+        ? new Types.ObjectId(communityId).toString()
+        : communityId;
+    }
 
     const [cours, total] = await Promise.all([
       this.coursModel
-        .find({ creatorId: new Types.ObjectId(creatorId) })
+        .find(baseFilter)
         .populate('creatorId', 'name email profile_picture photo_profil')
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
         .exec(),
-      this.coursModel.countDocuments({ creatorId: new Types.ObjectId(creatorId) })
+      this.coursModel.countDocuments(baseFilter)
     ]);
 
     console.log(`   📊 Cours trouvés: ${cours.length}/${total}`);

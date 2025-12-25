@@ -4,6 +4,7 @@ import { Model, Types } from 'mongoose';
 import { Payout, PayoutDocument, PayoutStatus, PayoutMethod } from '../schema/payout.schema';
 import { User, UserDocument } from '../schema/user.schema';
 import { Order, OrderDocument } from '../schema/order.schema';
+import { Community, CommunityDocument } from '../schema/community.schema';
 
 export interface CreatePayoutDto {
   creatorId: string;
@@ -14,6 +15,7 @@ export interface CreatePayoutDto {
   scheduledFor?: Date;
   itemsCount?: number;
   metadata?: any;
+  communityId: string;
 }
 
 export interface UpdatePayoutDto {
@@ -25,6 +27,7 @@ export interface UpdatePayoutDto {
 
 export interface GetPayoutsQuery {
   creatorId?: string;
+  communityId?: string;
   status?: PayoutStatus;
   method?: PayoutMethod;
   startDate?: Date;
@@ -39,6 +42,7 @@ export class PayoutService {
     @InjectModel(Payout.name) private readonly payoutModel: Model<PayoutDocument>,
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
     @InjectModel(Order.name) private readonly orderModel: Model<OrderDocument>,
+    @InjectModel(Community.name) private readonly communityModel: Model<CommunityDocument>,
   ) { }
 
   /**
@@ -62,8 +66,23 @@ export class PayoutService {
       description,
       scheduledFor,
       itemsCount = 0,
-      metadata
+      metadata,
+      communityId
     } = createPayoutDto;
+
+    // Require community context
+    if (!communityId) {
+      throw new BadRequestException('communityId is required for payouts');
+    }
+
+    // Validate community and ownership
+    const community = await this.communityModel.findById(communityId).select('createur');
+    if (!community) {
+      throw new NotFoundException('Community not found');
+    }
+    if (community.createur?.toString() !== creatorId.toString()) {
+      throw new BadRequestException('You can only request payouts for your own community');
+    }
 
     // Validate creator exists
     const creator = await this.userModel.findById(creatorId);
@@ -79,6 +98,7 @@ export class PayoutService {
     // Create payout record
     const payoutData = {
       creatorId,
+      communityId: new Types.ObjectId(communityId),
       amount,
       currency,
       method,
@@ -110,6 +130,7 @@ export class PayoutService {
   }> {
     const {
       creatorId,
+      communityId,
       status,
       method,
       startDate,
@@ -121,6 +142,11 @@ export class PayoutService {
     // Build filter
     const filter: any = {};
     if (creatorId) filter.creatorId = new Types.ObjectId(creatorId);
+    if (communityId) {
+      filter.communityId = Types.ObjectId.isValid(communityId)
+        ? new Types.ObjectId(communityId)
+        : communityId;
+    }
     if (status) filter.status = status;
     if (method) filter.method = method;
     if (startDate || endDate) {
@@ -182,80 +208,11 @@ export class PayoutService {
   /**
    * Get a specific payout by ID
    */
-  async getPayoutById(payoutId: string): Promise<Payout | null> {
+  async getPayout(payoutId: string): Promise<Payout | null> {
     return await this.payoutModel
       .findById(payoutId)
       .populate('creatorId', 'name email')
       .exec();
-  }
-
-  /**
-   * Get payouts by creator
-   */
-  async getPayoutsByCreator(creatorId: string, query?: Partial<GetPayoutsQuery>): Promise<{
-    payouts: Payout[];
-    total: number;
-    availableBalance: number;
-    nextPayout?: Payout;
-  }> {
-    const result = await this.getPayouts({
-      creatorId,
-      ...query
-    });
-
-    // Calculate total lifetime earnings from paid orders
-    const totalEarningsResult = await this.orderModel.aggregate([
-      {
-        $match: {
-          creatorId: new Types.ObjectId(creatorId),
-          status: 'paid'
-        }
-      },
-      {
-        $group: {
-          _id: null,
-          total: { $sum: '$creatorNetDT' }
-        }
-      }
-    ]);
-    const totalEarnings = totalEarningsResult[0]?.total || 0;
-
-    // Calculate total payouts (completed + pending + scheduled)
-    // We exclude FAILED and CANCELLED as those funds should return to balance
-    const totalPayoutsResult = await this.payoutModel.aggregate([
-      {
-        $match: {
-          creatorId: new Types.ObjectId(creatorId),
-          status: { $in: [PayoutStatus.COMPLETED, PayoutStatus.PENDING, PayoutStatus.SCHEDULED] }
-        }
-      },
-      {
-        $group: {
-          _id: null,
-          total: { $sum: '$amount' }
-        }
-      }
-    ]);
-    const totalPayouts = totalPayoutsResult[0]?.total || 0;
-
-    const availableBalance = Math.max(0, totalEarnings - totalPayouts);
-
-    // Get next scheduled payout
-    const nextPayout = await this.payoutModel
-      .findOne({
-        creatorId: new Types.ObjectId(creatorId),
-        status: PayoutStatus.SCHEDULED,
-        scheduledFor: { $gte: new Date() }
-      })
-      .sort({ scheduledFor: 1 })
-      .exec();
-
-    return {
-      payouts: result.payouts,
-      total: result.total,
-      availableBalance: availableBalance || 0,
-      nextPayout: nextPayout || undefined
-    };
   }
 
   /**
@@ -320,9 +277,114 @@ export class PayoutService {
   }
 
   /**
-   * Get payout statistics for a creator
+   * Get payouts by creator (and optional community), with available balance calculation.
+   * Includes fallback: if community filter yields no earnings/payouts, retry without the filter.
    */
-  async getPayoutStats(creatorId: string): Promise<{
+  async getPayoutsByCreator(creatorId: string, query: Partial<GetPayoutsQuery> = {}): Promise<{
+    payouts: Payout[];
+    total: number;
+    availableBalance: number;
+    nextPayout?: Payout;
+  }> {
+    const result = await this.getPayouts({
+      creatorId,
+      ...query
+    });
+
+    // Earnings from paid orders (optionally filtered by community)
+    const earningsMatch: any = {
+      creatorId: new Types.ObjectId(creatorId),
+      status: 'paid'
+    };
+    if (query.communityId) {
+      earningsMatch.communityId = Types.ObjectId.isValid(query.communityId)
+        ? new Types.ObjectId(query.communityId)
+        : query.communityId;
+    }
+
+    const totalEarningsPipeline = [
+      {
+        $match: earningsMatch
+      },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: '$creatorNetDT' }
+        }
+      }
+    ];
+    if (query.communityId) {
+      totalEarningsPipeline[0].$match.communityId = Types.ObjectId.isValid(query.communityId)
+        ? new Types.ObjectId(query.communityId)
+        : query.communityId;
+    }
+
+    let totalEarningsResult = await this.orderModel.aggregate(totalEarningsPipeline);
+    if (query.communityId && totalEarningsResult.length === 0) {
+      // Fallback to all communities if community filter produced no earnings
+      totalEarningsResult = await this.orderModel.aggregate([
+        {
+          $match: {
+            creatorId: new Types.ObjectId(creatorId),
+            status: 'paid'
+          }
+        },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: '$creatorNetDT' }
+          }
+        }
+      ]);
+    }
+
+    const totalEarnings = totalEarningsResult[0]?.total ?? 0;
+
+    // Payouts already requested (completed + pending + scheduled)
+    const payoutMatch: any = {
+      creatorId: new Types.ObjectId(creatorId),
+      status: { $in: [PayoutStatus.COMPLETED, PayoutStatus.PENDING, PayoutStatus.SCHEDULED] }
+    };
+    if (query.communityId) {
+      payoutMatch.communityId = Types.ObjectId.isValid(query.communityId)
+        ? new Types.ObjectId(query.communityId)
+        : query.communityId;
+    }
+
+    let payoutTotals = await this.payoutModel.aggregate([
+      { $match: payoutMatch },
+      { $group: { _id: null, total: { $sum: '$amount' } } }
+    ]);
+    if (query.communityId && payoutTotals.length === 0) {
+      payoutTotals = await this.payoutModel.aggregate([
+        {
+          $match: {
+            creatorId: new Types.ObjectId(creatorId),
+            status: { $in: [PayoutStatus.COMPLETED, PayoutStatus.PENDING, PayoutStatus.SCHEDULED] }
+          }
+        },
+        { $group: { _id: null, total: { $sum: '$amount' } } }
+      ]);
+    }
+    const totalPayouts = payoutTotals[0]?.total || 0;
+
+    const availableBalance = Math.max(0, totalEarnings - totalPayouts);
+
+    const nextPayout = result.payouts.find(p => p.status === PayoutStatus.SCHEDULED)
+      || result.payouts.find(p => p.status === PayoutStatus.PENDING);
+
+    return {
+      payouts: result.payouts,
+      total: result.total,
+      availableBalance,
+      nextPayout
+    };
+  }
+
+  /**
+   * Get payout statistics for a creator (optionally filtered by community)
+   */
+  async getPayoutStats(creatorId: string, communityId?: string): Promise<{
     totalPaid: number;
     pendingAmount: number;
     totalPayouts: number;
@@ -330,11 +392,16 @@ export class PayoutService {
     averagePayout: number;
     recentPayouts: Payout[];
   }> {
+    const match: any = { creatorId: new Types.ObjectId(creatorId) };
+    if (communityId) {
+      match.communityId = Types.ObjectId.isValid(communityId)
+        ? new Types.ObjectId(communityId)
+        : communityId;
+    }
+
     const stats = await this.payoutModel.aggregate([
       {
-        $match: {
-          creatorId: new Types.ObjectId(creatorId)
-        }
+        $match: match
       },
       {
         $group: {
@@ -375,10 +442,15 @@ export class PayoutService {
       }
     ]);
 
+    const recentFilter: any = { creatorId: new Types.ObjectId(creatorId) };
+    if (communityId) {
+      recentFilter.communityId = Types.ObjectId.isValid(communityId)
+        ? new Types.ObjectId(communityId)
+        : communityId;
+    }
+
     const recentPayouts = await this.payoutModel
-      .find({
-        creatorId: new Types.ObjectId(creatorId)
-      })
+      .find(recentFilter)
       .sort({ createdAt: -1 })
       .limit(5)
       .exec();
@@ -413,9 +485,14 @@ export class PayoutService {
   /**
    * Export payouts for accounting
    */
-  async exportPayouts(creatorId?: string, startDate?: Date, endDate?: Date): Promise<Payout[]> {
+  async exportPayouts(creatorId?: string, communityId?: string, startDate?: Date, endDate?: Date): Promise<Payout[]> {
     const filter: any = {};
     if (creatorId) filter.creatorId = new Types.ObjectId(creatorId);
+    if (communityId) {
+      filter.communityId = Types.ObjectId.isValid(communityId)
+        ? new Types.ObjectId(communityId)
+        : communityId;
+    }
     if (startDate || endDate) {
       filter.createdAt = {};
       if (startDate) filter.createdAt.$gte = startDate;

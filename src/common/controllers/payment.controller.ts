@@ -85,6 +85,7 @@ export class PaymentController {
     const pendingOrder = await this.orderModel.create({
       buyerId: new Types.ObjectId(userId),
       creatorId: community.createur,
+      communityId: community._id,
       contentType: TrackableContentType.COMMUNITY,
       contentId: community._id.toString(),
       amountDT: breakdown.amountDT,
@@ -536,6 +537,7 @@ export class PaymentController {
     const pendingOrder = await this.orderModel.create({
       buyerId: new Types.ObjectId(userId),
       creatorId: community.createur,
+      communityId: community._id,
       contentType: TrackableContentType.COMMUNITY,
       contentId: community._id.toString(),
       amountDT: breakdown.amountDT,
@@ -903,6 +905,7 @@ export class PaymentController {
     const order = await this.orderModel.create({
       buyerId: new Types.ObjectId(userId),
       creatorId: community.createur,
+      communityId: community._id,
       contentType: TrackableContentType.COMMUNITY,
       contentId: community._id.toString(),
       amountDT: breakdown.amountDT,

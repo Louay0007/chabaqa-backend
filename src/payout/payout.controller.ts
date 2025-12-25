@@ -10,6 +10,7 @@ export interface CreatePayoutDto {
   method: PayoutMethod;
   description?: string;
   itemsCount?: number;
+  communityId: string;
 }
 
 export interface UpdatePayoutDto {
@@ -37,9 +38,10 @@ export class PayoutController {
           example: PayoutMethod.BANK_TRANSFER
         },
         description: { type: 'string', example: 'Monthly earnings' },
-        itemsCount: { type: 'number', example: 10 }
+        itemsCount: { type: 'number', example: 10 },
+        communityId: { type: 'string', example: '64fa...' }
       },
-      required: ['amount', 'method']
+      required: ['amount', 'method', 'communityId']
     }
   })
   @ApiResponse({ status: 201, description: 'Payout requested successfully' })
@@ -67,6 +69,7 @@ export class PayoutController {
   @ApiQuery({ name: 'limit', required: false, type: 'number', example: 20 })
   @ApiQuery({ name: 'startDate', required: false, type: 'string', format: 'date' })
   @ApiQuery({ name: 'endDate', required: false, type: 'string', format: 'date' })
+  @ApiQuery({ name: 'communityId', required: false, type: 'string', description: 'Filter by community' })
   async getPayouts(
     @Request() req: any,
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
@@ -74,12 +77,14 @@ export class PayoutController {
     @Query('status') status?: PayoutStatus,
     @Query('method') method?: PayoutMethod,
     @Query('startDate') startDate?: string,
-    @Query('endDate') endDate?: string
+    @Query('endDate') endDate?: string,
+    @Query('communityId') communityId?: string
   ): Promise<any> {
     const creatorId = req.user._id || req.user.sub;
     
     return this.payoutService.getPayouts({
       creatorId,
+      communityId,
       status,
       method,
       page,
@@ -93,19 +98,21 @@ export class PayoutController {
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({ summary: 'Get payout statistics for the current creator' })
-  async getPayoutStats(@Request() req: any): Promise<any> {
+  @ApiQuery({ name: 'communityId', required: false, type: 'string', description: 'Filter by community' })
+  async getPayoutStats(@Request() req: any, @Query('communityId') communityId?: string): Promise<any> {
     const creatorId = req.user._id || req.user.sub;
-    return this.payoutService.getPayoutStats(creatorId);
+    return this.payoutService.getPayoutStats(creatorId, communityId);
   }
 
   @Get('available-balance')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({ summary: 'Get available balance for the current creator' })
-  async getAvailableBalance(@Request() req: any): Promise<{ availableBalance: number }> {
+  @ApiQuery({ name: 'communityId', required: false, type: 'string', description: 'Filter by community' })
+  async getAvailableBalance(@Request() req: any, @Query('communityId') communityId?: string): Promise<{ availableBalance: number }> {
     const creatorId = req.user._id || req.user.sub;
     
-    const result = await this.payoutService.getPayoutsByCreator(creatorId);
+    const result = await this.payoutService.getPayoutsByCreator(creatorId, { communityId });
     return {
       availableBalance: result.availableBalance
     };
@@ -118,7 +125,7 @@ export class PayoutController {
   @ApiResponse({ status: 200, description: 'Payout found' })
   @ApiResponse({ status: 404, description: 'Payout not found' })
   async getPayoutById(@Param('id') payoutId: string): Promise<Payout | null> {
-    return this.payoutService.getPayoutById(payoutId);
+    return this.payoutService.getPayout(payoutId);
   }
 
   @Put(':id')

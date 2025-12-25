@@ -114,13 +114,15 @@ export class EventController {
   @ApiOperation({ summary: 'Récupérer les événements d\'un créateur' })
   @ApiQuery({ name: 'page', required: false, type: Number, description: 'Numéro de page' })
   @ApiQuery({ name: 'limit', required: false, type: Number, description: 'Nombre d\'éléments par page' })
+  @ApiQuery({ name: 'communityId', required: false, type: String, description: 'ID de la communauté (filtre)' })
   @ApiResponse({ status: 200, description: 'Événements du créateur récupérés avec succès', type: EventListResponseDto })
   async findByCreator(
     @Param('creatorId') creatorId: string,
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
-    @Query('limit', new DefaultValuePipe(10), ParseIntPipe) limit: number
+    @Query('limit', new DefaultValuePipe(10), ParseIntPipe) limit: number,
+    @Query('communityId') communityId?: string
   ): Promise<{ success: boolean; data: EventListResponseDto }> {
-    const events = await this.eventService.findByCreator(creatorId, page, limit);
+    const events = await this.eventService.findByCreator(creatorId, page, limit, communityId);
     return { success: true, data: events };
   }
 

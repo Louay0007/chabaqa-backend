@@ -143,7 +143,9 @@ export class ProductService {
 
     // Filtres
     if (communityId) {
-      query.communityId = communityId;
+      query.communityId = Types.ObjectId.isValid(communityId)
+        ? new Types.ObjectId(communityId).toString()
+        : communityId;
     }
     if (creatorId) {
       query.creatorId = new Types.ObjectId(creatorId);
@@ -485,8 +487,14 @@ export class ProductService {
   /**
    * Récupérer les produits d'un créateur
    */
-  async findByCreator(creatorId: string, page: number = 1, limit: number = 10, type?: string): Promise<ProductListResponseDto> {
-    return this.findAll(page, limit, undefined, creatorId, undefined, type);
+  async findByCreator(
+    creatorId: string,
+    page: number = 1,
+    limit: number = 10,
+    communityId?: string,
+    type?: string,
+  ): Promise<ProductListResponseDto> {
+    return this.findAll(page, limit, communityId, creatorId, undefined, type);
   }
 
   /**
@@ -613,7 +621,7 @@ export class ProductService {
     }));
 
     // Récupérer les informations du créateur
-    const creator = await this.userModel.findById(product.creatorId).select('name email profile_picture');
+    const creator = await this.userModel.findById(product.creatorId).select('name email profile_picture photo_profil');
 
     return {
       id: product.id,
@@ -636,21 +644,21 @@ export class ProductService {
         id: product.creatorId.toString(),
         name: creator?.name || 'Créateur inconnu',
         email: creator?.email || '',
-        avatar: this.uploadService.ensureAbsoluteUrl(creator?.profile_picture || creator?.photo_profil)
+        avatar: this.uploadService.ensureAbsoluteUrl((creator as any)?.profile_picture || (creator as any)?.photo_profil)
       },
       isPublished: product.isPublished,
       inventory: product.inventory,
       sales: product.sales,
       category: product.category,
       type: product.type,
-      images: images,
-      variants: variants,
-      files: files,
+      images,
+      variants,
+      files,
       rating: product.rating,
-      licenseTerms: product.licenseTerms,
-      isRecurring: product.isRecurring,
-      recurringInterval: product.recurringInterval,
-      features: product.features,
+      licenseTerms: (product as any).licenseTerms,
+      isRecurring: (product as any).isRecurring,
+      recurringInterval: (product as any).recurringInterval,
+      features: (product as any).features,
       createdAt: product.createdAt.toISOString(),
       updatedAt: product.updatedAt.toISOString()
     };

@@ -293,13 +293,21 @@ export class CoursController {
 	@ApiOperation({ summary: 'Lister les cours créés par l\'utilisateur' })
 	@ApiQuery({ name: 'page', required: false, type: Number, description: 'Numéro de page' })
 	@ApiQuery({ name: 'limit', required: false, type: Number, description: 'Nombre d\'éléments par page' })
+	@ApiQuery({ name: 'communityId', required: false, type: String, description: 'Filtrer par communauté' })
 	async getCoursCreated(
+		@Req() req,
 		@Query('page') page = '1',
 		@Query('limit') limit = '10',
-		@Req() req,
+		@Query('communityId') communityId?: string,
 	) {
 		const user = req.user as AuthenticatedUser;
-		const result = await this.coursService.obtenirCoursParCreateur(user._id, Number(page) || 1, Number(limit) || 10);
+		const result = await this.coursService.obtenirCoursParCreateur(
+			user._id,
+			Number(page) || 1,
+			Number(limit) || 10,
+			communityId,
+		);
+
 		return {
 			success: true,
 			message: 'Courses retrieved successfully',

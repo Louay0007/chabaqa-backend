@@ -292,7 +292,16 @@ export class SubscriptionService {
               $cond: [{ $eq: ['$status', SubscriptionStatus.PAST_DUE] }, 1, 0]
             }
           },
-          totalRevenue: { $sum: '$amount' } // This would need to be calculated differently
+          revenueActiveTrial: {
+            $sum: {
+              $cond: [
+                { $in: ['$status', [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING, SubscriptionStatus.PAST_DUE]] },
+                '$amount',
+                0
+              ]
+            }
+          },
+          totalAmount: { $sum: '$amount' }
         }
       }
     ]);
@@ -303,12 +312,15 @@ export class SubscriptionService {
       trialSubscribers: 0,
       canceledSubscribers: 0,
       pastDueSubscribers: 0,
-      totalRevenue: 0
+      revenueActiveTrial: 0,
+      totalAmount: 0
     };
 
-    // Calculate average subscription value (mock data for now)
-    const averageSubscriptionValue = result.totalSubscribers > 0 ? 21.42 : 0; // Mock value
-    const monthlyRevenue = result.activeSubscribers * averageSubscriptionValue;
+    const activeOrTrialCount = result.activeSubscribers + result.trialSubscribers;
+    const averageSubscriptionValue = activeOrTrialCount > 0
+      ? result.revenueActiveTrial / activeOrTrialCount
+      : 0;
+    const monthlyRevenue = result.revenueActiveTrial;
 
     return {
       totalSubscribers: result.totalSubscribers,
@@ -356,6 +368,7 @@ export class SubscriptionService {
       this.subModel
         .find(filter)
         .populate('creatorId', 'name email')
+        .populate('subscriberId', 'name email')
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limitNum)
@@ -364,29 +377,38 @@ export class SubscriptionService {
     ]);
 
     // Transform to response DTOs
-    const subscriptionDtos: SubscriptionResponseDto[] = subscriptions.map(sub => ({
-      id: sub._id.toString(),
-      creatorId: sub.creatorId.toString(),
-      plan: sub.plan,
-      provider: sub.provider || '',
-      providerCustomerId: sub.providerCustomerId || undefined,
-      providerSubscriptionId: sub.providerSubscriptionId || undefined,
-      trialEndsAt: sub.trialEndsAt || undefined,
-      currentPeriodStart: sub.currentPeriodStart,
-      currentPeriodEnd: sub.currentPeriodEnd,
-      status: sub.status,
-      cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
-      communitiesMax: sub.communitiesMax,
-      membersMax: sub.membersMax,
-      coursesActivationMax: sub.coursesActivationMax,
-      storageGB: sub.storageGB,
-      adminsMax: sub.adminsMax,
-      hasPaymentMethod: sub.hasPaymentMethod,
-      paymentBrand: sub.paymentBrand || undefined,
-      paymentLast4: sub.paymentLast4 || undefined,
-      createdAt: (sub as any).createdAt,
-      updatedAt: (sub as any).updatedAt
-    }));
+    const subscriptionDtos: SubscriptionResponseDto[] = subscriptions.map(sub => {
+      const subscriberPopulated = (sub as any).subscriberId;
+      const subscriberEmail = subscriberPopulated?.email;
+      return {
+        id: sub._id.toString(),
+        creatorId: sub.creatorId.toString(),
+        subscriberId: sub.subscriberId?.toString?.() || '',
+        subscriberEmail,
+        plan: sub.plan,
+        provider: sub.provider || '',
+        providerCustomerId: sub.providerCustomerId || undefined,
+        providerSubscriptionId: sub.providerSubscriptionId || undefined,
+        trialEndsAt: sub.trialEndsAt || undefined,
+        currentPeriodStart: sub.currentPeriodStart,
+        currentPeriodEnd: sub.currentPeriodEnd,
+        nextBillingAt: sub.nextBillingAt,
+        status: sub.status,
+        cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
+        amount: sub.amount ?? 0,
+        currency: sub.currency || 'TND',
+        communitiesMax: sub.communitiesMax,
+        membersMax: sub.membersMax,
+        coursesActivationMax: sub.coursesActivationMax,
+        storageGB: sub.storageGB,
+        adminsMax: sub.adminsMax,
+        hasPaymentMethod: sub.hasPaymentMethod,
+        paymentBrand: sub.paymentBrand || undefined,
+        paymentLast4: sub.paymentLast4 || undefined,
+        createdAt: (sub as any).createdAt,
+        updatedAt: (sub as any).updatedAt
+      };
+    });
 
     return new PaginatedResponseDto(subscriptionDtos, total, pageNum, limitNum);
   }
@@ -535,6 +557,9 @@ export class SubscriptionService {
     return {
       id: subscription._id.toString(),
       creatorId: subscription.creatorId.toString(),
+      subscriberId: subscription.subscriberId?.toString?.() || '',
+      // subscriberEmail populated only when query populates subscriberId; here we return undefined
+      subscriberEmail: undefined,
       plan: subscription.plan,
       provider: subscription.provider || '',
       providerCustomerId: subscription.providerCustomerId || undefined,
@@ -542,8 +567,11 @@ export class SubscriptionService {
       trialEndsAt: subscription.trialEndsAt || undefined,
       currentPeriodStart: subscription.currentPeriodStart,
       currentPeriodEnd: subscription.currentPeriodEnd,
+      nextBillingAt: subscription.nextBillingAt,
       status: subscription.status,
       cancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
+      amount: subscription.amount ?? 0,
+      currency: subscription.currency || 'TND',
       communitiesMax: subscription.communitiesMax,
       membersMax: subscription.membersMax,
       coursesActivationMax: subscription.coursesActivationMax,

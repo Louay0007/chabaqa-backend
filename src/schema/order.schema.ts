@@ -14,6 +14,10 @@ export class Order {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true })
   creatorId: Types.ObjectId;
 
+  // Optional: ties order to a community for community-related purchases
+  @Prop({ type: Types.ObjectId, ref: 'Community' })
+  communityId?: Types.ObjectId;
+
   @Prop({ type: String, enum: Object.values(TrackableContentType), required: true })
   contentType: TrackableContentType;
 
@@ -59,5 +63,6 @@ OrderSchema.index({ creatorId: 1, createdAt: -1 });
 OrderSchema.index({ buyerId: 1, createdAt: -1 });
 OrderSchema.index({ contentType: 1, contentId: 1 });
 OrderSchema.index({ paymentId: 1 });
+OrderSchema.index({ communityId: 1 });
 
 

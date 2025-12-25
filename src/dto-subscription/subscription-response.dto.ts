@@ -9,6 +9,12 @@ export class SubscriptionResponseDto {
   @ApiProperty({ example: '507f1f77bcf86cd799439012' })
   creatorId: string;
 
+  @ApiProperty({ example: '507f1f77bcf86cd799439099' })
+  subscriberId: string;
+
+  @ApiPropertyOptional({ example: 'customer@example.com' })
+  subscriberEmail?: string;
+
   @ApiProperty({ enum: PlanTier, example: PlanTier.STARTER })
   plan: PlanTier;
 
@@ -59,6 +65,15 @@ export class SubscriptionResponseDto {
 
   @ApiPropertyOptional({ example: '1234' })
   paymentLast4?: string;
+
+  @ApiProperty({ example: 29.99 })
+  amount: number;
+
+  @ApiProperty({ example: 'TND' })
+  currency: string;
+
+  @ApiPropertyOptional({ example: '2024-03-15T00:00:00.000Z' })
+  nextBillingAt?: Date;
 
   @ApiProperty({ example: '2024-01-15T10:30:00.000Z' })
   createdAt: Date;

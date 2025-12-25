@@ -20,6 +20,10 @@ export class Subscription {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true })
   creatorId: Types.ObjectId;
 
+  // Subscriber (customer) who is paying for this subscription
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
+  subscriberId: Types.ObjectId;
+
   // Current plan tier
   @Prop({ type: String, enum: Object.values(PlanTier), required: true })
   plan: PlanTier;
@@ -67,20 +71,30 @@ export class Subscription {
   @Prop({ type: Number, default: 0 })
   adminsMax: number;
 
-  // Billing method presence (card/mandate set up with provider)
-  @Prop({ type: Boolean, default: false })
-  hasPaymentMethod: boolean;
-
   // Optional masked info for display
   @Prop()
   paymentBrand?: string; // e.g., VISA
 
   @Prop()
   paymentLast4?: string;
+
+  // Billing amount and currency for this subscription (per period)
+  @Prop({ type: Number, default: 0 })
+  amount: number;
+
+  @Prop({ type: String, default: 'TND' })
+  currency: string;
+
+  // Next billing date if applicable
+  @Prop({ type: Date })
+  nextBillingAt?: Date;
+
+  // Billing method presence (card/mandate set up with provider)
+  @Prop({ type: Boolean, default: false })
+  hasPaymentMethod: boolean;
 }
 
 export const SubscriptionSchema = SchemaFactory.createForClass(Subscription);
 
-SubscriptionSchema.index({ creatorId: 1 }, { unique: true });
-
-
+SubscriptionSchema.index({ creatorId: 1 });
+SubscriptionSchema.index({ subscriberId: 1 });

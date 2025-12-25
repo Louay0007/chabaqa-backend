@@ -55,20 +55,30 @@ export class ChallengeService {
     userId: string,
     page: number = 1,
     limit: number = 10,
-    type: 'participated' | 'created' | 'all' = 'all'
+    type: 'participated' | 'created' | 'all' = 'all',
+    communityId?: string,
   ) {
     console.log('🔧 DEBUG - getChallengesByUser');
     console.log(`   👤 User ID: ${userId}`);
     console.log(`   📄 Page: ${page}, Limit: ${limit}, Type: ${type}`);
+    if (communityId) {
+      console.log(`   🏢 Community filter: ${communityId}`);
+    }
 
     const skip = (page - 1) * limit;
     let allChallenges: any[] = [];
     let totalCount = 0;
+    const communityFilter: any = {};
+    if (communityId) {
+      communityFilter.communityId = Types.ObjectId.isValid(communityId)
+        ? new Types.ObjectId(communityId)
+        : communityId;
+    }
 
     // Get participated challenges
     if (type === 'participated' || type === 'all') {
       const participatedChallenges = await this.challengeModel
-        .find({ 'participants.userId': new Types.ObjectId(userId) })
+        .find({ 'participants.userId': new Types.ObjectId(userId), ...communityFilter })
         .populate('creatorId', 'name email profile_picture')
         .populate('communityId', 'name slug')
         .sort({ createdAt: -1 })
@@ -105,7 +115,7 @@ export class ChallengeService {
     // Get created challenges
     if (type === 'created' || type === 'all') {
       const createdChallenges = await this.challengeModel
-        .find({ creatorId: new Types.ObjectId(userId) })
+        .find({ creatorId: new Types.ObjectId(userId), ...communityFilter })
         .populate('creatorId', 'name email profile_picture')
         .populate('communityId', 'name slug')
         .sort({ createdAt: -1 })

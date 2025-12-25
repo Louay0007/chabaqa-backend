@@ -1,5 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
+import { Community } from './community.schema';
 
 export type PayoutDocument = Payout & Document;
 
@@ -20,6 +21,10 @@ export enum PayoutMethod {
 @Schema({ timestamps: true })
 export class Payout {
   _id: Types.ObjectId;
+
+  // Community context for the payout
+  @Prop({ type: Types.ObjectId, ref: Community.name, required: true })
+  communityId: Types.ObjectId;
 
   // Creator who receives the payout
   @Prop({ type: Types.ObjectId, ref: 'User', required: true })
@@ -103,6 +108,7 @@ export const PayoutSchema = SchemaFactory.createForClass(Payout);
 
 // Indexes for efficient querying
 PayoutSchema.index({ creatorId: 1, createdAt: -1 });
+PayoutSchema.index({ communityId: 1, createdAt: -1 });
 PayoutSchema.index({ status: 1 });
 PayoutSchema.index({ method: 1 });
 PayoutSchema.index({ reference: 1 }, { unique: true });

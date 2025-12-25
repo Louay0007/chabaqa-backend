@@ -319,6 +319,7 @@ export class ChallengeController {
   @ApiQuery({ name: 'page', required: false, type: Number, description: 'Page number' })
   @ApiQuery({ name: 'limit', required: false, type: Number, description: 'Items per page' })
   @ApiQuery({ name: 'type', required: false, enum: ['participated', 'created', 'all'], description: 'Challenge type filter' })
+  @ApiQuery({ name: 'communityId', required: false, type: String, description: 'Filter by community ID' })
   @ApiResponse({
     status: 200,
     description: 'User challenges retrieved successfully',
@@ -356,13 +357,15 @@ export class ChallengeController {
     @Param('userId') userId: string,
     @Query('page') page = '1',
     @Query('limit') limit = '10',
-    @Query('type') type: 'participated' | 'created' | 'all' = 'all'
+    @Query('type') type: 'participated' | 'created' | 'all' = 'all',
+    @Query('communityId') communityId?: string,
   ) {
     return await this.challengeService.getChallengesByUser(
-      userId, 
-      Number(page) || 1, 
+      userId,
+      Number(page) || 1,
       Number(limit) || 10,
-      type
+      type,
+      communityId,
     );
   }
 
