@@ -143,7 +143,19 @@ export class AuthService {
   }
 
   async getUserById(userId: string): Promise<UserDocument | null> {
-    return this.userModel.findById(userId).select('-password').exec();
+    const user = await this.userModel.findById(userId).select('-password').exec();
+    if (!user) return null;
+    
+    // Transform the user data to match frontend expectations
+    const userObject = user.toObject();
+    
+    // Map backend photo fields to frontend avatar field
+    return {
+      ...userObject,
+      avatar: userObject.photo_profil || userObject.profile_picture,
+      username: userObject.name, // Map name to username for frontend compatibility
+      firstName: userObject.name, // Map name to firstName for frontend compatibility
+    } as any;
   }
 
   async hashPassword(password: string): Promise<string> {

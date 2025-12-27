@@ -138,10 +138,22 @@ export class PostResponseDto {
   likes: number;
 
   @ApiProperty({
+    description: 'Nombre de partages du post',
+    example: 12
+  })
+  shareCount: number;
+
+  @ApiProperty({
     description: 'Indique si l\'utilisateur actuel a liké le post',
     example: false
   })
   isLikedByUser: boolean;
+
+  @ApiProperty({
+    description: 'Indique si l\'utilisateur actuel a partagé le post',
+    example: false
+  })
+  isSharedByUser: boolean;
 
   @ApiProperty({
     description: 'Commentaires du post',
@@ -243,6 +255,12 @@ export class PostStatsResponseDto {
   totalLikes: number;
 
   @ApiProperty({
+    description: 'Nombre total de partages',
+    example: 12
+  })
+  totalShares: number;
+
+  @ApiProperty({
     description: 'Nombre total de commentaires',
     example: 12
   })
@@ -253,4 +271,10 @@ export class PostStatsResponseDto {
     example: false
   })
   isLikedByUser: boolean;
+
+  @ApiProperty({
+    description: 'Indique si l\'utilisateur actuel a partagé le post',
+    example: false
+  })
+  isSharedByUser: boolean;
 }

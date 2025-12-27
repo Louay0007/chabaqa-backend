@@ -87,8 +87,10 @@ export class PostService {
       authorId: authorObjectId,
       isPublished: true, // Toujours publié directement
       likes: 0,
+      shareCount: 0,
       comments: [],
       likedBy: [],
+      sharedBy: [],
       tags: createPostDto.tags || [],
       images: createPostDto.images || [],
       videos: createPostDto.videos || [],
@@ -236,7 +238,9 @@ export class PostService {
             },
             isPublished: post.isPublished,
             likes: post.likes || 0,
+            shareCount: post.shareCount || 0,
             isLikedByUser: false,
+            isSharedByUser: false,
             comments: [],
             tags: post.tags || [],
             createdAt: post.createdAt.toISOString(),
@@ -334,6 +338,40 @@ export class PostService {
   }
 
   /**
+   * Récupérer tous les commentaires d'un post
+   */
+  async getComments(
+    postId: string,
+    userId?: string,
+  ): Promise<PostCommentResponseDto[]> {
+    const post = await this.postModel.findOne({ id: postId });
+    if (!post) {
+      throw new NotFoundException('Post non trouvé');
+    }
+
+    // Transformer les commentaires avec les informations des utilisateurs
+    const comments = await Promise.all(
+      post.comments.map(async (comment) => {
+        const user = await this.userModel
+          .findById(comment.userId)
+          .select('name profile_picture photo_profil');
+
+        return {
+          id: comment.id,
+          content: comment.content,
+          userId: comment.userId.toString(),
+          userName: user?.name || 'Utilisateur inconnu',
+          userAvatar: user?.photo_profil || user?.profile_picture,
+          createdAt: comment.createdAt.toISOString(),
+          updatedAt: comment.updatedAt.toISOString(),
+        };
+      }),
+    );
+
+    return comments;
+  }
+
+  /**
    * Ajouter un commentaire à un post
    */
   async addComment(
@@ -352,10 +390,14 @@ export class PostService {
       throw new NotFoundException('Communauté non trouvée');
     }
 
+    // Vérifier que l'utilisateur est membre de la communauté ou est le créateur
+    const normalizedUserId = typeof userId === 'object' ? (userId as any).toString() : String(userId);
     const isMember = community.members.some(
-      (member) => member.toString() === userId,
+      (member) => member.toString() === normalizedUserId,
     );
-    if (!isMember) {
+    const isCreator = community.createur.toString() === normalizedUserId;
+
+    if (!isMember && !isCreator) {
       throw new ForbiddenException(
         'Vous devez être membre de cette communauté pour commenter',
       );
@@ -498,7 +540,9 @@ export class PostService {
         postId: post.id,
         totalLikes: post.likes,
         totalComments: post.getCommentsCount(),
+        totalShares: post.shareCount || 0,
         isLikedByUser: true,
+        isSharedByUser: post.isSharedBy(userIdObj),
       };
     }
 
@@ -515,7 +559,9 @@ export class PostService {
       postId: post.id,
       totalLikes: post.likes,
       totalComments: post.getCommentsCount(),
+      totalShares: post.shareCount || 0,
       isLikedByUser: true,
+      isSharedByUser: post.isSharedBy(userIdObj),
     };
   }
 
@@ -540,7 +586,9 @@ export class PostService {
         postId: post.id,
         totalLikes: post.likes,
         totalComments: post.getCommentsCount(),
+        totalShares: post.shareCount || 0,
         isLikedByUser: false,
+        isSharedByUser: post.isSharedBy(userIdObj),
       };
     }
 
@@ -550,31 +598,60 @@ export class PostService {
       postId: post.id,
       totalLikes: post.likes,
       totalComments: post.getCommentsCount(),
+      totalShares: post.shareCount || 0,
       isLikedByUser: false,
+      isSharedByUser: post.isSharedBy(userIdObj),
     };
   }
 
   /**
-   * Récupérer les statistiques d'un post
+   * Partager un post (compte unique par utilisateur)
    */
-  async getPostStats(
+  async sharePost(
     postId: string,
-    userId?: string,
+    userId: string,
   ): Promise<PostStatsResponseDto> {
     const post = await this.postModel.findOne({ id: postId });
     if (!post) {
       throw new NotFoundException('Post non trouvé');
     }
 
-    const isLikedByUser = userId
-      ? post.isLikedBy(new Types.ObjectId(userId))
-      : false;
+    const userObjectId = new Types.ObjectId(userId);
+    const shared = post.sharePost(userObjectId);
+
+    // Save even if already shared? only save when new share to avoid extra writes.
+    if (shared) {
+      await post.save();
+    }
 
     return {
       postId: post.id,
       totalLikes: post.likes,
       totalComments: post.getCommentsCount(),
-      isLikedByUser,
+      totalShares: post.shareCount || 0,
+      isLikedByUser: post.isLikedBy(userObjectId),
+      isSharedByUser: true,
+    };
+  }
+
+  /**
+   * Récupérer les statistiques d'un post
+   */
+  async getPostStats(postId: string, userId?: string): Promise<PostStatsResponseDto> {
+    const post = await this.postModel.findOne({ id: postId });
+    if (!post) {
+      throw new NotFoundException('Post non trouvé');
+    }
+
+    const userObjectId = userId ? new Types.ObjectId(userId) : null;
+
+    return {
+      postId: post.id,
+      totalLikes: post.likes,
+      totalComments: post.getCommentsCount(),
+      totalShares: post.shareCount || 0,
+      isLikedByUser: userObjectId ? post.isLikedBy(userObjectId) : false,
+      isSharedByUser: userObjectId ? post.isSharedBy(userObjectId) : false,
     };
   }
 
@@ -856,13 +933,16 @@ export class PostService {
           id: authorIdString,
           name: authorName,
           email: author?.email || '',
-          profile_picture: author?.profile_picture || '',
-          photo_profil: author?.photo_profil || author?.profile_picture || '',
+          username: authorName, // Adding username field for frontend
+          firstName: authorName, // Adding firstName field for frontend
+          avatar: author?.photo_profil || author?.profile_picture || '',
           role: authorRole,
         },
         isPublished: post.isPublished,
         likes: post.likes || 0,
         isLikedByUser,
+        shareCount: post.shareCount || 0,
+        isSharedByUser: userId ? post.isSharedBy(new Types.ObjectId(userId)) : false,
         comments,
         tags: post.tags || [],
         images: post.images || [],
@@ -905,7 +985,9 @@ export class PostService {
         },
         isPublished: post.isPublished || false,
         likes: post.likes || 0,
+        shareCount: post.shareCount || 0,
         isLikedByUser: false,
+        isSharedByUser: false,
         comments: [],
         tags: post.tags || [],
         images: post.images || [],
@@ -1022,13 +1104,20 @@ export class PostService {
             id: author._id?.toString() || author.toString(),
             name: author.name || 'Auteur inconnu',
             email: author.email || '',
-            profile_picture: author.profile_picture,
+            profile_picture: author.profile_picture || author.photo_profil || '',
+            photo_profil: author.photo_profil || author.profile_picture || '',
+            role: author.role || '',
           },
           isPublished: post.isPublished,
           likes: post.likedBy.length,
           isLikedByUser,
+          shareCount: post.shareCount || 0,
+          isSharedByUser: post.isSharedBy(userObjectId),
           comments: [], // Empty for list view - will be populated in detailed view
           tags: post.tags,
+          images: post.images || [],
+          videos: post.videos || [],
+          links: post.links || [],
           createdAt: post.createdAt.toISOString(),
           updatedAt: post.updatedAt.toISOString(),
         };

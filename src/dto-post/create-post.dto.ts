@@ -1,5 +1,42 @@
-import { IsString, IsNotEmpty, IsOptional, IsArray, MaxLength, MinLength, IsUrl, ArrayMaxSize } from 'class-validator';
+import {
+  IsString,
+  IsNotEmpty,
+  IsOptional,
+  IsArray,
+  MaxLength,
+  MinLength,
+  IsUrl,
+  ArrayMaxSize,
+  ValidateNested,
+} from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
+
+class PostLinkDto {
+  @ApiProperty({ description: 'URL du lien', example: 'https://example.com' })
+  @IsString()
+  @IsNotEmpty()
+  @IsUrl({}, { message: "L'URL du lien doit être valide" })
+  url: string;
+
+  @ApiPropertyOptional({ description: 'Titre du lien', example: 'Example Site' })
+  @IsString()
+  @IsOptional()
+  @MaxLength(200)
+  title?: string;
+
+  @ApiPropertyOptional({ description: 'Description du lien', example: 'An example website' })
+  @IsString()
+  @IsOptional()
+  @MaxLength(500)
+  description?: string;
+
+  @ApiPropertyOptional({ description: 'Vignette du lien', example: 'https://example.com/thumb.jpg' })
+  @IsString()
+  @IsOptional()
+  @IsUrl({}, { message: "La vignette doit être une URL valide" })
+  thumbnail?: string;
+}
 
 /**
  * DTO pour créer un commentaire sur un post
@@ -110,5 +147,7 @@ export class CreatePostDto {
   @IsArray()
   @IsOptional()
   @ArrayMaxSize(5, { message: 'Maximum 5 liens autorisés' })
-  links?: { url: string; title?: string; description?: string; thumbnail?: string }[];
+  @ValidateNested({ each: true })
+  @Type(() => PostLinkDto)
+  links?: PostLinkDto[];
 }

@@ -287,6 +287,28 @@ export class PostController {
     return { success: true, message: result.message };
   }
 
+  @Get(':id/comments')
+  @ApiOperation({ summary: 'Récupérer les commentaires d\'un post' })
+  @ApiQuery({
+    name: 'userId',
+    required: false,
+    type: String,
+    description: 'ID de l\'utilisateur pour vérifier les droits de modification',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Commentaires récupérés avec succès',
+    type: [PostCommentResponseDto],
+  })
+  @ApiResponse({ status: 404, description: 'Post non trouvé' })
+  async getComments(
+    @Param('id') postId: string,
+    @Query('userId') userId?: string,
+  ): Promise<{ success: boolean; data: PostCommentResponseDto[] }> {
+    const comments = await this.postService.getComments(postId, userId);
+    return { success: true, data: comments };
+  }
+
   @Post(':id/comments')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
@@ -308,7 +330,7 @@ export class PostController {
     const comment = await this.postService.addComment(
       postId,
       createCommentDto,
-      req.user.userId,
+      req.user._id || req.user.userId,
     );
     return { success: true, data: comment };
   }
@@ -329,7 +351,7 @@ export class PostController {
     const result = await this.postService.removeComment(
       postId,
       commentId,
-      req.user.userId,
+      req.user._id || req.user.userId,
     );
     return { success: true, message: result.message };
   }
@@ -357,7 +379,7 @@ export class PostController {
       postId,
       commentId,
       content,
-      req.user.userId,
+      req.user._id || req.user.userId,
     );
     return { success: true, data: comment };
   }
@@ -454,6 +476,22 @@ export class PostController {
   ): Promise<{ success: boolean; data: PostStatsResponseDto }> {
     const userId = req.user._id || req.user.userId;
     const stats = await this.postService.unlikePost(postId, userId);
+    return { success: true, data: stats };
+  }
+
+  @Post(':id/share')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Partager un post' })
+  @ApiResponse({ status: 200, description: 'Post partagé avec succès', type: PostStatsResponseDto })
+  @ApiResponse({ status: 401, description: 'Non autorisé' })
+  @ApiResponse({ status: 404, description: 'Post non trouvé' })
+  async sharePost(
+    @Param('id') postId: string,
+    @Request() req,
+  ): Promise<{ success: boolean; data: PostStatsResponseDto }> {
+    const userId = req.user._id || req.user.userId;
+    const stats = await this.postService.sharePost(postId, userId);
     return { success: true, data: stats };
   }
 
@@ -666,11 +704,7 @@ export class PostController {
     type: String,
     description: "ID de l'utilisateur pour vérifier s'il a liké",
   })
-  @ApiResponse({
-    status: 200,
-    description: 'Statistiques récupérées avec succès',
-    type: PostStatsResponseDto,
-  })
+  @ApiResponse({ status: 200, description: 'Statistiques récupérées avec succès', type: PostStatsResponseDto })
   @ApiResponse({ status: 404, description: 'Post non trouvé' })
   async getPostStats(
     @Param('id') postId: string,

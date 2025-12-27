@@ -1,5 +1,7 @@
 import { Controller, Post, Body, Query, Get, BadRequestException, UnauthorizedException, Req, UseGuards, UseInterceptors, UploadedFile, Param } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { diskStorage } from 'multer';
+import { extname, join } from 'path';
 import * as crypto from 'crypto';
 import { ApiTags, ApiOperation, ApiQuery, ApiBearerAuth } from '@nestjs/swagger';
 import { InjectModel } from '@nestjs/mongoose';
@@ -25,6 +27,28 @@ import { EventService } from '../../event/event.service';
 import { SubscriptionService } from '../../subscription/subscription.service';
 import { Plan, PlanDocument, PlanTier } from '../../schema/plan.schema';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
+
+const manualProofStorage = diskStorage({
+  destination: (req, file, cb) => {
+    const extension = extname(file.originalname || '').toLowerCase();
+    let folder = join(process.cwd(), 'uploads', 'document');
+    if (['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg'].includes(extension)) {
+      folder = join(process.cwd(), 'uploads', 'image');
+    } else if (['.mp4', '.avi', '.mov', '.wmv', '.flv', '.webm'].includes(extension)) {
+      folder = join(process.cwd(), 'uploads', 'video');
+    } else if (['.pdf', '.doc', '.docx', '.txt', '.rtf', '.odt'].includes(extension)) {
+      folder = join(process.cwd(), 'uploads', 'document');
+    } else if (['.mp3', '.wav', '.ogg', '.aac', '.flac'].includes(extension)) {
+      folder = join(process.cwd(), 'uploads', 'audio');
+    }
+    cb(null, folder);
+  },
+  filename: (req, file, cb) => {
+    const extension = extname(file.originalname || '');
+    const uniqueName = `${Date.now()}-${Math.round(Math.random() * 1e9)}${extension}`;
+    cb(null, uniqueName);
+  },
+});
 
 @ApiTags('Payments')
 @Controller('payments')
@@ -869,7 +893,7 @@ export class PaymentController {
   @ApiQuery({ name: 'promoCode', required: false })
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @UseInterceptors(FileInterceptor('proof'))
+  @UseInterceptors(FileInterceptor('proof', { storage: manualProofStorage }))
   async initManualCommunityPayment(
     @Body('communityId') communityId: string,
     @Req() req: any,
@@ -900,7 +924,8 @@ export class PaymentController {
     }
 
     const breakdown = await this.feeService.calculateForAmount(amount, community.createur.toString());
-    const uploadResult = await this.uploadService.processUploadedFile(file, this.uploadService.generateFilename(file.originalname), { userId });
+    // Use the filename already assigned by Multer to avoid URL/file mismatch
+    const uploadResult = await this.uploadService.processUploadedFile(file, file.filename, { userId });
 
     const order = await this.orderModel.create({
       buyerId: new Types.ObjectId(userId),
@@ -932,7 +957,7 @@ export class PaymentController {
   @ApiQuery({ name: 'promoCode', required: false })
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @UseInterceptors(FileInterceptor('proof'))
+  @UseInterceptors(FileInterceptor('proof', { storage: manualProofStorage }))
   async initManualCoursePayment(
     @Body('courseId') courseId: string,
     @Req() req: any,
@@ -970,7 +995,7 @@ export class PaymentController {
     }
 
     const breakdown = await this.feeService.calculateForAmount(amount, cours.creatorId.toString());
-    const uploadResult = await this.uploadService.processUploadedFile(file, this.uploadService.generateFilename(file.originalname), { userId });
+    const uploadResult = await this.uploadService.processUploadedFile(file, file.filename, { userId });
 
     const order = await this.orderModel.create({
       buyerId: new Types.ObjectId(userId),
@@ -1001,7 +1026,7 @@ export class PaymentController {
   @ApiQuery({ name: 'promoCode', required: false })
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @UseInterceptors(FileInterceptor('proof'))
+  @UseInterceptors(FileInterceptor('proof', { storage: manualProofStorage }))
   async initManualChallengePayment(
     @Body('challengeId') challengeId: string,
     @Req() req: any,
@@ -1031,7 +1056,7 @@ export class PaymentController {
     }
 
     const breakdown = await this.feeService.calculateForAmount(amount, challenge.creatorId.toString());
-    const uploadResult = await this.uploadService.processUploadedFile(file, this.uploadService.generateFilename(file.originalname), { userId });
+    const uploadResult = await this.uploadService.processUploadedFile(file, file.filename, { userId });
 
     const order = await this.orderModel.create({
       buyerId: new Types.ObjectId(userId),
@@ -1058,7 +1083,7 @@ export class PaymentController {
   @ApiQuery({ name: 'promoCode', required: false })
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @UseInterceptors(FileInterceptor('proof'))
+  @UseInterceptors(FileInterceptor('proof', { storage: manualProofStorage }))
   async initManualEventPayment(
     @Body('eventId') eventId: string,
     @Req() req: any,
@@ -1088,7 +1113,7 @@ export class PaymentController {
     }
 
     const breakdown = await this.feeService.calculateForAmount(amount, event.creatorId.toString());
-    const uploadResult = await this.uploadService.processUploadedFile(file, this.uploadService.generateFilename(file.originalname), { userId });
+    const uploadResult = await this.uploadService.processUploadedFile(file, file.filename, { userId });
 
     const order = await this.orderModel.create({
       buyerId: new Types.ObjectId(userId),
@@ -1115,7 +1140,7 @@ export class PaymentController {
   @ApiQuery({ name: 'promoCode', required: false })
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @UseInterceptors(FileInterceptor('proof'))
+  @UseInterceptors(FileInterceptor('proof', { storage: manualProofStorage }))
   async initManualProductPayment(
     @Body('productId') productId: string,
     @Req() req: any,
@@ -1145,7 +1170,7 @@ export class PaymentController {
     }
 
     const breakdown = await this.feeService.calculateForAmount(amount, product.creatorId.toString());
-    const uploadResult = await this.uploadService.processUploadedFile(file, this.uploadService.generateFilename(file.originalname), { userId });
+    const uploadResult = await this.uploadService.processUploadedFile(file, file.filename, { userId });
 
     const order = await this.orderModel.create({
       buyerId: new Types.ObjectId(userId),
@@ -1172,7 +1197,7 @@ export class PaymentController {
   @ApiQuery({ name: 'promoCode', required: false })
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @UseInterceptors(FileInterceptor('proof'))
+  @UseInterceptors(FileInterceptor('proof', { storage: manualProofStorage }))
   async initManualSessionPayment(
     @Body('sessionId') sessionId: string,
     @Req() req: any,
@@ -1202,7 +1227,7 @@ export class PaymentController {
     }
 
     const breakdown = await this.feeService.calculateForAmount(amount, session.creatorId.toString());
-    const uploadResult = await this.uploadService.processUploadedFile(file, this.uploadService.generateFilename(file.originalname), { userId });
+    const uploadResult = await this.uploadService.processUploadedFile(file, file.filename, { userId });
 
     const order = await this.orderModel.create({
       buyerId: new Types.ObjectId(userId),

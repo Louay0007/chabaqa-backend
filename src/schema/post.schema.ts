@@ -153,6 +153,16 @@ export class Post {
   likes: number;
 
   /**
+   * Nombre de partages du post
+   */
+  @Prop({
+    type: Number,
+    default: 0,
+    min: 0
+  })
+  shareCount: number;
+
+  /**
    * Commentaires du post
    */
   @Prop({
@@ -179,6 +189,16 @@ export class Post {
     default: []
   })
   likedBy: Types.ObjectId[];
+
+  /**
+   * Utilisateurs qui ont partagé le post
+   */
+  @Prop({
+    type: [Types.ObjectId],
+    ref: 'User',
+    default: []
+  })
+  sharedBy: Types.ObjectId[];
 
   /**
    * Utilisateurs qui ont mis le post en favoris
@@ -315,9 +335,11 @@ export interface PostDocument extends Document {
   authorId: Types.ObjectId;
   isPublished: boolean;
   likes: number;
+  shareCount: number;
   comments: PostComment[];
   tags: string[];
   likedBy: Types.ObjectId[];
+  sharedBy: Types.ObjectId[];
   bookmarks: Types.ObjectId[];
   images: string[];
   videos: string[];
@@ -351,6 +373,8 @@ export interface PostDocument extends Document {
   likePost(userId: Types.ObjectId): boolean;
   unlikePost(userId: Types.ObjectId): boolean;
   isLikedBy(userId: Types.ObjectId): boolean;
+  sharePost(userId: Types.ObjectId): boolean;
+  isSharedBy(userId: Types.ObjectId): boolean;
   getCommentsCount(): number;
 }
 
@@ -421,6 +445,22 @@ PostSchema.methods.likePost = function (userId: Types.ObjectId): boolean {
   this.likedBy.push(userId);
   this.likes = this.likedBy.length;
   return true;
+};
+
+// Méthode pour partager un post (compte unique par utilisateur)
+PostSchema.methods.sharePost = function (userId: Types.ObjectId): boolean {
+  if (this.sharedBy.some((id: Types.ObjectId) => id.equals(userId))) {
+    return false; // déjà partagé par cet utilisateur
+  }
+
+  this.sharedBy.push(userId);
+  this.shareCount = this.sharedBy.length;
+  return true;
+};
+
+// Méthode pour vérifier si un utilisateur a partagé le post
+PostSchema.methods.isSharedBy = function (userId: Types.ObjectId): boolean {
+  return this.sharedBy.some((id: Types.ObjectId) => id.equals(userId));
 };
 
 // Méthode pour unliker un post

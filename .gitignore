@@ -67,15 +67,6 @@ temp/
 
 # Misc
 .env.example
-uploads/image/1766142421512-3fb1b16e-134e-4131-a8d6-f42d5e9ee756.png
-uploads/image/1766142432788-21deec64-2391-45bb-8c60-d99232b7f33d.png
-uploads/image/1766142588873-5fff5c19-0541-4723-b7b2-c70f13a8da02.png
-uploads/image/1766142594149-560e4813-a1d9-406a-8289-dfa457ca678d.png
-uploads/image/1766142728026-8f0c6ffa-d2ac-402b-aba1-2213a7afa57f.png
-uploads/image/1766142730875-5d78bc4b-7afa-4374-8cc2-b86e93b5140d.png
-uploads/image/1766142852472-c1486f1e-9b70-444b-a96b-89b4919bb8e9.png
-uploads/image/1766142908882-12e28b62-8be7-4fad-bb9e-79bb03be7abb.png
-uploads/image/1766143032707-73a61c86-62ec-446b-9654-ad4a81de1da6.png
-uploads/image/1766143142435-96c107a4-793b-4c9f-ac00-dac39bd70521.png
-uploads/image/1766147425309-ae40815b-8dbd-4c2e-9e37-d41854a008c7.jpg
-uploads/video/1766143257561-ce4dc39a-cf79-4ae1-a3d3-2dac8ea009de.mp4
+
+# Uploads - exclude all user uploaded files
+uploads/
