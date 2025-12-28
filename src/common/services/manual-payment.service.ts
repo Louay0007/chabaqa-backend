@@ -50,6 +50,57 @@ export class ManualPaymentService {
             .exec();
     }
 
+    async getManualPaymentsHistoryForCreator(
+        creatorId: string,
+        options?: {
+            status?: string;
+            page?: number;
+            limit?: number;
+        }
+    ) {
+        const page = Math.max(1, Number(options?.page || 1));
+        const limit = Math.min(100, Math.max(1, Number(options?.limit || 20)));
+
+        const query: any = {
+            paymentMethod: 'manual',
+        };
+
+        if (options?.status && options.status !== 'all') {
+            query.status = options.status;
+        }
+
+        try {
+            if (Types.ObjectId.isValid(creatorId)) {
+                query.creatorId = new Types.ObjectId(creatorId);
+            } else {
+                query.creatorId = creatorId;
+            }
+        } catch (e) {
+            query.creatorId = creatorId;
+        }
+
+        const [items, total] = await Promise.all([
+            this.orderModel
+                .find(query)
+                .populate('buyerId', 'name email profile_picture')
+                .sort({ createdAt: -1 })
+                .skip((page - 1) * limit)
+                .limit(limit)
+                .exec(),
+            this.orderModel.countDocuments(query),
+        ]);
+
+        return {
+            items,
+            meta: {
+                page,
+                limit,
+                total,
+                totalPages: Math.ceil(total / limit) || 1,
+            },
+        };
+    }
+
     /**
      * Verify a manual payment (Approve or Reject)
      */

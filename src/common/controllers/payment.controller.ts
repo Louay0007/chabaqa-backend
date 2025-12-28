@@ -27,6 +27,8 @@ import { EventService } from '../../event/event.service';
 import { SubscriptionService } from '../../subscription/subscription.service';
 import { Plan, PlanDocument, PlanTier } from '../../schema/plan.schema';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
+import { NotificationService } from '../../notification/notification.service';
+import { EmailService } from '../services/email.service';
 
 const manualProofStorage = diskStorage({
   destination: (req, file, cb) => {
@@ -60,6 +62,8 @@ export class PaymentController {
     private readonly feeService: FeeService,
     private readonly manualPaymentService: ManualPaymentService,
     private readonly uploadService: UploadService,
+    private readonly notificationService: NotificationService,
+    private readonly emailService: EmailService,
     @InjectModel(Community.name) private communityModel: Model<CommunityDocument>,
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     @InjectModel(Order.name) private orderModel: Model<OrderDocument>,
@@ -1038,6 +1042,19 @@ export class PaymentController {
     const challenge = await this.challengeModel.findById(challengeId);
     if (!challenge) throw new BadRequestException('Challenge not found');
 
+    const existing = await this.orderModel.findOne({
+      buyerId: new Types.ObjectId(userId),
+      creatorId: challenge.creatorId,
+      paymentMethod: 'manual',
+      contentType: TrackableContentType.CHALLENGE,
+      contentId: challenge._id.toString(),
+      status: { $in: ['pending_verification', 'paid'] },
+    }).select('_id status').exec();
+
+    if (existing) {
+      throw new BadRequestException('You already submitted a payment proof for this request. Please wait for verification.');
+    }
+
     const price = challenge.pricing?.price || (challenge as any).prix || 0;
     if (price <= 0) throw new BadRequestException('Free challenge');
 
@@ -1094,6 +1111,19 @@ export class PaymentController {
     const userId = (req.user?._id || req.user?.sub || '').toString();
     const event = await this.eventModel.findById(eventId);
     if (!event) throw new BadRequestException('Event not found');
+
+    const existing = await this.orderModel.findOne({
+      buyerId: new Types.ObjectId(userId),
+      creatorId: event.creatorId,
+      paymentMethod: 'manual',
+      contentType: TrackableContentType.EVENT,
+      contentId: event._id.toString(),
+      status: { $in: ['pending_verification', 'paid'] },
+    }).select('_id status').exec();
+
+    if (existing) {
+      throw new BadRequestException('You already submitted a payment proof for this request. Please wait for verification.');
+    }
 
     const price = event.pricing?.price || (event as any).prix || 0;
     if (price <= 0) throw new BadRequestException('Free event');
@@ -1152,6 +1182,19 @@ export class PaymentController {
     const product = await this.productModel.findById(productId);
     if (!product) throw new BadRequestException('Product not found');
 
+    const existing = await this.orderModel.findOne({
+      buyerId: new Types.ObjectId(userId),
+      creatorId: product.creatorId,
+      paymentMethod: 'manual',
+      contentType: TrackableContentType.PRODUCT,
+      contentId: product._id.toString(),
+      status: { $in: ['pending_verification', 'paid'] },
+    }).select('_id status').exec();
+
+    if (existing) {
+      throw new BadRequestException('You already submitted a payment proof for this request. Please wait for verification.');
+    }
+
     const price = product.price || product.pricing?.price || 0;
     if (price <= 0) throw new BadRequestException('Free product');
 
@@ -1209,6 +1252,19 @@ export class PaymentController {
     const session = await this.sessionModel.findById(sessionId);
     if (!session) throw new BadRequestException('Session not found');
 
+    const existing = await this.orderModel.findOne({
+      buyerId: new Types.ObjectId(userId),
+      creatorId: session.creatorId,
+      paymentMethod: 'manual',
+      contentType: TrackableContentType.SESSION,
+      contentId: session._id.toString(),
+      status: { $in: ['pending_verification', 'paid'] },
+    }).select('_id status').exec();
+
+    if (existing) {
+      throw new BadRequestException('You already submitted a payment proof for this request. Please wait for verification.');
+    }
+
     const price = session.price || session.pricing?.price || 0;
     if (price <= 0) throw new BadRequestException('Free session');
 
@@ -1263,6 +1319,28 @@ export class PaymentController {
     return { success: true, data: payments };
   }
 
+  @Get('manual/history')
+  @ApiOperation({ summary: 'Get manual payment proofs history for the logged-in creator' })
+  @ApiQuery({ name: 'status', required: false, description: 'Filter by order status (or "all")' })
+  @ApiQuery({ name: 'page', required: false, description: 'Page number (1-based)' })
+  @ApiQuery({ name: 'limit', required: false, description: 'Page size (max 100)' })
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  async getManualPaymentsHistory(
+    @Req() req: any,
+    @Query('status') status?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    const userId = (req.user?._id || req.user?.sub || '').toString();
+    const result = await this.manualPaymentService.getManualPaymentsHistoryForCreator(userId, {
+      status,
+      page: page ? Number(page) : undefined,
+      limit: limit ? Number(limit) : undefined,
+    });
+    return { success: true, data: result.items, meta: result.meta };
+  }
+
   @Post('manual/verify/:orderId')
   @ApiOperation({ summary: 'Verify (approve or reject) a manual payment' })
   @UseGuards(JwtAuthGuard)
@@ -1280,6 +1358,8 @@ export class PaymentController {
     try {
       const order = await this.manualPaymentService.verifyPayment(orderId, userId, action);
 
+      const buyer = await this.userModel.findById(order.buyerId).select('email name').exec();
+
       // If approved, trigger content access granting logic if needed
       if (action === 'approve') {
         if (order.contentType === TrackableContentType.COMMUNITY) {
@@ -1296,6 +1376,27 @@ export class PaymentController {
           await this.coursService.inscrireAuCours(order.contentId, order.buyerId.toString());
         } else if (order.contentType === TrackableContentType.CHALLENGE) {
           await this.challengeService.joinChallenge({ challengeId: order.contentId } as any, order.buyerId.toString());
+        }
+
+        await this.notificationService.createNotification({
+          recipient: order.buyerId.toString(),
+          type: 'manual_payment_approved',
+          title: 'Payment approved',
+          body: 'Your manual payment proof was approved. You now have access.',
+          data: {
+            orderId: order._id.toString(),
+            contentType: order.contentType,
+            contentId: order.contentId,
+          },
+        });
+      } else {
+        if (buyer?.email) {
+          const retryUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/`; // keep generic
+          await this.emailService.sendGenericEmail({
+            to: buyer.email,
+            subject: 'Manual payment rejected',
+            text: `Hello${buyer?.name ? ` ${buyer.name}` : ''},\n\nYour manual payment proof was rejected by the creator.\n\nYou can try again by submitting a new proof from the checkout flow.\n\nOrder: ${order._id.toString()}\nType: ${order.contentType}\n\nRetry: ${retryUrl}\n`,
+          });
         }
       }
 
