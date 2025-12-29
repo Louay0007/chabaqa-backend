@@ -17,13 +17,13 @@ COPY package*.json ./
 
 # Install all dependencies (needed for build)
 # Using --prefer-offline to speed up the build
-RUN npm ci --prefer-offline || npm ci
+RUN npm install
 
 # Copy source code
 COPY . .
 
 # Build the application
-RUN npm run build
+RUN NODE_OPTIONS=--max-old-space-size=4096 npm run build
 
 # ================================
 # Stage 2: Production
@@ -43,7 +43,7 @@ RUN npm config set fetch-timeout 300000 && \
 COPY package*.json ./
 
 # Install only production dependencies with optimizations
-RUN npm ci --omit=dev --prefer-offline || npm ci --omit=dev && \
+RUN npm install --omit=dev && \
   npm cache clean --force
 
 # Copy built application from builder stage

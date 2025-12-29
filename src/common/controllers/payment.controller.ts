@@ -79,6 +79,73 @@ export class PaymentController {
     @InjectModel(Plan.name) private planModel: Model<PlanDocument>,
   ) { }
 
+  private async enrichManualOrdersForDashboard(orders: any[]) {
+    const items = await Promise.all(
+      (orders || []).map(async (order) => {
+        const contentType = (order as any)?.contentType;
+        const contentId = (order as any)?.contentId;
+
+        let contentTitle: string | null = null;
+        let contentCommunityId: string | null = null;
+
+        try {
+          if (contentType === TrackableContentType.COURSE) {
+            const course = await this.coursModel.findById(contentId).select('titre communityId').lean();
+            contentTitle = (course as any)?.titre || null;
+            contentCommunityId = (course as any)?.communityId ? String((course as any)?.communityId) : null;
+          } else if (contentType === TrackableContentType.CHALLENGE) {
+            const challenge = await this.challengeModel.findById(contentId).select('title titre name communityId').lean();
+            contentTitle = (challenge as any)?.title || (challenge as any)?.titre || (challenge as any)?.name || null;
+            contentCommunityId = (challenge as any)?.communityId ? String((challenge as any)?.communityId) : null;
+          } else if (contentType === TrackableContentType.SESSION) {
+            const session = await this.sessionModel.findById(contentId).select('title name communityId').lean();
+            contentTitle = (session as any)?.title || (session as any)?.name || null;
+            contentCommunityId = (session as any)?.communityId ? String((session as any)?.communityId) : null;
+          } else if (contentType === TrackableContentType.PRODUCT) {
+            const product = await this.productModel.findById(contentId).select('title name communityId').lean();
+            contentTitle = (product as any)?.title || (product as any)?.name || null;
+            contentCommunityId = (product as any)?.communityId ? String((product as any)?.communityId) : null;
+          } else if (contentType === TrackableContentType.EVENT) {
+            const event = await this.eventModel.findById(contentId).select('title name communityId').lean();
+            contentTitle = (event as any)?.title || (event as any)?.name || null;
+            contentCommunityId = (event as any)?.communityId ? String((event as any)?.communityId) : null;
+          } else if (contentType === TrackableContentType.COMMUNITY) {
+            const community = await this.communityModel.findById(contentId).select('name slug').lean();
+            contentTitle = (community as any)?.name || null;
+            contentCommunityId = contentId ? String(contentId) : null;
+          }
+        } catch {
+          // ignore lookup errors; keep best-effort enrichment
+        }
+
+        let communityInfo: any = null;
+        const communityId = contentCommunityId || (order as any)?.communityId?.toString?.() || (order as any)?.communityId;
+        if (communityId) {
+          try {
+            const comm = await this.communityModel.findById(communityId).select('name slug').lean();
+            if (comm) {
+              communityInfo = {
+                _id: String((comm as any)._id),
+                name: (comm as any).name,
+                slug: (comm as any).slug,
+              };
+            }
+          } catch {
+            communityInfo = null;
+          }
+        }
+
+        return {
+          ...(order?.toObject ? order.toObject() : order),
+          contentTitle,
+          community: communityInfo,
+        };
+      }),
+    );
+
+    return items;
+  }
+
   @Post('init/community')
   @ApiOperation({ summary: 'Initiate Flouci payment for community membership' })
   @ApiQuery({ name: 'promoCode', required: false })
@@ -195,6 +262,10 @@ export class PaymentController {
         await this.challengeService.joinChallenge({ challengeId: order.contentId } as any, order.buyerId.toString());
       } else if (order.contentType === TrackableContentType.EVENT) {
         // ticketType is not persisted; for production, persist in Order metadata. Here we skip auto-registration.
+      } else if (order.contentType === TrackableContentType.PRODUCT) {
+        // Add product purchase logic here
+      } else if (order.contentType === TrackableContentType.SESSION) {
+        // Add session purchase logic here
       }
       return { status: 'paid' };
     }
@@ -1316,7 +1387,8 @@ export class PaymentController {
   async getPendingManualPayments(@Req() req: any) {
     const userId = (req.user?._id || req.user?.sub || '').toString();
     const payments = await this.manualPaymentService.getPendingPaymentsForCreator(userId);
-    return { success: true, data: payments };
+    const enriched = await this.enrichManualOrdersForDashboard(payments as any);
+    return { success: true, data: enriched };
   }
 
   @Get('manual/history')
@@ -1338,7 +1410,8 @@ export class PaymentController {
       page: page ? Number(page) : undefined,
       limit: limit ? Number(limit) : undefined,
     });
-    return { success: true, data: result.items, meta: result.meta };
+    const enriched = await this.enrichManualOrdersForDashboard(result.items as any);
+    return { success: true, data: enriched, meta: result.meta };
   }
 
   @Post('manual/verify/:orderId')
@@ -1376,6 +1449,13 @@ export class PaymentController {
           await this.coursService.inscrireAuCours(order.contentId, order.buyerId.toString());
         } else if (order.contentType === TrackableContentType.CHALLENGE) {
           await this.challengeService.joinChallenge({ challengeId: order.contentId } as any, order.buyerId.toString());
+        } else if (order.contentType === TrackableContentType.SESSION) {
+          // Paid session manual payments are currently used as an access gate; booking details are handled elsewhere.
+          // Marking the order as paid is sufficient for now.
+        } else if (order.contentType === TrackableContentType.PRODUCT) {
+          // Product access is granted by paid order checks in downstream APIs.
+        } else if (order.contentType === TrackableContentType.EVENT) {
+          // Event ticket type isn't stored on the order; access is granted by paid order checks.
         }
 
         await this.notificationService.createNotification({
