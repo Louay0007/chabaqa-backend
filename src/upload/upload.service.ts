@@ -44,7 +44,7 @@ export class UploadService {
   // Taille maximale par type (en bytes)
   private readonly maxSizes = {
     [FileType.IMAGE]: 5 * 1024 * 1024, // 5MB
-    [FileType.VIDEO]: 100 * 1024 * 1024, // 100MB
+    [FileType.VIDEO]: 500 * 1024 * 1024, // 500MB
     [FileType.DOCUMENT]: 10 * 1024 * 1024, // 10MB
     [FileType.AUDIO]: 20 * 1024 * 1024 // 20MB
   };

@@ -228,6 +228,12 @@ export class CourseProgress {
   watchTime: number;
 
   @Prop({
+    type: Number,
+    min: 0
+  })
+  videoDuration?: number;
+
+  @Prop({
     type: Date
   })
   completedAt?: Date;
@@ -1094,10 +1100,39 @@ CoursSchema.methods.verifierAccesChapitre = function(chapitreId: string, progres
   // Vérifier si le chapitre précédent est complété
   const progressionPrecedente = progression.find(p => p.chapterId === chapitrePrecedent.id);
   const isCompleted = progressionPrecedente?.isCompleted || false;
-  
+
+  // Unlock next chapter when previous chapter is watched >= 90% (or completed).
+  // We compute watch percentage using stored watchTime (seconds) and chapter duration (minutes -> seconds).
+  let hasReachedUnlockThreshold = false;
+  try {
+    const watchTimeSeconds = Number((progressionPrecedente as any)?.watchTime ?? 0);
+
+    let previousDurationSeconds = 0;
+    // Find previous chapter duration from the course content
+    for (const section of this.sections || []) {
+      const ch = (section?.chapitres || []).find((c: any) => c.id === chapitrePrecedent.id);
+      if (ch) {
+        const dureeMinutes = Number((ch as any)?.duree ?? 0);
+        if (Number.isFinite(dureeMinutes) && dureeMinutes > 0) {
+          previousDurationSeconds = dureeMinutes * 60;
+        }
+        break;
+      }
+    }
+
+    if (previousDurationSeconds > 0 && watchTimeSeconds > 0) {
+      const watchPercentage = (watchTimeSeconds / previousDurationSeconds) * 100;
+      hasReachedUnlockThreshold = watchPercentage >= 90;
+    }
+  } catch {
+    hasReachedUnlockThreshold = false;
+  }
+
+  const canAccess = Boolean(isCompleted || hasReachedUnlockThreshold);
+
   return {
-    hasAccess: isCompleted,
-    reason: isCompleted ? 'previous_completed' : 'previous_not_completed',
+    hasAccess: canAccess,
+    reason: canAccess ? 'previous_completed' : 'previous_not_completed',
     requiredChapter: chapitrePrecedent
   };
 }; 

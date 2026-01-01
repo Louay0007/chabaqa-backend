@@ -51,7 +51,7 @@ export class FileValidationService {
   private readonly MAX_FILE_SIZES = {
     image: 5 * 1024 * 1024,    // 5MB
     document: 10 * 1024 * 1024, // 10MB  
-    video: 100 * 1024 * 1024,   // 100MB
+    video: 500 * 1024 * 1024,   // 500MB
     default: 5 * 1024 * 1024    // 5MB
   };
 

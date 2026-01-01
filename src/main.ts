@@ -17,8 +17,8 @@ async function bootstrap() {
   app.use('/uploads', cors(), express.static('uploads'));
 
 
-  app.use(express.json({ limit: '50mb' }));
-  app.use(express.urlencoded({ limit: '50mb', extended: true }));
+  app.use(express.json({ limit: '1gb' }));
+  app.use(express.urlencoded({ limit: '1gb', extended: true }));
 
 
   app.use('/api/payments/webhook', express.raw({ type: 'application/json' }));

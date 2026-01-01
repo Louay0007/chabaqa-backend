@@ -49,8 +49,72 @@ export class FeedbackService {
     return newFeedback.save();
   }
 
-  async findByRelated(relatedModel: string, relatedTo: string): Promise<Feedback[]> {
-    return this.feedbackModel.find({ relatedModel, relatedTo }).exec();
+  async update(feedbackId: string, userId: string, rating: number, comment?: string): Promise<Feedback> {
+    const feedback = await this.feedbackModel.findOne({
+      _id: new Types.ObjectId(feedbackId),
+      user: new Types.ObjectId(userId),
+    });
+
+    if (!feedback) {
+      throw new NotFoundException('Feedback not found or you are not authorized to update it.');
+    }
+
+    feedback.rating = rating;
+    feedback.comment = comment;
+
+    // Update average rating
+    await this.recalculateAverageRating(feedback.relatedTo.toString(), feedback.relatedModel);
+
+    return feedback.save();
+  }
+
+  async findByRelated(relatedModel: string, relatedTo: string): Promise<any[]> {
+    const feedbacks = await this.feedbackModel
+      .find({ relatedModel, relatedTo })
+      .populate('user', 'name email photo_profil')
+      .sort({ createdAt: -1 })
+      .exec();
+
+    return feedbacks.map(f => ({
+      _id: f._id,
+      relatedTo: f.relatedTo,
+      relatedModel: f.relatedModel,
+      rating: f.rating,
+      comment: f.comment,
+      createdAt: (f as any).createdAt,
+      updatedAt: (f as any).updatedAt,
+      user: {
+        _id: (f.user as any)?._id,
+        name: (f.user as any)?.name || 'Anonymous',
+        avatar: (f.user as any)?.photo_profil,
+      },
+    }));
+  }
+
+  async findUserFeedback(relatedModel: string, relatedTo: string, userId: string): Promise<Feedback | null> {
+    return this.feedbackModel.findOne({
+      relatedModel,
+      relatedTo,
+      user: new Types.ObjectId(userId),
+    }).exec();
+  }
+
+  async getStats(relatedModel: string, relatedTo: string): Promise<{ averageRating: number; ratingCount: number; distribution: Record<number, number> }> {
+    const feedbacks = await this.feedbackModel.find({ relatedModel, relatedTo }).exec();
+    
+    const distribution: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+    let totalRating = 0;
+    
+    feedbacks.forEach(f => {
+      distribution[f.rating] = (distribution[f.rating] || 0) + 1;
+      totalRating += f.rating;
+    });
+
+    return {
+      averageRating: feedbacks.length > 0 ? totalRating / feedbacks.length : 0,
+      ratingCount: feedbacks.length,
+      distribution,
+    };
   }
 
   private async updateAverageRating(relatedTo: string, relatedModel: string, newRating: number): Promise<void> {
@@ -61,12 +125,34 @@ export class FeedbackService {
       throw new NotFoundException(`${relatedModel} not found`);
     }
 
-    const oldRatingTotal = item.averageRating * item.ratingCount;
-    const newRatingCount = item.ratingCount + 1;
+    const oldRatingTotal = (item.averageRating || 0) * (item.ratingCount || 0);
+    const newRatingCount = (item.ratingCount || 0) + 1;
     const newAverageRating = (oldRatingTotal + newRating) / newRatingCount;
 
     item.averageRating = newAverageRating;
     item.ratingCount = newRatingCount;
+
+    await item.save();
+  }
+
+  private async recalculateAverageRating(relatedTo: string, relatedModel: string): Promise<void> {
+    const model = this.getModel(relatedModel);
+    const item = await model.findById(relatedTo);
+
+    if (!item) {
+      throw new NotFoundException(`${relatedModel} not found`);
+    }
+
+    const feedbacks = await this.feedbackModel.find({ relatedModel, relatedTo }).exec();
+    
+    if (feedbacks.length === 0) {
+      item.averageRating = 0;
+      item.ratingCount = 0;
+    } else {
+      const totalRating = feedbacks.reduce((sum, f) => sum + f.rating, 0);
+      item.averageRating = totalRating / feedbacks.length;
+      item.ratingCount = feedbacks.length;
+    }
 
     await item.save();
   }

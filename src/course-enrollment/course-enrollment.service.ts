@@ -215,11 +215,32 @@ export class CourseEnrollmentService {
           if (chapterProgress.isCompleted) {
             // Completed chapters count as 100%
             totalWatchTimeProgress += 100;
-          } else if (chapterProgress.watchTime && chapter.duree) {
-            // Calculate percentage based on watch time vs chapter duration (in seconds)
-            const chapterDurationSeconds = chapter.duree * 60; // duree is in minutes
-            const watchPercentage = Math.min((chapterProgress.watchTime / chapterDurationSeconds) * 100, 100);
-            totalWatchTimeProgress += watchPercentage;
+          } else if (chapterProgress.watchTime > 0) {
+            // Get chapter duration in seconds
+            let chapterDurationSeconds = 0;
+            
+            // First, check if we have videoDuration stored in progress (most accurate)
+            const progressAny = chapterProgress as any;
+            if (progressAny.videoDuration && progressAny.videoDuration > 0) {
+              chapterDurationSeconds = progressAny.videoDuration;
+            } else if (chapter.duree && chapter.duree > 0) {
+              // chapter.duree is stored in minutes, convert to seconds
+              // But if duree > 300, it's likely already in seconds (legacy data)
+              if (chapter.duree > 300) {
+                // Likely stored in seconds (e.g., 158 seconds)
+                chapterDurationSeconds = chapter.duree;
+              } else {
+                // Stored in minutes (e.g., 2.63 minutes)
+                chapterDurationSeconds = chapter.duree * 60;
+              }
+            }
+            
+            if (chapterDurationSeconds > 0) {
+              const watchPercentage = Math.min((chapterProgress.watchTime / chapterDurationSeconds) * 100, 100);
+              totalWatchTimeProgress += watchPercentage;
+              
+              console.log(`   📊 Chapter ${chapter.titre}: ${chapterProgress.watchTime}s / ${chapterDurationSeconds}s = ${watchPercentage.toFixed(1)}%`);
+            }
           }
           // If no watch time and not completed, contributes 0%
         }
@@ -228,6 +249,8 @@ export class CourseEnrollmentService {
 
     const progress = totalChapters > 0 ? (totalWatchTimeProgress / totalChapters) : 0;
     const chaptersCompleted = enrollment.progression.filter(p => p.isCompleted).length;
+
+    console.log(`   📈 Total progress: ${progress.toFixed(2)}% (${chaptersCompleted}/${totalChapters} chapters completed)`);
 
     return {
       isEnrolled: true,
@@ -367,54 +390,64 @@ export class CourseEnrollmentService {
     progress.watchTime = Math.max(existingWatchTimeSeconds, normalizedWatchTimeSeconds);
     progress.lastAccessedAt = new Date();
     progress.updatedAt = new Date();
+    
+    // Store videoDuration in progress for accurate calculations later
+    if (videoDuration && videoDuration > 0) {
+      (progress as any).videoDuration = videoDuration;
+    }
 
     // Auto-complete chapter if watch time reaches threshold
     let isAutoCompleted = false;
     let watchPercentage = 0;
 
-    if (!progress.isCompleted) {
-      // Use frontend-provided video duration if available, otherwise fall back to chapter.duree
-      let chapterDurationSeconds: number | undefined = videoDuration;
+    // Get chapter duration for percentage calculation
+    let chapterDurationSeconds: number | undefined = videoDuration;
 
-      if (!chapterDurationSeconds) {
-        const course = await this.coursModel.findById(courseId);
-        if (course) {
-          // Find the chapter to get its stored duration
-          for (let sIdx = 0; sIdx < course.sections.length; sIdx++) {
-            const section = course.sections[sIdx];
-            const cIdx = section.chapitres.findIndex(c => c.id === chapterId);
-            if (cIdx !== -1) {
-              const chapter = section.chapitres[cIdx];
+    if (!chapterDurationSeconds) {
+      const course = await this.coursModel.findById(courseId);
+      if (course) {
+        // Find the chapter to get its stored duration
+        for (let sIdx = 0; sIdx < course.sections.length; sIdx++) {
+          const section = course.sections[sIdx];
+          const cIdx = section.chapitres.findIndex(c => c.id === chapterId);
+          if (cIdx !== -1) {
+            const chapter = section.chapitres[cIdx];
 
-              // If videoDuration was provided, update the chapter duration in DB
-              if (videoDuration && videoDuration > 0) {
-                const durationInMinutes = Math.round(videoDuration / 60);
-                if (!chapter.duree || chapter.duree === 0 || Math.abs(chapter.duree - durationInMinutes) > 1) {
-                  console.log(`📝 [CourseEnrollmentService] Updating chapter ${chapterId} duration to ${durationInMinutes}m`);
-                  course.sections[sIdx].chapitres[cIdx].duree = durationInMinutes;
-                  course.markModified('sections');
-                  await course.save();
-                }
-                chapterDurationSeconds = videoDuration;
-              } else if (chapter.duree) {
+            // If videoDuration was provided, update the chapter duration in DB
+            if (videoDuration && videoDuration > 0) {
+              const durationInMinutes = Math.round(videoDuration / 60);
+              if (!chapter.duree || chapter.duree === 0 || Math.abs(chapter.duree - durationInMinutes) > 1) {
+                console.log(`📝 [CourseEnrollmentService] Updating chapter ${chapterId} duration to ${durationInMinutes}m`);
+                course.sections[sIdx].chapitres[cIdx].duree = durationInMinutes;
+                course.markModified('sections');
+                await course.save();
+              }
+              chapterDurationSeconds = videoDuration;
+            } else if (chapter.duree) {
+              // Handle legacy data: if duree > 300, it's likely in seconds
+              if (chapter.duree > 300) {
+                chapterDurationSeconds = chapter.duree;
+              } else {
                 chapterDurationSeconds = chapter.duree * 60; // duree is in minutes
               }
-              break;
             }
+            break;
           }
         }
       }
+    }
 
-      if (chapterDurationSeconds && chapterDurationSeconds > 0) {
-        watchPercentage = (progress.watchTime / chapterDurationSeconds) * 100;
+    if (!progress.isCompleted && chapterDurationSeconds && chapterDurationSeconds > 0) {
+      watchPercentage = (progress.watchTime / chapterDurationSeconds) * 100;
+      
+      console.log(`   📊 Watch progress: ${progress.watchTime}s / ${chapterDurationSeconds}s = ${watchPercentage.toFixed(1)}%`);
 
-        // Auto-complete if watched 80% or more
-        if (watchPercentage >= 80) {
-          progress.isCompleted = true;
-          progress.completedAt = new Date();
-          isAutoCompleted = true;
-          console.log(`✅ [CourseEnrollmentService] Auto-completed chapter ${chapterId} (${Math.round(watchPercentage)}% watched)`);
-        }
+      // Auto-complete if watched 99.5% or more
+      if (watchPercentage >= 99.5) {
+        progress.isCompleted = true;
+        progress.completedAt = new Date();
+        isAutoCompleted = true;
+        console.log(`✅ [CourseEnrollmentService] Auto-completed chapter ${chapterId} (${Math.round(watchPercentage)}% watched)`);
       }
     }
 
@@ -668,35 +701,18 @@ export class CourseEnrollmentService {
       throw new BadRequestException('Ce cours ne contient aucun chapitre');
     }
 
-    // Vérifier la progression de chaque chapitre
-    for (const chapter of allChapters) {
-      let progress = enrollment.progression.find(p => p.chapterId === chapter.id);
+    // Le cours est considéré terminé uniquement si tous les chapitres sont terminés.
+    const incompleteChapters = allChapters.filter((chapter) => {
+      const progress = enrollment.progression.find(p => p.chapterId === chapter.id);
+      return !progress?.isCompleted;
+    });
 
-      if (!progress) {
-        // Créer une nouvelle progression et marquer comme terminé
-        progress = {
-          id: new Types.ObjectId().toString(),
-          enrollmentId: enrollment._id,
-          chapterId: chapter.id,
-          isCompleted: true,
-          watchTime: 0,
-          lastAccessedAt: new Date(),
-          createdAt: new Date(),
-          updatedAt: new Date(),
-          completedAt: new Date()
-        };
-        enrollment.progression.push(progress);
-      } else {
-        // Marquer la progression existante comme terminée
-        progress.isCompleted = true;
-        progress.completedAt = new Date();
-        progress.updatedAt = new Date();
-      }
+    if (incompleteChapters.length > 0) {
+      throw new BadRequestException('Vous devez terminer tous les chapitres avant de terminer le cours');
     }
 
     // Marquer l'inscription comme complète
     enrollment.completedAt = new Date();
-    enrollment.isActive = false;
 
     await enrollment.save();
 

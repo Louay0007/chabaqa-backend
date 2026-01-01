@@ -71,7 +71,7 @@ import { v4 as uuidv4 } from 'uuid';
         }
       },
       limits: {
-        fileSize: 100 * 1024 * 1024, // 100MB max (sera validé plus finement dans le service)
+        fileSize: 500 * 1024 * 1024, // 500MB max (sera validé plus finement dans le service)
       },
     }),
   ],
