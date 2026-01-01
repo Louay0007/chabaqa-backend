@@ -46,7 +46,19 @@ export class FeedbackService {
 
     await this.updateAverageRating(relatedTo, relatedModel, rating);
 
-    return newFeedback.save();
+    const savedFeedback = await newFeedback.save();
+    
+    // Populate user data before returning
+    const populatedFeedback = await this.feedbackModel
+      .findById(savedFeedback._id)
+      .populate('user', 'name email photo_profil')
+      .exec();
+    
+    if (!populatedFeedback) {
+      throw new NotFoundException('Failed to retrieve created feedback');
+    }
+    
+    return populatedFeedback;
   }
 
   async update(feedbackId: string, userId: string, rating: number, comment?: string): Promise<Feedback> {
@@ -65,7 +77,19 @@ export class FeedbackService {
     // Update average rating
     await this.recalculateAverageRating(feedback.relatedTo.toString(), feedback.relatedModel);
 
-    return feedback.save();
+    await feedback.save();
+    
+    // Populate user data before returning
+    const populatedFeedback = await this.feedbackModel
+      .findById(feedbackId)
+      .populate('user', 'name email photo_profil')
+      .exec();
+    
+    if (!populatedFeedback) {
+      throw new NotFoundException('Failed to retrieve updated feedback');
+    }
+    
+    return populatedFeedback;
   }
 
   async findByRelated(relatedModel: string, relatedTo: string): Promise<any[]> {
@@ -96,7 +120,9 @@ export class FeedbackService {
       relatedModel,
       relatedTo,
       user: new Types.ObjectId(userId),
-    }).exec();
+    })
+    .populate('user', 'name email photo_profil')
+    .exec();
   }
 
   async getStats(relatedModel: string, relatedTo: string): Promise<{ averageRating: number; ratingCount: number; distribution: Record<number, number> }> {

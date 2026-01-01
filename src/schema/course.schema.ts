@@ -343,6 +343,8 @@ export interface CoursDocument extends Document {
   requirements?: string[];
   notes?: string;
   ressources?: CourseResource[];
+  averageRating: number;
+  ratingCount: number;
   sequentialProgression: boolean;
   unlockMessage?: string;
   createdAt: Date;

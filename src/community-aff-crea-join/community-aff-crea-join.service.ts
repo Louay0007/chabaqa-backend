@@ -221,7 +221,7 @@ export class CommunityAffCreaJoinService {
       // Retourner la communauté avec les relations peuplées
       const populatedCommunity = await this.communityModel
         .findById(savedCommunity._id)
-        .populate('createur', 'name email')
+        .populate('createur', 'name email profile_picture photo_profil')
         .populate('members', 'name email')
         .populate('admins', 'name email')
         .exec();
@@ -260,6 +260,14 @@ export class CommunityAffCreaJoinService {
       'https://via.placeholder.com/150?text=Community'
     );
 
+    // Get creator avatar with proper fallback chain
+    const creatorAvatarUrl = this.uploadService.ensureAbsoluteUrl(
+      (community.createur as any)?.profile_picture ||
+      (community.createur as any)?.photo_profil ||
+      community.creatorAvatar ||
+      ''
+    );
+
     return {
       _id: community._id,
       id: community._id.toString(),
@@ -269,15 +277,11 @@ export class CommunityAffCreaJoinService {
       creator: {
         id: community.createur.toString(),
         name: (community.createur as any)?.name || 'Unknown Creator',
-        avatar: this.uploadService.ensureAbsoluteUrl(
-          (community.createur as any)?.profile_picture || 'https://placehold.co/64x64?text=U'
-        ),
+        avatar: creatorAvatarUrl || 'https://placehold.co/64x64?text=U',
         verified: false, // TODO: Add verified status
       },
       creatorId: community.createur.toString(),
-      creatorAvatar: this.uploadService.ensureAbsoluteUrl(
-        (community.createur as any)?.profile_picture || community.creatorAvatar
-      ),
+      creatorAvatar: creatorAvatarUrl || 'https://placehold.co/64x64?text=U',
       description: community.short_description,
       longDescription: community.longDescription || community.short_description,
       coverImage: this.uploadService.ensureAbsoluteUrl(
@@ -286,7 +290,9 @@ export class CommunityAffCreaJoinService {
       image: this.uploadService.ensureAbsoluteUrl(community.image),
       category: community.category,
       members: community.membersCount,
-      rating: community.rating || 0,
+      rating: (community as any).averageRating || 0,
+      averageRating: (community as any).averageRating || 0,
+      ratingCount: (community as any).ratingCount || 0,
       price: community.price || community.fees_of_join,
       priceType: community.priceType,
       tags: community.tags,
@@ -363,7 +369,7 @@ export class CommunityAffCreaJoinService {
     try {
       const communities = await this.communityModel
         .find({ isActive: true })
-        .populate('createur', 'name email profile_picture')
+        .populate('createur', 'name email profile_picture photo_profil')
         .populate('members', 'name email')
         .populate('admins', 'name email')
         .sort({ createdAt: -1 })
@@ -391,7 +397,7 @@ export class CommunityAffCreaJoinService {
 
       const communities = await this.communityModel
         .find({ createur: new Types.ObjectId(userId) })
-        .populate('createur', 'name email')
+        .populate('createur', 'name email profile_picture photo_profil')
         .populate('members', 'name email')
         .populate('admins', 'name email')
         .populate('moderateurs', 'name email')
@@ -424,7 +430,7 @@ export class CommunityAffCreaJoinService {
 
       const communities = await this.communityModel
         .find({ members: new Types.ObjectId(userId) })
-        .populate('createur', 'name email')
+        .populate('createur', 'name email profile_picture photo_profil')
         .populate('members', 'name email')
         .populate('admins', 'name email')
         .populate('moderateurs', 'name email')
@@ -462,7 +468,7 @@ export class CommunityAffCreaJoinService {
             { admins: new Types.ObjectId(userId) }
           ]
         })
-        .populate('createur', 'name email')
+        .populate('createur', 'name email profile_picture photo_profil')
         .populate('members', 'name email')
         .populate('admins', 'name email')
         .populate('moderateurs', 'name email')
@@ -497,7 +503,7 @@ export class CommunityAffCreaJoinService {
         // Query by ID
         community = await this.communityModel
           .findById(idOrSlug)
-          .populate('createur', 'name email avatar photo bio')
+          .populate('createur', 'name email profile_picture photo_profil bio')
           .populate('members', 'name email avatar photo')
           .populate('admins', 'name email avatar photo')
           .populate('moderateurs', 'name email avatar photo')
@@ -506,7 +512,7 @@ export class CommunityAffCreaJoinService {
         // Query by slug
         community = await this.communityModel
           .findOne({ slug: idOrSlug })
-          .populate('createur', 'name email avatar photo bio')
+          .populate('createur', 'name email profile_picture photo_profil bio')
           .populate('members', 'name email avatar photo')
           .populate('admins', 'name email avatar photo')
           .populate('moderateurs', 'name email avatar photo')
@@ -656,7 +662,7 @@ export class CommunityAffCreaJoinService {
     try {
       return await this.communityModel
         .find({ isPrivate: false, isActive: true })
-        .populate('createur', 'name email')
+        .populate('createur', 'name email profile_picture photo_profil')
         .select('-members -admins -moderateurs') // Masquer les listes de membres pour l'affichage public
         .sort({ createdAt: -1 })
         .exec();
@@ -674,7 +680,7 @@ export class CommunityAffCreaJoinService {
     try {
       return await this.communityModel
         .find({ isActive: true })
-        .populate('createur', 'name email')
+        .populate('createur', 'name email profile_picture photo_profil')
         .populate('members', 'name email')
         .populate('admins', 'name email')
         .populate('moderateurs', 'name email')
@@ -730,7 +736,7 @@ export class CommunityAffCreaJoinService {
       return await this.communityModel
         .find({ isActive: true })
         .sort({ rank: 1 }) // Tri par rang croissant (1, 2, 3...)
-        .populate('createur', 'name email')
+        .populate('createur', 'name email profile_picture photo_profil')
         .select('name logo membersCount rank createur createdAt')
         .exec();
 
@@ -777,7 +783,7 @@ export class CommunityAffCreaJoinService {
       if (community.members.includes(new Types.ObjectId(userId))) {
         const populatedCommunity = await this.communityModel
           .findById(community._id)
-          .populate('createur', 'name email')
+          .populate('createur', 'name email profile_picture photo_profil')
           .populate('members', 'name email')
           .populate('admins', 'name email')
           .exec();
@@ -822,7 +828,7 @@ export class CommunityAffCreaJoinService {
       // Retourner la communauté avec les relations peuplées
       const populatedCommunity = await this.communityModel
         .findById(community._id)
-        .populate('createur', 'name email')
+        .populate('createur', 'name email profile_picture photo_profil')
         .populate('members', 'name email')
         .populate('admins', 'name email')
         .exec();
@@ -881,7 +887,7 @@ export class CommunityAffCreaJoinService {
       if (community.members.includes(new Types.ObjectId(userId))) {
         const populatedCommunity = await this.communityModel
           .findById(community._id)
-          .populate('createur', 'name email')
+          .populate('createur', 'name email profile_picture photo_profil')
           .populate('members', 'name email')
           .populate('admins', 'name email')
           .exec();
@@ -921,7 +927,7 @@ export class CommunityAffCreaJoinService {
       // Retourner la communauté avec les relations peuplées
       const populatedCommunity = await this.communityModel
         .findById(community._id)
-        .populate('createur', 'name email')
+        .populate('createur', 'name email profile_picture photo_profil')
         .populate('members', 'name email')
         .populate('admins', 'name email')
         .exec();

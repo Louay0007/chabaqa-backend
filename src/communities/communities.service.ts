@@ -56,7 +56,7 @@ export class CommunitiesService {
     if (options.type === 'joined' || options.type === 'all') {
       const joinedCommunities = await this.communityModel
         .find({ members: new Types.ObjectId(userId) })
-        .populate('createur', 'name email profile_picture')
+        .populate('createur', 'name email profile_picture photo_profil')
         .sort({ createdAt: -1 })
         .exec();
 
@@ -97,7 +97,7 @@ export class CommunitiesService {
     if (options.type === 'created' || options.type === 'all') {
       const createdCommunities = await this.communityModel
         .find({ createur: new Types.ObjectId(userId) })
-        .populate('createur', 'name email profile_picture')
+        .populate('createur', 'name email profile_picture photo_profil')
         .sort({ createdAt: -1 })
         .exec();
 
@@ -273,7 +273,7 @@ export class CommunitiesService {
       const [communities, total] = await Promise.all([
         this.communityModel
           .find(query)
-          .populate('createur', 'name email profile_picture')
+          .populate('createur', 'name email profile_picture photo_profil')
           .select('-members -admins -moderateurs -long_description')
           .sort(sort)
           .skip(skip)
@@ -335,6 +335,8 @@ export class CommunitiesService {
           type: 'community',
           members: community.membersCount,
           rating: (community as any).averageRating || 0,
+          averageRating: (community as any).averageRating || 0,
+          ratingCount: (community as any).ratingCount || 0,
           price: community.pricing?.price || community.fees_of_join || 0,
           priceType: community.priceType,
           image: this.uploadService.ensureAbsoluteUrl(imageUrl), // Will be empty string if no real image available
@@ -423,7 +425,7 @@ export class CommunitiesService {
   async getCommunityBySlug(slug: string) {
     const community = await this.communityModel
       .findOne({ slug, isActive: true })
-      .populate('createur', 'name email profile_picture bio')
+      .populate('createur', 'name email profile_picture photo_profil bio')
       .exec();
 
     if (!community) {
@@ -443,6 +445,8 @@ export class CommunitiesService {
       type: 'community',
       members: community.membersCount,
       rating: (community as any).averageRating || 0,
+      averageRating: (community as any).averageRating || 0,
+      ratingCount: (community as any).ratingCount || 0,
       price: community.pricing?.price || community.fees_of_join || 0,
       priceType: community.priceType,
       image: this.uploadService.ensureAbsoluteUrl(community.photo_de_couverture),

@@ -175,12 +175,23 @@ export class UploadService {
 
     // Si l'URL est déjà absolue (starts with http)
     if (url.startsWith('http')) {
+      // Don't transform URLs that are already pointing to a valid server
+      // Only transform if it's pointing to localhost and we're in production
       try {
         const urlObj = new URL(url);
+        
+        // If URL is already pointing to a production server (not localhost), keep it as is
+        if (!urlObj.hostname.includes('localhost') && !urlObj.hostname.includes('127.0.0.1')) {
+          return url;
+        }
+        
+        // If we're in development (baseUrl is localhost), keep localhost URLs
+        if (this.baseUrl.includes('localhost') || this.baseUrl.includes('127.0.0.1')) {
+          return url;
+        }
+        
+        // Only transform localhost URLs to production URL if baseUrl is production
         const currentOrigin = new URL(this.baseUrl).origin;
-
-        // Si l'URL contient /uploads/ mais pointe vers un autre domaine (ex: ancien localhost)
-        // on la redirige vers le domaine actuel
         if (urlObj.pathname.includes('/uploads/') && urlObj.origin !== currentOrigin) {
           result = `${this.baseUrl}${urlObj.pathname}${urlObj.search}`;
         }

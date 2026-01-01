@@ -890,6 +890,8 @@ export class CoursService {
         creatorId: cours.creatorId?.toString() || '',
         isPublished: cours.isPublished,
         enrollmentCount: Array.isArray(cours.inscriptions) ? cours.inscriptions.length : 0,
+        averageRating: cours.averageRating || 0,
+        ratingCount: cours.ratingCount || 0,
         // Nouveaux champs du schéma - mapping correct des sections
         sections: sections.map(section => {
           const chapitres = Array.isArray(section.chapitres) ? section.chapitres : [];
@@ -962,6 +964,8 @@ export class CoursService {
         requirements: [],
         notes: cours.notes,
         ressources: [],
+        averageRating: cours.averageRating || 0,
+        ratingCount: cours.ratingCount || 0,
         createdAt: cours.createdAt?.toISOString() || new Date().toISOString(),
         updatedAt: cours.updatedAt?.toISOString() || new Date().toISOString(),
         creator: undefined

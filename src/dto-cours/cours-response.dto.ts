@@ -82,6 +82,8 @@ export class CoursResponseDto {
   creatorId: string;
   isPublished: boolean;
   enrollmentCount: number;
+  averageRating: number;
+  ratingCount: number;
   sections: CourseSectionResponseDto[];
   category?: string;
   niveau?: string;
