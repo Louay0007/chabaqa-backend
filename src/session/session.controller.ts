@@ -49,6 +49,7 @@ export class SessionController {
   @ApiQuery({ name: 'page', required: false, description: 'Numéro de page', example: 1 })
   @ApiQuery({ name: 'limit', required: false, description: 'Nombre d\'éléments par page', example: 10 })
   @ApiQuery({ name: 'communitySlug', required: false, description: 'Slug de la communauté' })
+  @ApiQuery({ name: 'communityId', required: false, description: 'ID de la communauté' })
   @ApiQuery({ name: 'category', required: false, description: 'Catégorie de la session' })
   @ApiQuery({ name: 'isActive', required: false, description: 'Si la session est active' })
   @ApiQuery({ name: 'creatorId', required: false, description: 'ID du créateur' })
@@ -56,6 +57,7 @@ export class SessionController {
     @Query('page') page?: number,
     @Query('limit') limit?: number,
     @Query('communitySlug') communitySlug?: string,
+    @Query('communityId') communityId?: string,
     @Query('category') category?: string,
     @Query('isActive') isActive?: boolean,
     @Query('creatorId') creatorId?: string
@@ -64,6 +66,7 @@ export class SessionController {
       page,
       limit,
       communitySlug,
+      communityId,
       category,
       isActive,
       creatorId

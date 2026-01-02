@@ -30,6 +30,22 @@ export class SessionService {
   ) { }
 
   /**
+   * Helper method to find community by communityId (supports both _id and id field)
+   */
+  private async findCommunityById(communityId: string): Promise<CommunityDocument | null> {
+    if (!communityId) return null;
+    
+    // Try to find by _id first (if it's a valid ObjectId)
+    if (Types.ObjectId.isValid(communityId)) {
+      const community = await this.communityModel.findById(communityId);
+      if (community) return community;
+    }
+    
+    // Fallback to finding by id field
+    return this.communityModel.findOne({ id: communityId });
+  }
+
+  /**
    * Get sessions for a specific user (booked + created)
    */
   async getSessionsByUser(
@@ -235,14 +251,20 @@ export class SessionService {
     page: number = 1,
     limit: number = 10,
     communitySlug?: string,
+    communityId?: string,
     category?: string,
     isActive?: boolean,
     creatorId?: string
   ): Promise<SessionListResponseDto> {
     const query: any = {};
 
-    // Filtres
-    if (communitySlug) {
+    // Filtres - support both communitySlug and communityId
+    if (communityId) {
+      // communityId is stored as string in schema
+      query.communityId = Types.ObjectId.isValid(communityId)
+        ? new Types.ObjectId(communityId).toString()
+        : communityId;
+    } else if (communitySlug) {
       const community = await this.communityModel.findOne({ slug: communitySlug });
       if (community) {
         query.communityId = community._id.toString();
@@ -277,11 +299,16 @@ export class SessionService {
 
     // Récupérer les communautés pour chaque session
     const communityIds = [...new Set(sessions.map(s => s.communityId))];
-    const communities = await this.communityModel.find({ id: { $in: communityIds } });
+    const communities = await this.communityModel.find({ 
+      $or: [
+        { _id: { $in: communityIds.filter(id => Types.ObjectId.isValid(id)).map(id => new Types.ObjectId(id)) } },
+        { id: { $in: communityIds } }
+      ]
+    });
 
     const sessionResponses = await Promise.all(
       sessions.map(session => {
-        const community = communities.find(c => c.id === session.communityId);
+        const community = communities.find(c => c._id.toString() === session.communityId || c.id === session.communityId);
         return this.transformToResponseDto(session, community || undefined);
       })
     );
@@ -374,7 +401,7 @@ export class SessionService {
     Object.assign(session, updateSessionDto);
     const updatedSession = await session.save();
 
-    const community = await this.communityModel.findOne({ _id: session.communityId });
+    const community = await this.findCommunityById(session.communityId);
     return this.transformToResponseDto(updatedSession, community || undefined);
   }
 

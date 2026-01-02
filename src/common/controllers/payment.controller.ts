@@ -1108,10 +1108,30 @@ export class PaymentController {
     @UploadedFile() file: Express.Multer.File,
     @Query('promoCode') promoCode?: string,
   ) {
-    if (!file) throw new BadRequestException('Payment proof file is required');
     const userId = (req.user?._id || req.user?.sub || '').toString();
     const challenge = await this.challengeModel.findById(challengeId);
     if (!challenge) throw new BadRequestException('Challenge not found');
+
+    // Get the deposit amount from various possible locations
+    const price = challenge.depositAmount || challenge.pricing?.depositAmount || challenge.pricing?.participationFee || challenge.pricing?.price || (challenge as any).prix || 0;
+    
+    // For free challenges, just add the user as a participant
+    if (price <= 0) {
+      // Check if already participating
+      const isParticipating = challenge.participants?.some(p => p.userId?.toString() === userId);
+      if (isParticipating) {
+        throw new BadRequestException('You are already participating in this challenge');
+      }
+
+      // Add participant using the challenge method
+      challenge.addParticipant(new Types.ObjectId(userId));
+      await challenge.save();
+
+      return { success: true, message: 'Successfully joined the free challenge!' };
+    }
+
+    // For paid challenges, require payment proof
+    if (!file) throw new BadRequestException('Payment proof file is required for paid challenges');
 
     const existing = await this.orderModel.findOne({
       buyerId: new Types.ObjectId(userId),
@@ -1123,11 +1143,8 @@ export class PaymentController {
     }).select('_id status').exec();
 
     if (existing) {
-      throw new BadRequestException('You already submitted a payment proof for this request. Please wait for verification.');
+      throw new BadRequestException('You already submitted a payment proof for this challenge. Please wait for verification.');
     }
-
-    const price = challenge.pricing?.price || (challenge as any).prix || 0;
-    if (price <= 0) throw new BadRequestException('Free challenge');
 
     let amount = price;
     let discountDT = 0;
@@ -1163,7 +1180,7 @@ export class PaymentController {
       paymentProof: uploadResult.url
     });
 
-    return { success: true, message: 'Payment submitted for verification', orderId: order._id };
+    return { success: true, message: 'Payment proof submitted successfully. Please wait for creator verification.', orderId: order._id };
   }
 
   @Post('manual/init/event')

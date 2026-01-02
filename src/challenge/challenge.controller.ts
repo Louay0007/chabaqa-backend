@@ -109,7 +109,8 @@ export class ChallengeController {
     @Body() updateChallengeDto: UpdateChallengeDto,
     @Request() req: any
   ): Promise<ChallengeResponseDto> {
-    return this.challengeService.update(id, updateChallengeDto, req.user.userId);
+    const userId = req.user._id || req.user.userId;
+    return this.challengeService.update(id, updateChallengeDto, userId);
   }
 
   @Delete(':id')
@@ -121,7 +122,8 @@ export class ChallengeController {
   @ApiResponse({ status: 403, description: 'Accès non autorisé' })
   @ApiResponse({ status: 404, description: 'Défi non trouvé' })
   async remove(@Param('id') id: string, @Request() req: any): Promise<void> {
-    return this.challengeService.remove(id, req.user.userId);
+    const userId = req.user._id || req.user.userId;
+    return this.challengeService.remove(id, userId);
   }
 
   @Post('join')
@@ -135,7 +137,8 @@ export class ChallengeController {
     @Body() joinChallengeDto: JoinChallengeDto,
     @Request() req: any
   ): Promise<ChallengeResponseDto> {
-    return this.challengeService.joinChallenge(joinChallengeDto, req.user.userId);
+    const userId = req.user._id || req.user.userId;
+    return this.challengeService.joinChallenge(joinChallengeDto, userId);
   }
 
   @Post('leave')
@@ -149,7 +152,8 @@ export class ChallengeController {
     @Body() leaveChallengeDto: LeaveChallengeDto,
     @Request() req: any
   ): Promise<ChallengeResponseDto> {
-    return this.challengeService.leaveChallenge(leaveChallengeDto, req.user.userId);
+    const userId = req.user._id || req.user.userId;
+    return this.challengeService.leaveChallenge(leaveChallengeDto, userId);
   }
 
   @Patch('progress')
@@ -163,7 +167,8 @@ export class ChallengeController {
     @Body() updateProgressDto: UpdateProgressDto,
     @Request() req: any
   ): Promise<ChallengeResponseDto> {
-    return this.challengeService.updateProgress(updateProgressDto, req.user.userId);
+    const userId = req.user._id || req.user.userId;
+    return this.challengeService.updateProgress(updateProgressDto, userId);
   }
 
   @Post(':challengeId/posts')
@@ -178,7 +183,8 @@ export class ChallengeController {
     @Body() createPostDto: CreateChallengePostDto,
     @Request() req: any
   ): Promise<ChallengeResponseDto> {
-    return this.challengeService.createPost(challengeId, createPostDto, req.user.userId);
+    const userId = req.user._id || req.user.userId;
+    return this.challengeService.createPost(challengeId, createPostDto, userId);
   }
 
   @Post(':challengeId/posts/:postId/comments')
@@ -194,7 +200,8 @@ export class ChallengeController {
     @Body() createCommentDto: CreateChallengeCommentDto,
     @Request() req: any
   ): Promise<ChallengeResponseDto> {
-    return this.challengeService.commentPost(challengeId, postId, createCommentDto, req.user.userId);
+    const userId = req.user._id || req.user.userId;
+    return this.challengeService.commentPost(challengeId, postId, createCommentDto, userId);
   }
 
   // ============= PRICING ENDPOINTS =============
@@ -212,7 +219,8 @@ export class ChallengeController {
     @Body() updatePricingDto: UpdateChallengePricingDto,
     @Request() req: any
   ): Promise<ChallengeResponseDto> {
-    return this.challengeService.updatePricing(challengeId, updatePricingDto, req.user.userId);
+    const userId = req.user._id || req.user.userId;
+    return this.challengeService.updatePricing(challengeId, updatePricingDto, userId);
   }
 
   @Post('calculate-price')
@@ -302,8 +310,9 @@ export class ChallengeController {
     @Query('communitySlug') communitySlug?: string,
     @Query('status') status?: string
   ): Promise<any> {
+    const userId = req.user._id || req.user.userId;
     return this.challengeService.getUserParticipations(
-      req.user.userId,
+      userId,
       communitySlug,
       status || 'all'
     );
@@ -392,7 +401,8 @@ export class ChallengeController {
   @ApiOperation({ summary: 'Enregistrer une vue d\'un défi' })
   @ApiResponse({ status: 200, description: 'Vue enregistrée avec succès' })
   async trackView(@Param('id') id: string, @Request() req: any) {
-    return this.challengeService.trackChallengeView(id, req.user.userId);
+    const userId = req.user._id || req.user.userId;
+    return this.challengeService.trackChallengeView(id, userId);
   }
 
   @Post(':id/track/start')
@@ -402,7 +412,8 @@ export class ChallengeController {
   @ApiOperation({ summary: 'Démarrer un défi' })
   @ApiResponse({ status: 200, description: 'Défi démarré avec succès' })
   async trackStart(@Param('id') id: string, @Request() req: any) {
-    return this.challengeService.trackChallengeStart(id, req.user.userId);
+    const userId = req.user._id || req.user.userId;
+    return this.challengeService.trackChallengeStart(id, userId);
   }
 
   @Post(':id/track/complete')
@@ -412,7 +423,8 @@ export class ChallengeController {
   @ApiOperation({ summary: 'Marquer un défi comme terminé' })
   @ApiResponse({ status: 200, description: 'Défi marqué comme terminé' })
   async trackComplete(@Param('id') id: string, @Request() req: any) {
-    return this.challengeService.trackChallengeComplete(id, req.user.userId);
+    const userId = req.user._id || req.user.userId;
+    return this.challengeService.trackChallengeComplete(id, userId);
   }
 
   @Post(':id/track/like')
@@ -422,7 +434,8 @@ export class ChallengeController {
   @ApiOperation({ summary: 'Enregistrer un like sur un défi' })
   @ApiResponse({ status: 200, description: 'Like enregistré avec succès' })
   async trackLike(@Param('id') id: string, @Request() req: any) {
-    return this.challengeService.trackChallengeLike(id, req.user.userId);
+    const userId = req.user._id || req.user.userId;
+    return this.challengeService.trackChallengeLike(id, userId);
   }
 
   @Post(':id/track/share')
@@ -432,7 +445,8 @@ export class ChallengeController {
   @ApiOperation({ summary: 'Enregistrer un partage d\'un défi' })
   @ApiResponse({ status: 200, description: 'Partage enregistré avec succès' })
   async trackShare(@Param('id') id: string, @Request() req: any) {
-    return this.challengeService.trackChallengeShare(id, req.user.userId);
+    const userId = req.user._id || req.user.userId;
+    return this.challengeService.trackChallengeShare(id, userId);
   }
 
   @Post(':id/track/bookmark')
@@ -442,7 +456,8 @@ export class ChallengeController {
   @ApiOperation({ summary: 'Ajouter un bookmark d\'un défi' })
   @ApiResponse({ status: 200, description: 'Bookmark ajouté avec succès' })
   async addBookmark(@Param('id') id: string, @Body('bookmarkId') bookmarkId: string, @Request() req: any) {
-    return this.challengeService.addChallengeBookmark(id, req.user.userId, bookmarkId);
+    const userId = req.user._id || req.user.userId;
+    return this.challengeService.addChallengeBookmark(id, userId, bookmarkId);
   }
 
   @Delete(':id/track/bookmark/:bookmarkId')
@@ -452,7 +467,8 @@ export class ChallengeController {
   @ApiOperation({ summary: 'Retirer un bookmark d\'un défi' })
   @ApiResponse({ status: 200, description: 'Bookmark retiré avec succès' })
   async removeBookmark(@Param('id') id: string, @Param('bookmarkId') bookmarkId: string, @Request() req: any) {
-    return this.challengeService.removeChallengeBookmark(id, req.user.userId, bookmarkId);
+    const userId = req.user._id || req.user.userId;
+    return this.challengeService.removeChallengeBookmark(id, userId, bookmarkId);
   }
 
   @Post(':id/track/rating')
@@ -462,7 +478,8 @@ export class ChallengeController {
   @ApiOperation({ summary: 'Ajouter une note/évaluation d\'un défi' })
   @ApiResponse({ status: 200, description: 'Note ajoutée avec succès' })
   async addRating(@Param('id') id: string, @Body('rating') rating: number, @Request() req: any, @Body('review') review?: string) {
-    return this.challengeService.addChallengeRating(id, req.user.userId, rating, review);
+    const userId = req.user._id || req.user.userId;
+    return this.challengeService.addChallengeRating(id, userId, rating, review);
   }
 
   @Get(':id/track/progress')
@@ -471,7 +488,8 @@ export class ChallengeController {
   @ApiOperation({ summary: 'Obtenir la progression d\'un utilisateur pour un défi' })
   @ApiResponse({ status: 200, description: 'Progression récupérée avec succès' })
   async getProgress(@Param('id') id: string, @Request() req: any) {
-    return this.challengeService.getChallengeProgress(id, req.user.userId);
+    const userId = req.user._id || req.user.userId;
+    return this.challengeService.getChallengeProgress(id, userId);
   }
 
   @Get(':id/track/stats')
@@ -479,6 +497,77 @@ export class ChallengeController {
   @ApiResponse({ status: 200, description: 'Statistiques récupérées avec succès' })
   async getStats(@Param('id') id: string) {
     return this.challengeService.getChallengeStats(id);
+  }
+
+  @Get(':id/analytics')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ 
+    summary: 'Obtenir les analytics détaillées d\'un défi',
+    description: 'Retourne des statistiques complètes incluant participants, progression, tâches, revenus et tendances'
+  })
+  @ApiParam({ name: 'id', description: 'ID du défi', type: 'string' })
+  @ApiQuery({ name: 'from', required: false, description: 'Date de début (ISO)' })
+  @ApiQuery({ name: 'to', required: false, description: 'Date de fin (ISO)' })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Analytics récupérées avec succès',
+    schema: {
+      example: {
+        overview: {
+          totalParticipants: 45,
+          activeParticipants: 38,
+          completionRate: 67,
+          averageProgress: 72,
+          totalRevenue: 2250,
+          totalTasks: 30,
+          completedTasksTotal: 890
+        },
+        participantStats: {
+          byStatus: { active: 38, inactive: 7 },
+          byProgress: { notStarted: 5, inProgress: 25, completed: 15 },
+          joinTrend: [{ date: '2024-01-01', count: 5 }],
+          topPerformers: []
+        },
+        taskStats: {
+          completionByTask: [],
+          averageCompletionTime: 2.5,
+          mostDifficultTasks: [],
+          easiestTasks: []
+        },
+        engagementStats: {
+          views: 1200,
+          likes: 89,
+          shares: 34,
+          posts: 156,
+          comments: 423
+        },
+        revenueStats: {
+          totalRevenue: 2250,
+          participationFees: 1800,
+          deposits: 450,
+          refunds: 0
+        }
+      }
+    }
+  })
+  @ApiResponse({ status: 403, description: 'Accès non autorisé' })
+  @ApiResponse({ status: 404, description: 'Défi non trouvé' })
+  async getChallengeAnalytics(
+    @Param('id') id: string,
+    @Request() req: any,
+    @Query('from') from?: string,
+    @Query('to') to?: string
+  ) {
+    // Try multiple possible user ID fields from JWT
+    const userId = req.user._id || req.user.userId || req.user.sub || req.user.id;
+    console.log('🔧 DEBUG - getChallengeAnalytics Controller');
+    console.log(`   👤 req.user:`, JSON.stringify(req.user, null, 2));
+    console.log(`   👤 Extracted userId: ${userId}`);
+    
+    const toDate = to ? new Date(to) : new Date();
+    const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 30 * 24 * 3600 * 1000);
+    return this.challengeService.getChallengeAnalytics(id, userId, fromDate, toDate);
   }
 
   // ============ SEQUENTIAL PROGRESSION ENDPOINTS ============
@@ -500,11 +589,12 @@ export class ChallengeController {
     @Body() dto: UpdateChallengeSequentialProgressionDto,
     @Request() req: any
   ): Promise<ChallengeResponseDto> {
+    const userId = req.user._id || req.user.userId;
     return this.challengeService.updateSequentialProgression(
       id,
       dto.enabled,
       dto.unlockMessage,
-      req.user.userId
+      userId
     );
   }
 
@@ -525,7 +615,8 @@ export class ChallengeController {
     @Param('taskId') taskId: string,
     @Request() req: any
   ): Promise<TaskAccessResponseDto> {
-    return this.challengeService.checkTaskAccessWithSequential(id, taskId, req.user.userId);
+    const userId = req.user._id || req.user.userId;
+    return this.challengeService.checkTaskAccessWithSequential(id, taskId, userId);
   }
 
   @Get(':id/unlocked-tasks')
@@ -543,7 +634,8 @@ export class ChallengeController {
     @Param('id') id: string,
     @Request() req: any
   ): Promise<UnlockedTasksResponseDto> {
-    return this.challengeService.getUnlockedTasks(id, req.user.userId);
+    const userId = req.user._id || req.user.userId;
+    return this.challengeService.getUnlockedTasks(id, userId);
   }
 
   @Post(':id/tasks/:taskId/unlock')
@@ -570,10 +662,11 @@ export class ChallengeController {
   async unlockTaskManually(
     @Param('id') id: string,
     @Param('taskId') taskId: string,
-    @Body('userId') userId: string,
+    @Body('userId') targetUserId: string,
     @Request() req: any
   ): Promise<{ message: string }> {
-    return this.challengeService.unlockTaskManually(id, taskId, userId, req.user.userId);
+    const userId = req.user._id || req.user.userId;
+    return this.challengeService.unlockTaskManually(id, taskId, targetUserId, userId);
   }
 
   @Patch('progress/sequential')
@@ -592,6 +685,7 @@ export class ChallengeController {
     @Body() updateProgressDto: UpdateProgressDto,
     @Request() req: any
   ): Promise<ChallengeResponseDto> {
-    return this.challengeService.updateProgressWithSequential(updateProgressDto, req.user.userId);
+    const userId = req.user._id || req.user.userId;
+    return this.challengeService.updateProgressWithSequential(updateProgressDto, userId);
   }
 }

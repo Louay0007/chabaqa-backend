@@ -6,6 +6,11 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
  * DTO pour créer une ressource de défi
  */
 export class CreateChallengeResourceDto {
+  @ApiPropertyOptional({ description: 'ID unique de la ressource', example: 'res-1234567890' })
+  @IsOptional()
+  @IsString()
+  id?: string;
+
   @ApiProperty({ description: 'Titre de la ressource', example: 'Guide HTML5' })
   @IsString()
   @IsNotEmpty()
@@ -41,6 +46,11 @@ export class CreateChallengeResourceDto {
  * DTO pour créer une ressource de tâche
  */
 export class CreateChallengeTaskResourceDto {
+  @ApiPropertyOptional({ description: 'ID unique de la ressource', example: 'taskres-1234567890' })
+  @IsOptional()
+  @IsString()
+  id?: string;
+
   @ApiProperty({ description: 'Titre de la ressource', example: 'Tutoriel CSS' })
   @IsString()
   @IsNotEmpty()
@@ -115,11 +125,12 @@ export class CreateChallengeTaskDto {
   @IsString()
   notes?: string;
 
-  @ApiProperty({ description: 'Ressources de la tâche', type: [CreateChallengeTaskResourceDto] })
+  @ApiPropertyOptional({ description: 'Ressources de la tâche', type: [CreateChallengeTaskResourceDto] })
+  @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => CreateChallengeTaskResourceDto)
-  resources: CreateChallengeTaskResourceDto[];
+  resources?: CreateChallengeTaskResourceDto[];
 }
 
 /**

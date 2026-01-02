@@ -70,8 +70,9 @@ export class ChallengeService {
     let totalCount = 0;
     const communityFilter: any = {};
     if (communityId) {
+      // communityId is stored as string in schema, so keep it as string
       communityFilter.communityId = Types.ObjectId.isValid(communityId)
-        ? new Types.ObjectId(communityId)
+        ? new Types.ObjectId(communityId).toString()
         : communityId;
     }
 
@@ -122,7 +123,7 @@ export class ChallengeService {
         .exec();
 
       const transformedCreated = createdChallenges.map(challenge => ({
-        id: challenge._id.toString(),
+        id: challenge.id,
         title: challenge.title,
         description: challenge.description,
         thumbnail: challenge.thumbnail || 'https://placehold.co/400x300?text=Challenge',
@@ -322,10 +323,21 @@ export class ChallengeService {
       );
     }
 
-    // Ensure all tasks have IDs
+    // Ensure all tasks have IDs and their resources have IDs
     const tasksWithIds = (createChallengeDto.tasks || []).map((task, index) => ({
       ...task,
       id: task.id || new Types.ObjectId().toString(),
+      resources: (task.resources || []).map((res) => ({
+        ...res,
+        id: res.id || new Types.ObjectId().toString(),
+      })),
+    }));
+
+    // Ensure all challenge resources have IDs
+    const resourcesWithIds = (createChallengeDto.resources || []).map((res, index) => ({
+      ...res,
+      id: res.id || new Types.ObjectId().toString(),
+      order: res.order ?? index + 1,
     }));
 
     // Créer le défi
@@ -348,7 +360,7 @@ export class ChallengeService {
       duration: createChallengeDto.duration,
       thumbnail: createChallengeDto.thumbnail,
       notes: createChallengeDto.notes,
-      resources: createChallengeDto.resources || [],
+      resources: resourcesWithIds,
       tasks: tasksWithIds,
       // Configuration de prix
       pricing: {
@@ -537,7 +549,21 @@ export class ChallengeService {
     }
 
     // Vérifier que l'utilisateur est le créateur du défi
-    if (challenge.creatorId.toString() !== userId) {
+    // Handle both ObjectId and string comparison
+    const creatorIdStr = challenge.creatorId?.toString() || '';
+    const userIdStr = userId?.toString() || '';
+    
+    console.log('🔧 DEBUG - Challenge Update Authorization');
+    console.log(`   Challenge ID: ${id}`);
+    console.log(`   Creator ID (from challenge): ${creatorIdStr}`);
+    console.log(`   User ID (from request): ${userIdStr}`);
+    console.log(`   Match: ${creatorIdStr === userIdStr}`);
+    
+    if (creatorIdStr !== userIdStr) {
+      // Also try comparing with _id in case userId is the MongoDB _id
+      const challengeMongoId = challenge._id?.toString() || '';
+      console.log(`   Challenge MongoDB _id: ${challengeMongoId}`);
+      
       throw new ForbiddenException('Seul le créateur du défi peut le modifier');
     }
 
@@ -551,6 +577,27 @@ export class ChallengeService {
           'La date de début doit être antérieure à la date de fin',
         );
       }
+    }
+
+    // Ensure all tasks have IDs and their resources have IDs
+    if (updateChallengeDto.tasks) {
+      updateChallengeDto.tasks = updateChallengeDto.tasks.map((task) => ({
+        ...task,
+        id: task.id || new Types.ObjectId().toString(),
+        resources: (task.resources || []).map((res) => ({
+          ...res,
+          id: res.id || new Types.ObjectId().toString(),
+        })),
+      }));
+    }
+
+    // Ensure all challenge resources have IDs
+    if (updateChallengeDto.resources) {
+      updateChallengeDto.resources = updateChallengeDto.resources.map((res, index) => ({
+        ...res,
+        id: res.id || new Types.ObjectId().toString(),
+        order: res.order ?? index + 1,
+      }));
     }
 
     // Mettre à jour le défi
@@ -581,7 +628,10 @@ export class ChallengeService {
     }
 
     // Vérifier que l'utilisateur est le créateur du défi
-    if (challenge.creatorId.toString() !== userId) {
+    const creatorIdStr = challenge.creatorId?.toString() || '';
+    const userIdStr = userId?.toString() || '';
+    
+    if (creatorIdStr !== userIdStr) {
       throw new ForbiddenException(
         'Seul le créateur du défi peut le supprimer',
       );
@@ -1986,6 +2036,330 @@ export class ChallengeService {
 
       console.error('❌ Erreur lors de la mise à jour du progrès:', error);
       throw new BadRequestException('Erreur lors de la mise à jour du progrès');
+    }
+  }
+
+  /**
+   * Obtenir les analytics détaillées d'un défi
+   * @param challengeId ID du défi
+   * @param userId ID de l'utilisateur (pour vérifier les permissions)
+   * @param fromDate Date de début
+   * @param toDate Date de fin
+   * @returns Analytics complètes du défi
+   */
+  async getChallengeAnalytics(
+    challengeId: string,
+    userId: string,
+    fromDate: Date,
+    toDate: Date,
+  ) {
+    console.log('🔧 DEBUG - getChallengeAnalytics');
+    console.log(`   📋 Challenge ID: ${challengeId}`);
+    console.log(`   👤 User ID: ${userId}`);
+    console.log(`   📅 From: ${fromDate.toISOString()}`);
+    console.log(`   📅 To: ${toDate.toISOString()}`);
+
+    try {
+      // 1. Récupérer le défi - try both id field and _id
+      let challenge = await this.challengeModel.findOne({ id: challengeId });
+      if (!challenge) {
+        // Try finding by MongoDB _id
+        try {
+          challenge = await this.challengeModel.findById(challengeId);
+        } catch (e) {
+          // Invalid ObjectId format, ignore
+        }
+      }
+      
+      if (!challenge) {
+        throw new NotFoundException('Défi non trouvé');
+      }
+
+      // 2. Vérifier que l'utilisateur est le créateur du défi
+      // Handle both ObjectId and string comparison
+      const creatorIdStr = challenge.creatorId?.toString() || '';
+      const userIdStr = userId?.toString() || '';
+      
+      console.log(`   🔍 Creator ID (from challenge): ${creatorIdStr}`);
+      console.log(`   🔍 User ID (from request): ${userIdStr}`);
+      console.log(`   🔍 Match: ${creatorIdStr === userIdStr}`);
+      
+      if (creatorIdStr !== userIdStr) {
+        throw new ForbiddenException(
+          'Seul le créateur du défi peut accéder aux analytics',
+        );
+      }
+
+      const participants = challenge.participants || [];
+      const tasks = challenge.tasks || [];
+      const posts = challenge.posts || [];
+
+      // ============ OVERVIEW STATS ============
+      const totalParticipants = participants.length;
+      const activeParticipants = participants.filter(p => p.isActive).length;
+      const completedParticipants = participants.filter(p => p.progress === 100).length;
+      const completionRate = totalParticipants > 0 
+        ? Math.round((completedParticipants / totalParticipants) * 100) 
+        : 0;
+      const averageProgress = totalParticipants > 0
+        ? Math.round(participants.reduce((acc, p) => acc + (p.progress || 0), 0) / totalParticipants)
+        : 0;
+      
+      // Calculate total completed tasks across all participants
+      const completedTasksTotal = participants.reduce(
+        (acc, p) => acc + (p.completedTasks?.length || 0), 
+        0
+      );
+
+      // Calculate total points earned
+      const totalPointsEarned = participants.reduce(
+        (acc, p) => acc + (p.totalPoints || 0),
+        0
+      );
+
+      // Revenue calculation
+      const participationFee = challenge.pricing?.participationFee || 0;
+      const depositAmount = challenge.pricing?.depositAmount || 0;
+      const totalRevenue = (participationFee * totalParticipants) + (depositAmount * totalParticipants);
+
+      // ============ PARTICIPANT STATS ============
+      // By status
+      const participantsByStatus = {
+        active: activeParticipants,
+        inactive: totalParticipants - activeParticipants,
+        completed: completedParticipants,
+      };
+
+      // By progress ranges
+      const participantsByProgress = {
+        notStarted: participants.filter(p => p.progress === 0).length,
+        early: participants.filter(p => p.progress > 0 && p.progress <= 25).length,
+        midway: participants.filter(p => p.progress > 25 && p.progress <= 50).length,
+        advanced: participants.filter(p => p.progress > 50 && p.progress < 100).length,
+        completed: completedParticipants,
+      };
+
+      // Join trend (group by date)
+      const joinTrendMap = new Map<string, number>();
+      participants.forEach(p => {
+        const joinDate = new Date(p.joinedAt).toISOString().split('T')[0];
+        joinTrendMap.set(joinDate, (joinTrendMap.get(joinDate) || 0) + 1);
+      });
+      const joinTrend = Array.from(joinTrendMap.entries())
+        .map(([date, count]) => ({ date, count }))
+        .sort((a, b) => a.date.localeCompare(b.date));
+
+      // Top performers
+      const topPerformers = [...participants]
+        .sort((a, b) => {
+          // Sort by progress first, then by points
+          if (b.progress !== a.progress) return b.progress - a.progress;
+          return b.totalPoints - a.totalPoints;
+        })
+        .slice(0, 10)
+        .map(p => ({
+          odId: p.userId.toString(),
+          odName: p.id, // Will be populated with user info if available
+          progress: p.progress,
+          totalPoints: p.totalPoints,
+          completedTasks: p.completedTasks?.length || 0,
+          joinedAt: p.joinedAt,
+          lastActivityAt: p.lastActivityAt,
+        }));
+
+      // ============ TASK STATS ============
+      // Completion rate by task
+      const taskCompletionStats = tasks.map(task => {
+        const completedCount = participants.filter(
+          p => p.completedTasks?.includes(task.id)
+        ).length;
+        const completionRate = totalParticipants > 0
+          ? Math.round((completedCount / totalParticipants) * 100)
+          : 0;
+        return {
+          taskId: task.id,
+          day: task.day,
+          title: task.title,
+          points: task.points,
+          completedCount,
+          completionRate,
+        };
+      }).sort((a, b) => a.day - b.day);
+
+      // Most difficult tasks (lowest completion rate)
+      const mostDifficultTasks = [...taskCompletionStats]
+        .sort((a, b) => a.completionRate - b.completionRate)
+        .slice(0, 5);
+
+      // Easiest tasks (highest completion rate)
+      const easiestTasks = [...taskCompletionStats]
+        .sort((a, b) => b.completionRate - a.completionRate)
+        .slice(0, 5);
+
+      // Task completion funnel (drop-off analysis)
+      const taskFunnel = taskCompletionStats.map((task, index) => {
+        const previousTask = index > 0 ? taskCompletionStats[index - 1] : null;
+        const dropOffRate = previousTask && previousTask.completedCount > 0
+          ? Math.round(((previousTask.completedCount - task.completedCount) / previousTask.completedCount) * 100)
+          : 0;
+        return {
+          ...task,
+          dropOffRate,
+          dropOffCount: previousTask ? previousTask.completedCount - task.completedCount : 0,
+        };
+      });
+
+      // ============ ENGAGEMENT STATS ============
+      const totalPosts = posts.length;
+      const totalComments = posts.reduce((acc, p) => acc + (p.comments?.length || 0), 0);
+      const totalLikes = posts.reduce((acc, p) => acc + (p.likes || 0), 0);
+
+      // Posts trend
+      const postsTrendMap = new Map<string, number>();
+      posts.forEach(p => {
+        const postDate = new Date(p.createdAt).toISOString().split('T')[0];
+        postsTrendMap.set(postDate, (postsTrendMap.get(postDate) || 0) + 1);
+      });
+      const postsTrend = Array.from(postsTrendMap.entries())
+        .map(([date, count]) => ({ date, count }))
+        .sort((a, b) => a.date.localeCompare(b.date));
+
+      // Activity trend (last activity by participants)
+      const activityTrendMap = new Map<string, number>();
+      participants.forEach(p => {
+        const activityDate = new Date(p.lastActivityAt).toISOString().split('T')[0];
+        activityTrendMap.set(activityDate, (activityTrendMap.get(activityDate) || 0) + 1);
+      });
+      const activityTrend = Array.from(activityTrendMap.entries())
+        .map(([date, count]) => ({ date, count }))
+        .sort((a, b) => a.date.localeCompare(b.date));
+
+      // ============ REVENUE STATS ============
+      const revenueStats = {
+        totalRevenue,
+        participationFees: participationFee * totalParticipants,
+        deposits: depositAmount * totalParticipants,
+        averageRevenuePerParticipant: totalParticipants > 0 
+          ? Math.round(totalRevenue / totalParticipants) 
+          : 0,
+        currency: challenge.pricing?.currency || 'TND',
+        isPremium: challenge.pricing?.isPremium || false,
+      };
+
+      // ============ TIME STATS ============
+      const now = new Date();
+      const startDate = new Date(challenge.startDate);
+      const endDate = new Date(challenge.endDate);
+      const totalDuration = Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
+      const daysElapsed = Math.max(0, Math.ceil((now.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)));
+      const daysRemaining = Math.max(0, Math.ceil((endDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)));
+      const progressPercentage = totalDuration > 0 ? Math.min(100, Math.round((daysElapsed / totalDuration) * 100)) : 0;
+
+      // ============ TRACKING STATS (from content tracking service) ============
+      let trackingStats = {
+        views: 0,
+        starts: 0,
+        completes: 0,
+        likes: 0,
+        shares: 0,
+        bookmarks: 0,
+      };
+      
+      try {
+        const stats = await this.trackingService.getContentStats(
+          challengeId,
+          TrackableContentType.CHALLENGE,
+        );
+        if (stats) {
+          trackingStats = {
+            views: stats.views || 0,
+            starts: stats.starts || 0,
+            completes: stats.completes || 0,
+            likes: stats.likes || 0,
+            shares: stats.shares || 0,
+            bookmarks: stats.bookmarks || 0,
+          };
+        }
+      } catch (e) {
+        console.log('   ⚠️ Could not fetch tracking stats:', e);
+      }
+
+      console.log('   ✅ Analytics calculées avec succès');
+
+      return {
+        success: true,
+        data: {
+          overview: {
+            totalParticipants,
+            activeParticipants,
+            completedParticipants,
+            completionRate,
+            averageProgress,
+            totalTasks: tasks.length,
+            completedTasksTotal,
+            totalPointsEarned,
+            totalRevenue,
+          },
+          participantStats: {
+            byStatus: participantsByStatus,
+            byProgress: participantsByProgress,
+            joinTrend,
+            topPerformers,
+          },
+          taskStats: {
+            completionByTask: taskCompletionStats,
+            taskFunnel,
+            mostDifficultTasks,
+            easiestTasks,
+            totalTasks: tasks.length,
+            averageCompletionRate: taskCompletionStats.length > 0
+              ? Math.round(taskCompletionStats.reduce((acc, t) => acc + t.completionRate, 0) / taskCompletionStats.length)
+              : 0,
+          },
+          engagementStats: {
+            totalPosts,
+            totalComments,
+            totalLikes,
+            postsTrend,
+            activityTrend,
+            averagePostsPerParticipant: totalParticipants > 0
+              ? Math.round((totalPosts / totalParticipants) * 10) / 10
+              : 0,
+            ...trackingStats,
+          },
+          revenueStats,
+          timeStats: {
+            startDate: challenge.startDate,
+            endDate: challenge.endDate,
+            totalDuration,
+            daysElapsed,
+            daysRemaining,
+            progressPercentage,
+            isActive: challenge.isActive,
+            isOngoing: challenge.isActive && now >= startDate && now <= endDate,
+            isCompleted: now > endDate,
+          },
+          challenge: {
+            id: challenge.id,
+            title: challenge.title,
+            category: challenge.category,
+            difficulty: challenge.difficulty,
+            thumbnail: challenge.thumbnail,
+          },
+        },
+      };
+    } catch (error) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof ForbiddenException
+      ) {
+        throw error;
+      }
+
+      console.error('❌ Erreur lors de la récupération des analytics:', error);
+      throw new BadRequestException(
+        'Erreur lors de la récupération des analytics',
+      );
     }
   }
 }
