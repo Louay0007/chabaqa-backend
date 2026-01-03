@@ -1109,11 +1109,31 @@ export class PaymentController {
     @Query('promoCode') promoCode?: string,
   ) {
     const userId = (req.user?._id || req.user?.sub || '').toString();
-    const challenge = await this.challengeModel.findById(challengeId);
-    if (!challenge) throw new BadRequestException('Challenge not found');
+    
+    console.log('[Challenge Payment] Received challengeId:', challengeId);
+    console.log('[Challenge Payment] Body:', req.body);
+    
+    if (!challengeId) {
+      throw new BadRequestException('Challenge ID is required');
+    }
+
+    // Try to find challenge by ObjectId first, then by id field
+    let challenge: ChallengeDocument | null = null;
+    if (Types.ObjectId.isValid(challengeId)) {
+      challenge = await this.challengeModel.findById(challengeId);
+    }
+    if (!challenge) {
+      challenge = await this.challengeModel.findOne({ id: challengeId });
+    }
+    if (!challenge) {
+      console.log('[Challenge Payment] Challenge not found with ID:', challengeId);
+      throw new BadRequestException('Challenge not found');
+    }
 
     // Get the deposit amount from various possible locations
     const price = challenge.depositAmount || challenge.pricing?.depositAmount || challenge.pricing?.participationFee || challenge.pricing?.price || (challenge as any).prix || 0;
+    
+    console.log('[Challenge Payment] Challenge found:', challenge.title, 'Price:', price);
     
     // For free challenges, just add the user as a participant
     if (price <= 0) {
@@ -1127,6 +1147,7 @@ export class PaymentController {
       challenge.addParticipant(new Types.ObjectId(userId));
       await challenge.save();
 
+      console.log('[Challenge Payment] User joined free challenge successfully');
       return { success: true, message: 'Successfully joined the free challenge!' };
     }
 
@@ -1180,6 +1201,7 @@ export class PaymentController {
       paymentProof: uploadResult.url
     });
 
+    console.log('[Challenge Payment] Payment proof submitted, order ID:', order._id);
     return { success: true, message: 'Payment proof submitted successfully. Please wait for creator verification.', orderId: order._id };
   }
 
