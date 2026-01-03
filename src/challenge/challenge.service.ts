@@ -49,6 +49,25 @@ export class ChallengeService {
   ) { }
 
   /**
+   * Helper method to find a challenge by ID (supports both MongoDB _id and custom id field)
+   */
+  private async findChallengeById(id: string): Promise<ChallengeDocument | null> {
+    let challenge = null;
+    
+    // Try to find by MongoDB _id first
+    if (Types.ObjectId.isValid(id)) {
+      challenge = await this.challengeModel.findById(id);
+    }
+    
+    // If not found, try by custom id field
+    if (!challenge) {
+      challenge = await this.challengeModel.findOne({ id });
+    }
+    
+    return challenge;
+  }
+
+  /**
    * Get challenges for a specific user (participated + created)
    */
   async getChallengesByUser(
@@ -480,10 +499,22 @@ export class ChallengeService {
    * Récupérer un défi par son ID
    */
   async findOne(id: string): Promise<ChallengeResponseDto> {
-    const challenge = await this.challengeModel
-      .findOne({ id })
-      .populate('creatorId', 'name email avatar')
-      .exec();
+    // Try to find by MongoDB _id first, then by custom id field
+    let challenge: ChallengeDocument | null = null;
+    
+    if (Types.ObjectId.isValid(id)) {
+      challenge = await this.challengeModel
+        .findById(id)
+        .populate('creatorId', 'name email avatar')
+        .exec();
+    }
+    
+    if (!challenge) {
+      challenge = await this.challengeModel
+        .findOne({ id })
+        .populate('creatorId', 'name email avatar')
+        .exec();
+    }
 
     if (!challenge) {
       throw new NotFoundException('Défi non trouvé');
@@ -543,7 +574,17 @@ export class ChallengeService {
     updateChallengeDto: UpdateChallengeDto,
     userId: string,
   ): Promise<ChallengeResponseDto> {
-    const challenge = await this.challengeModel.findOne({ id });
+    // Try to find by MongoDB _id first, then by custom id field
+    let challenge: ChallengeDocument | null = null;
+    
+    if (Types.ObjectId.isValid(id)) {
+      challenge = await this.challengeModel.findById(id);
+    }
+    
+    if (!challenge) {
+      challenge = await this.challengeModel.findOne({ id });
+    }
+    
     if (!challenge) {
       throw new NotFoundException('Défi non trouvé');
     }
@@ -622,7 +663,17 @@ export class ChallengeService {
    * Supprimer un défi
    */
   async remove(id: string, userId: string): Promise<void> {
-    const challenge = await this.challengeModel.findOne({ id });
+    // Try to find by MongoDB _id first, then by custom id field
+    let challenge: ChallengeDocument | null = null;
+    
+    if (Types.ObjectId.isValid(id)) {
+      challenge = await this.challengeModel.findById(id);
+    }
+    
+    if (!challenge) {
+      challenge = await this.challengeModel.findOne({ id });
+    }
+    
     if (!challenge) {
       throw new NotFoundException('Défi non trouvé');
     }
@@ -637,7 +688,7 @@ export class ChallengeService {
       );
     }
 
-    await this.challengeModel.deleteOne({ id });
+    await this.challengeModel.deleteOne({ _id: challenge._id });
   }
 
   /**
@@ -647,9 +698,18 @@ export class ChallengeService {
     joinChallengeDto: JoinChallengeDto,
     userId: string,
   ): Promise<ChallengeResponseDto> {
-    const challenge = await this.challengeModel.findOne({
-      id: joinChallengeDto.challengeId,
-    });
+    // Try to find by MongoDB _id first, then by custom id field
+    let challenge: ChallengeDocument | null = null;
+    const challengeId = joinChallengeDto.challengeId;
+    
+    if (Types.ObjectId.isValid(challengeId)) {
+      challenge = await this.challengeModel.findById(challengeId);
+    }
+    
+    if (!challenge) {
+      challenge = await this.challengeModel.findOne({ id: challengeId });
+    }
+    
     if (!challenge) {
       throw new NotFoundException('Défi non trouvé');
     }
@@ -727,9 +787,7 @@ export class ChallengeService {
     leaveChallengeDto: LeaveChallengeDto,
     userId: string,
   ): Promise<ChallengeResponseDto> {
-    const challenge = await this.challengeModel.findOne({
-      id: leaveChallengeDto.challengeId,
-    });
+    const challenge = await this.findChallengeById(leaveChallengeDto.challengeId);
     if (!challenge) {
       throw new NotFoundException('Défi non trouvé');
     }
@@ -756,9 +814,7 @@ export class ChallengeService {
     updateProgressDto: UpdateProgressDto,
     userId: string,
   ): Promise<ChallengeResponseDto> {
-    const challenge = await this.challengeModel.findOne({
-      id: updateProgressDto.challengeId,
-    });
+    const challenge = await this.findChallengeById(updateProgressDto.challengeId);
     if (!challenge) {
       throw new NotFoundException('Défi non trouvé');
     }
@@ -833,7 +889,7 @@ export class ChallengeService {
     createPostDto: CreateChallengePostDto,
     userId: string,
   ): Promise<ChallengeResponseDto> {
-    const challenge = await this.challengeModel.findOne({ id: challengeId });
+    const challenge = await this.findChallengeById(challengeId);
     if (!challenge) {
       throw new NotFoundException('Défi non trouvé');
     }
@@ -874,7 +930,7 @@ export class ChallengeService {
     createCommentDto: CreateChallengeCommentDto,
     userId: string,
   ): Promise<ChallengeResponseDto> {
-    const challenge = await this.challengeModel.findOne({ id: challengeId });
+    const challenge = await this.findChallengeById(challengeId);
     if (!challenge) {
       throw new NotFoundException('Défi non trouvé');
     }
@@ -916,13 +972,13 @@ export class ChallengeService {
     // Récupérer les informations du créateur
     const creator = await this.userModel
       .findById(challenge.creatorId)
-      .select('name email profile_picture');
+      .select('name email profile_picture photo_profil');
 
     // Récupérer les informations des participants
     const participantUserIds = challenge.participants.map((p) => p.userId);
     const participantUsers = await this.userModel
       .find({ _id: { $in: participantUserIds } })
-      .select('name email profile_picture');
+      .select('name email profile_picture photo_profil');
 
     // Transformer les participants
     const participants = challenge.participants.map((participant) => {
@@ -931,9 +987,10 @@ export class ChallengeService {
       );
       return {
         id: participant.id,
+        oderId: participant.id, // Use id as oderId for compatibility
         userId: participant.userId.toString(),
         userName: user?.name || 'Utilisateur inconnu',
-        userAvatar: user?.profile_picture,
+        userAvatar: user?.profile_picture || user?.photo_profil,
         joinedAt: participant.joinedAt.toISOString(),
         isActive: participant.isActive,
         progress: participant.progress,
@@ -1055,7 +1112,7 @@ export class ChallengeService {
     pricingDto: UpdateChallengePricingDto,
     userId: string,
   ): Promise<ChallengeResponseDto> {
-    const challenge = await this.challengeModel.findOne({ id: challengeId });
+    const challenge = await this.findChallengeById(challengeId);
     if (!challenge) {
       throw new NotFoundException('Défi non trouvé');
     }
@@ -1155,9 +1212,7 @@ export class ChallengeService {
   async calculatePrice(
     calculatePriceDto: CalculateChallengePriceDto,
   ): Promise<ChallengePriceCalculationResponseDto> {
-    const challenge = await this.challengeModel.findOne({
-      id: calculatePriceDto.challengeId,
-    });
+    const challenge = await this.findChallengeById(calculatePriceDto.challengeId);
     if (!challenge) {
       throw new NotFoundException('Défi non trouvé');
     }
@@ -1241,9 +1296,7 @@ export class ChallengeService {
   async checkAccess(
     checkAccessDto: CheckChallengeAccessDto,
   ): Promise<ChallengeAccessResponseDto> {
-    const challenge = await this.challengeModel.findOne({
-      id: checkAccessDto.challengeId,
-    });
+    const challenge = await this.findChallengeById(checkAccessDto.challengeId);
     if (!challenge) {
       throw new NotFoundException('Défi non trouvé');
     }
@@ -1590,7 +1643,7 @@ export class ChallengeService {
 
     try {
       // 1. Vérifier que le défi existe
-      const challenge = await this.challengeModel.findOne({ id: challengeId });
+      const challenge = await this.findChallengeById(challengeId);
       if (!challenge) {
         throw new NotFoundException('Défi non trouvé');
       }
@@ -1674,7 +1727,7 @@ export class ChallengeService {
 
     try {
       // 1. Récupérer le défi
-      const challenge = await this.challengeModel.findOne({ id: challengeId });
+      const challenge = await this.findChallengeById(challengeId);
       if (!challenge) {
         throw new NotFoundException('Défi non trouvé');
       }
@@ -1765,7 +1818,7 @@ export class ChallengeService {
 
     try {
       // 1. Récupérer le défi
-      const challenge = await this.challengeModel.findOne({ id: challengeId });
+      const challenge = await this.findChallengeById(challengeId);
       if (!challenge) {
         throw new NotFoundException('Défi non trouvé');
       }
@@ -1867,7 +1920,7 @@ export class ChallengeService {
 
     try {
       // 1. Vérifier que le défi existe
-      const challenge = await this.challengeModel.findOne({ id: challengeId });
+      const challenge = await this.findChallengeById(challengeId);
       if (!challenge) {
         throw new NotFoundException('Défi non trouvé');
       }
@@ -1938,9 +1991,7 @@ export class ChallengeService {
 
     try {
       // 1. Récupérer le défi
-      const challenge = await this.challengeModel.findOne({
-        id: updateProgressDto.challengeId,
-      });
+      const challenge = await this.findChallengeById(updateProgressDto.challengeId);
       if (!challenge) {
         throw new NotFoundException('Défi non trouvé');
       }
@@ -2060,17 +2111,8 @@ export class ChallengeService {
     console.log(`   📅 To: ${toDate.toISOString()}`);
 
     try {
-      // 1. Récupérer le défi - try both id field and _id
-      let challenge = await this.challengeModel.findOne({ id: challengeId });
-      if (!challenge) {
-        // Try finding by MongoDB _id
-        try {
-          challenge = await this.challengeModel.findById(challengeId);
-        } catch (e) {
-          // Invalid ObjectId format, ignore
-        }
-      }
-      
+      // 1. Récupérer le défi
+      const challenge = await this.findChallengeById(challengeId);
       if (!challenge) {
         throw new NotFoundException('Défi non trouvé');
       }
