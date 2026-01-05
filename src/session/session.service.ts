@@ -15,6 +15,7 @@ import { PolicyService } from '../common/services/policy.service';
 import { FeeService } from '../common/services/fee.service';
 import { TrackableContentType } from '../schema/content-tracking.schema';
 import { GoogleCalendarService } from '../google-calendar/google-calendar.service';
+import { EmailService, SessionBookingEmailData } from '../email/email.service';
 
 @Injectable()
 export class SessionService {
@@ -27,6 +28,7 @@ export class SessionService {
     private readonly promoService: PromoService,
     private readonly policyService: PolicyService,
     private readonly googleCalendarService: GoogleCalendarService,
+    private readonly emailService: EmailService,
   ) { }
 
   /**
@@ -959,6 +961,37 @@ export class SessionService {
     }
 
     await session.save();
+
+    // Send email notifications
+    try {
+      const attendee = await this.userModel.findById(userId).select('email name');
+      const creator = await this.userModel.findById(session.creatorId).select('email name');
+
+      if (attendee?.email && creator?.email) {
+        const emailData: SessionBookingEmailData = {
+          sessionTitle: session.title,
+          sessionDescription: session.description,
+          creatorName: creator.name || 'Creator',
+          creatorEmail: creator.email,
+          participantName: attendee.name || 'Participant',
+          participantEmail: attendee.email,
+          scheduledAt: slot.startTime,
+          duration: session.duration,
+          meetingUrl: session.bookings.find(b => b.id === booking.id)?.meetingUrl,
+          bookingId: booking.id,
+          sessionId: sessionId,
+        };
+
+        // Send confirmation to participant
+        await this.emailService.sendBookingConfirmation(emailData);
+        
+        // Send notification to creator
+        await this.emailService.sendBookingNotificationToCreator(emailData);
+      }
+    } catch (error) {
+      // Log error but don't fail the booking if email fails
+      console.warn('Failed to send email notifications:', error.message);
+    }
 
     const community = await this.communityModel.findOne({ id: session.communityId });
     return this.transformToResponseDto(session, community || undefined);

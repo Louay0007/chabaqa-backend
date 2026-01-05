@@ -12,6 +12,7 @@ import { OrderSchema } from '../schema/order.schema';
 import { PolicyModule } from '../common/modules/policy.module';
 import { PromoModule } from '../common/modules/promo.module';
 import { GoogleCalendarModule } from '../google-calendar/google-calendar.module';
+import { EmailModule } from '../email/email.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { GoogleCalendarModule } from '../google-calendar/google-calendar.module'
     PolicyModule,
     PromoModule,
     GoogleCalendarModule,
+    EmailModule,
   ],
   controllers: [SessionController],
   providers: [SessionService],
