@@ -762,4 +762,56 @@ export class ProductService {
       throw error;
     }
   }
+
+  /**
+   * Check if user has purchased a product
+   */
+  async checkUserPurchase(productId: string, userId: string): Promise<{ purchased: boolean; purchase?: any }> {
+    try {
+      // Find the product first
+      const product = await this.productModel.findOne({ id: productId });
+      if (!product) {
+        throw new NotFoundException('Produit non trouvé');
+      }
+
+      // Check for existing order
+      const order = await this.orderModel.findOne({
+        buyerId: new Types.ObjectId(userId),
+        contentType: TrackableContentType.PRODUCT,
+        contentId: product._id.toString(),
+        status: 'paid'
+      });
+
+      if (order) {
+        // Calculate total downloads for this product
+        const totalDownloads = product.files?.reduce((sum, file) => sum + (file.downloadCount || 0), 0) || 0;
+
+        return {
+          purchased: true,
+          purchase: {
+            productId: product.id,
+            purchasedAt: order.createdAt?.toISOString() || new Date().toISOString(),
+            downloadCount: totalDownloads,
+            orderId: order._id.toString(),
+            amountPaid: order.amountDT || order.amount || product.price
+          }
+        };
+      }
+
+      // Also check if product is free and user has "claimed" it
+      if (product.price === 0) {
+        // For free products, check if there's any download record
+        // This could be enhanced with a separate "claims" collection
+        return { purchased: false };
+      }
+
+      return { purchased: false };
+    } catch (error) {
+      console.error('Error checking user purchase:', error);
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
+      return { purchased: false };
+    }
+  }
 }

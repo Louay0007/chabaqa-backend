@@ -310,6 +310,21 @@ export class ProductController {
     return { success: true, products };
   }
 
+  @Get(':id/check-purchase')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Vérifier si l\'utilisateur a acheté un produit' })
+  @ApiResponse({ status: 200, description: 'Statut d\'achat récupéré avec succès' })
+  @ApiResponse({ status: 401, description: 'Non autorisé' })
+  @ApiResponse({ status: 404, description: 'Produit non trouvé' })
+  async checkPurchase(
+    @Param('id') id: string,
+    @Request() req
+  ): Promise<{ success: boolean; purchased: boolean; purchase?: any }> {
+    const result = await this.productService.checkUserPurchase(id, req.user.userId);
+    return { success: true, ...result };
+  }
+
   @Patch(':id/files/:fileId/status')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()

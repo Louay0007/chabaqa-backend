@@ -1353,13 +1353,20 @@ export class PaymentController {
   @UseInterceptors(FileInterceptor('proof', { storage: manualProofStorage }))
   async initManualSessionPayment(
     @Body('sessionId') sessionId: string,
+    @Body('slotId') slotId: string,
+    @Body('notes') notes: string,
     @Req() req: any,
     @UploadedFile() file: Express.Multer.File,
     @Query('promoCode') promoCode?: string,
   ) {
     if (!file) throw new BadRequestException('Payment proof file is required');
     const userId = (req.user?._id || req.user?.sub || '').toString();
-    const session = await this.sessionModel.findById(sessionId);
+    
+    // Find session by custom id field first, then by _id
+    let session = await this.sessionModel.findOne({ id: sessionId });
+    if (!session) {
+      session = await this.sessionModel.findById(sessionId);
+    }
     if (!session) throw new BadRequestException('Session not found');
 
     const existing = await this.orderModel.findOne({
@@ -1395,6 +1402,23 @@ export class PaymentController {
     const breakdown = await this.feeService.calculateForAmount(amount, session.creatorId.toString());
     const uploadResult = await this.uploadService.processUploadedFile(file, file.filename, { userId });
 
+    // If slotId is provided, reserve the slot (mark as pending)
+    let slotInfo: any = null;
+    if (slotId && session.availableSlots) {
+      const slot = session.availableSlots.find(s => s.id === slotId);
+      if (slot && slot.isAvailable) {
+        slot.isAvailable = false;
+        slot.bookedBy = new Types.ObjectId(userId);
+        slot.bookedAt = new Date();
+        slotInfo = {
+          slotId: slot.id,
+          startTime: slot.startTime,
+          endTime: slot.endTime,
+        };
+        await session.save();
+      }
+    }
+
     const order = await this.orderModel.create({
       buyerId: new Types.ObjectId(userId),
       creatorId: session.creatorId,
@@ -1409,13 +1433,15 @@ export class PaymentController {
       discountDT,
       status: 'pending_verification',
       paymentMethod: 'manual',
-      paymentProof: uploadResult.url
+      paymentProof: uploadResult.url,
+      metadata: slotInfo ? { slotId: slotInfo.slotId, slotStartTime: slotInfo.startTime, slotEndTime: slotInfo.endTime, notes } : { notes }
     });
 
     return {
       success: true,
-      message: 'Payment submitted for verification',
-      orderId: order._id
+      message: 'Payment submitted for verification. The slot has been reserved.',
+      orderId: order._id,
+      slot: slotInfo
     };
   }
 
@@ -1489,8 +1515,53 @@ export class PaymentController {
         } else if (order.contentType === TrackableContentType.CHALLENGE) {
           await this.challengeService.joinChallenge({ challengeId: order.contentId } as any, order.buyerId.toString());
         } else if (order.contentType === TrackableContentType.SESSION) {
-          // Paid session manual payments are currently used as an access gate; booking details are handled elsewhere.
-          // Marking the order as paid is sufficient for now.
+          // Create a booking for the session when payment is approved
+          const session = await this.sessionModel.findOne({ _id: order.contentId });
+          if (!session) {
+            // Try finding by custom id field
+            const sessionByCustomId = await this.sessionModel.findOne({ id: order.contentId });
+            if (sessionByCustomId) {
+              // Get slot info from order metadata if available
+              const metadata = (order as any).metadata || {};
+              const slotId = metadata.slotId;
+              const slotStartTime = metadata.slotStartTime;
+              const slotEndTime = metadata.slotEndTime;
+              const notes = metadata.notes;
+
+              // Create booking record
+              const bookingId = new Types.ObjectId().toString();
+              sessionByCustomId.bookings.push({
+                id: bookingId,
+                userId: order.buyerId,
+                scheduledAt: slotStartTime ? new Date(slotStartTime) : new Date(),
+                status: 'confirmed',
+                notes: notes || undefined,
+                createdAt: new Date(),
+                updatedAt: new Date(),
+              });
+              await sessionByCustomId.save();
+            }
+          } else {
+            // Get slot info from order metadata if available
+            const metadata = (order as any).metadata || {};
+            const slotId = metadata.slotId;
+            const slotStartTime = metadata.slotStartTime;
+            const slotEndTime = metadata.slotEndTime;
+            const notes = metadata.notes;
+
+            // Create booking record
+            const bookingId = new Types.ObjectId().toString();
+            session.bookings.push({
+              id: bookingId,
+              userId: order.buyerId,
+              scheduledAt: slotStartTime ? new Date(slotStartTime) : new Date(),
+              status: 'confirmed',
+              notes: notes || undefined,
+              createdAt: new Date(),
+              updatedAt: new Date(),
+            });
+            await session.save();
+          }
         } else if (order.contentType === TrackableContentType.PRODUCT) {
           // Product access is granted by paid order checks in downstream APIs.
         } else if (order.contentType === TrackableContentType.EVENT) {

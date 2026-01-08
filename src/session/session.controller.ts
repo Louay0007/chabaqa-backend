@@ -102,7 +102,8 @@ export class SessionController {
     @Body() updateSessionDto: UpdateSessionDto,
     @Request() req: any
   ): Promise<SessionResponseDto> {
-    return this.sessionService.update(id, updateSessionDto, req.user.userId);
+    const userId = req.user._id || req.user.userId;
+    return this.sessionService.update(id, updateSessionDto, userId);
   }
 
   @Delete(':id')
@@ -114,7 +115,8 @@ export class SessionController {
   @ApiResponse({ status: 403, description: 'Accès non autorisé' })
   @ApiResponse({ status: 404, description: 'Session non trouvée' })
   async remove(@Param('id') id: string, @Request() req: any): Promise<void> {
-    return this.sessionService.remove(id, req.user.userId);
+    const userId = req.user._id || req.user.userId;
+    return this.sessionService.remove(id, userId);
   }
 
   @Post(':id/book')
