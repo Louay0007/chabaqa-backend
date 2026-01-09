@@ -1516,11 +1516,23 @@ export class PaymentController {
           await this.challengeService.joinChallenge({ challengeId: order.contentId } as any, order.buyerId.toString());
         } else if (order.contentType === TrackableContentType.SESSION) {
           // Create a booking for the session when payment is approved
-          const session = await this.sessionModel.findOne({ _id: order.contentId });
+          console.log(`[verifyManualPayment] Processing session payment for order ${order._id}, contentId: ${order.contentId}`);
+          
+          // Try finding by _id first (contentId is stored as session._id.toString())
+          let session = await this.sessionModel.findById(order.contentId);
           if (!session) {
-            // Try finding by custom id field
-            const sessionByCustomId = await this.sessionModel.findOne({ id: order.contentId });
-            if (sessionByCustomId) {
+            // Try finding by custom id field as fallback
+            session = await this.sessionModel.findOne({ id: order.contentId });
+          }
+          console.log(`[verifyManualPayment] Session lookup result: ${session ? `found (id: ${session.id}, _id: ${session._id})` : 'not found'}`);
+          
+          if (session) {
+            // Check if booking already exists for this user
+            const existingBooking = session.bookings.find(b => 
+              b.userId.toString() === order.buyerId.toString()
+            );
+            
+            if (!existingBooking) {
               // Get slot info from order metadata if available
               const metadata = (order as any).metadata || {};
               const slotId = metadata.slotId;
@@ -1530,7 +1542,7 @@ export class PaymentController {
 
               // Create booking record
               const bookingId = new Types.ObjectId().toString();
-              sessionByCustomId.bookings.push({
+              session.bookings.push({
                 id: bookingId,
                 userId: order.buyerId,
                 scheduledAt: slotStartTime ? new Date(slotStartTime) : new Date(),
@@ -1538,29 +1550,19 @@ export class PaymentController {
                 notes: notes || undefined,
                 createdAt: new Date(),
                 updatedAt: new Date(),
-              });
-              await sessionByCustomId.save();
+              } as any);
+              
+              // Mark bookings as modified to ensure Mongoose saves it
+              session.markModified('bookings');
+              await session.save();
+              
+              console.log(`[verifyManualPayment] Created booking ${bookingId} for session ${session.id}, user ${order.buyerId}`);
+              console.log(`[verifyManualPayment] Session now has ${session.bookings.length} bookings`);
+            } else {
+              console.log(`[verifyManualPayment] Booking already exists for user ${order.buyerId} in session ${session.id}`);
             }
           } else {
-            // Get slot info from order metadata if available
-            const metadata = (order as any).metadata || {};
-            const slotId = metadata.slotId;
-            const slotStartTime = metadata.slotStartTime;
-            const slotEndTime = metadata.slotEndTime;
-            const notes = metadata.notes;
-
-            // Create booking record
-            const bookingId = new Types.ObjectId().toString();
-            session.bookings.push({
-              id: bookingId,
-              userId: order.buyerId,
-              scheduledAt: slotStartTime ? new Date(slotStartTime) : new Date(),
-              status: 'confirmed',
-              notes: notes || undefined,
-              createdAt: new Date(),
-              updatedAt: new Date(),
-            });
-            await session.save();
+            console.error(`[verifyManualPayment] Session not found for order ${order._id}, contentId: ${order.contentId}`);
           }
         } else if (order.contentType === TrackableContentType.PRODUCT) {
           // Product access is granted by paid order checks in downstream APIs.

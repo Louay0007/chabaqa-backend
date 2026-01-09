@@ -190,7 +190,30 @@ export class SessionController {
   @ApiOperation({ summary: 'Récupérer les réservations d\'un utilisateur' })
   @ApiResponse({ status: 200, description: 'Réservations de l\'utilisateur récupérées avec succès', type: UserBookingsResponseDto })
   async getUserBookings(@Request() req: any): Promise<UserBookingsResponseDto> {
-    return this.sessionService.getUserBookings(req.user.userId);
+    const userId = req.user._id || req.user.userId || req.user.sub;
+    console.log(`[getUserBookings Controller] User from JWT: ${JSON.stringify({ _id: req.user._id, userId: req.user.userId, sub: req.user.sub })}`);
+    console.log(`[getUserBookings Controller] Resolved userId: ${userId}`);
+    
+    // First sync any missing bookings from paid orders
+    await this.sessionService.syncBookingsFromPaidOrders(userId);
+    // Then return the bookings
+    return this.sessionService.getUserBookings(userId);
+  }
+
+  @Post('bookings/cleanup-duplicates')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Clean up duplicate bookings for the current user' })
+  @ApiResponse({ status: 200, description: 'Duplicate bookings cleaned up successfully' })
+  async cleanupDuplicateBookings(@Request() req: any) {
+    const userId = req.user._id || req.user.userId || req.user.sub;
+    console.log(`[cleanupDuplicateBookings Controller] Cleaning up duplicates for user: ${userId}`);
+    const result = await this.sessionService.cleanupDuplicateBookings(userId);
+    return {
+      success: true,
+      message: `Cleaned up ${result.duplicatesRemoved} duplicate booking(s) from ${result.sessionsProcessed} session(s)`,
+      ...result
+    };
   }
 
   @Get('bookings/creator')
@@ -199,7 +222,8 @@ export class SessionController {
   @ApiOperation({ summary: 'Récupérer les réservations d\'un créateur' })
   @ApiResponse({ status: 200, description: 'Réservations du créateur récupérées avec succès', type: CreatorBookingsResponseDto })
   async getCreatorBookings(@Request() req: any): Promise<CreatorBookingsResponseDto> {
-    return this.sessionService.getCreatorBookings(req.user.userId);
+    const userId = req.user._id || req.user.userId || req.user.sub;
+    return this.sessionService.getCreatorBookings(userId);
   }
 
   // Get sessions for a specific user (for profile viewing)

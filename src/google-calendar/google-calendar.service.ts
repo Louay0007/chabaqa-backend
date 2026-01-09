@@ -26,17 +26,24 @@ export class GoogleCalendarService {
    * Generate Google OAuth authorization URL
    */
   getAuthUrl(userId: string): string {
+    this.logger.log(`[getAuthUrl] Generating auth URL for user: ${userId}`);
+    this.logger.debug(`[getAuthUrl] GOOGLE_CLIENT_ID: ${process.env.GOOGLE_CLIENT_ID?.substring(0, 20)}...`);
+    this.logger.debug(`[getAuthUrl] GOOGLE_REDIRECT_URI: ${process.env.GOOGLE_REDIRECT_URI}`);
+    
     const scopes = [
       'https://www.googleapis.com/auth/calendar',
       'https://www.googleapis.com/auth/calendar.events'
     ];
 
-    return this.oauth2Client.generateAuthUrl({
+    const authUrl = this.oauth2Client.generateAuthUrl({
       access_type: 'offline',
       scope: scopes,
       state: userId, // Pass user ID in state for security
       prompt: 'consent' // Force consent screen to get refresh token
     });
+    
+    this.logger.log(`[getAuthUrl] Generated auth URL: ${authUrl.substring(0, 100)}...`);
+    return authUrl;
   }
 
   /**
@@ -44,15 +51,18 @@ export class GoogleCalendarService {
    */
   async handleCallback(code: string, userId: string): Promise<{ success: boolean; message: string }> {
     try {
+      this.logger.log(`[handleCallback] Exchanging code for tokens, userId: ${userId}`);
       const { tokens } = await this.oauth2Client.getToken(code);
+      this.logger.log(`[handleCallback] Got tokens, scope: ${tokens.scope}`);
       
       // Verify the state matches the user ID for security
       if (tokens.scope && !tokens.scope.includes('calendar')) {
+        this.logger.error('[handleCallback] Calendar access not granted in scope');
         throw new BadRequestException('Calendar access not granted');
       }
 
       // Save tokens to user document
-      await this.userModel.findByIdAndUpdate(userId, {
+      const updateResult = await this.userModel.findByIdAndUpdate(userId, {
         googleTokens: {
           access_token: tokens.access_token!,
           refresh_token: tokens.refresh_token!,
@@ -60,13 +70,13 @@ export class GoogleCalendarService {
           token_type: tokens.token_type!,
           expiry_date: tokens.expiry_date!
         }
-      });
+      }, { new: true });
 
-      this.logger.log(`Google Calendar connected for user ${userId}`);
+      this.logger.log(`[handleCallback] Google Calendar connected for user ${userId}, update result: ${!!updateResult}`);
       return { success: true, message: 'Google Calendar connected successfully' };
-    } catch (error) {
-      this.logger.error('Error handling Google OAuth callback:', error);
-      throw new BadRequestException('Failed to connect Google Calendar');
+    } catch (error: any) {
+      this.logger.error(`[handleCallback] Error: ${error.message}`, error.stack);
+      throw new BadRequestException(`Failed to connect Google Calendar: ${error.message}`);
     }
   }
 
@@ -222,9 +232,12 @@ export class GoogleCalendarService {
    * Get Google Calendar connection status
    */
   async getConnectionStatus(userId: string): Promise<{ connected: boolean; hasValidAccess: boolean }> {
+    this.logger.debug(`[getConnectionStatus] Checking status for user: ${userId}`);
     const user = await this.userModel.findById(userId).select('googleTokens');
     const connected = !!user?.googleTokens;
+    this.logger.debug(`[getConnectionStatus] User found: ${!!user}, connected: ${connected}`);
     const hasValidAccess = connected ? await this.hasValidAccess(userId) : false;
+    this.logger.debug(`[getConnectionStatus] hasValidAccess: ${hasValidAccess}`);
     
     return { connected, hasValidAccess };
   }

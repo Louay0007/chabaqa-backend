@@ -70,7 +70,7 @@ export class SessionService {
     if (type === 'booked' || type === 'all') {
       const bookedSessions = await this.sessionModel
         .find({ 'bookings.userId': new Types.ObjectId(userId) })
-        .populate('creatorId', 'name email profile_picture')
+        .populate('creatorId', 'name email profile_picture photo_profil avatar')
         .populate('communityId', 'name slug')
         .sort({ startTime: -1 })
         .exec();
@@ -117,7 +117,7 @@ export class SessionService {
     if (type === 'created' || type === 'all') {
       const createdSessions = await this.sessionModel
         .find({ creatorId: new Types.ObjectId(userId) })
-        .populate('creatorId', 'name email profile_picture')
+        .populate('creatorId', 'name email profile_picture photo_profil avatar')
         .populate('communityId', 'name slug')
         .sort({ startTime: -1 })
         .exec();
@@ -294,7 +294,7 @@ export class SessionService {
     const [sessions, total] = await Promise.all([
       this.sessionModel
         .find(query)
-        .populate('creatorId', 'name email profile_picture')
+        .populate('creatorId', 'name email profile_picture photo_profil avatar')
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
@@ -333,7 +333,7 @@ export class SessionService {
   async findOne(id: string): Promise<SessionResponseDto> {
     const session = await this.sessionModel
       .findOne({ id })
-      .populate('creatorId', 'name email profile_picture')
+      .populate('creatorId', 'name email profile_picture photo_profil avatar')
       .exec();
 
     if (!session) {
@@ -371,7 +371,7 @@ export class SessionService {
 
     const sessions = await this.sessionModel
       .find({ communityId: community._id.toString() })
-      .populate('creatorId', 'name email profile_picture')
+      .populate('creatorId', 'name email profile_picture photo_profil avatar')
       .sort({ createdAt: -1 })
       .exec();
 
@@ -651,10 +651,17 @@ export class SessionService {
    * Récupérer les réservations d'un utilisateur
    */
   async getUserBookings(userId: string): Promise<UserBookingsResponseDto> {
+    console.log(`[getUserBookings] Fetching bookings for user: ${userId}`);
+    
+    // Create ObjectId for comparison
+    const userObjectId = new Types.ObjectId(userId);
+    
     const sessions = await this.sessionModel
-      .find({ 'bookings.userId': new Types.ObjectId(userId) })
-      .populate('creatorId', 'name email profile_picture')
+      .find({ 'bookings.userId': userObjectId })
+      .populate('creatorId', 'name email profile_picture photo_profil avatar')
       .exec();
+
+    console.log(`[getUserBookings] Found ${sessions.length} sessions with bookings for user`);
 
     interface BookingWithSession {
       id: string;
@@ -673,17 +680,41 @@ export class SessionService {
 
     const allBookings: BookingWithSession[] = [];
     for (const session of sessions) {
-      const userBookings = session.bookings.filter(booking => booking.userId.toString() === userId);
+      console.log(`[getUserBookings] Session ${session.id} has ${session.bookings.length} total bookings`);
+      
+      const userBookings = session.bookings.filter(booking => {
+        // Use ObjectId.equals() for proper comparison
+        const bookingUserIdObj = booking.userId;
+        let match = false;
+        
+        if (bookingUserIdObj instanceof Types.ObjectId) {
+          match = bookingUserIdObj.equals(userObjectId);
+        } else {
+          // Fallback to string comparison
+          match = String(bookingUserIdObj) === String(userObjectId);
+        }
+        
+        console.log(`[getUserBookings] Comparing booking userId: ${bookingUserIdObj} with ${userObjectId} => ${match}`);
+        return match;
+      });
+      
+      console.log(`[getUserBookings] Session ${session.id} has ${userBookings.length} bookings for this user`);
       for (const booking of userBookings) {
+        // Get creator avatar - check both photo_profil and profile_picture fields
+        const creator = session.creatorId as any;
+        const creatorAvatar = creator?.photo_profil || creator?.profile_picture || creator?.avatar || undefined;
+        
         allBookings.push({
-          ...booking,
+          ...(booking as any).toObject ? (booking as any).toObject() : booking,
           sessionId: session.id,
           sessionTitle: session.title,
-          creatorName: (session.creatorId as any).name,
-          creatorAvatar: (session.creatorId as any).profile_picture
+          creatorName: creator?.name || 'Unknown',
+          creatorAvatar: creatorAvatar
         });
       }
     }
+
+    console.log(`[getUserBookings] Total bookings found: ${allBookings.length}`);
 
     // Trier par date de création
     allBookings.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -710,12 +741,149 @@ export class SessionService {
   }
 
   /**
+   * Sync bookings from paid orders (for fixing missing bookings)
+   */
+  async syncBookingsFromPaidOrders(userId: string): Promise<{ synced: number; existing: number }> {
+    console.log(`[syncBookingsFromPaidOrders] Syncing bookings for user: ${userId}`);
+    
+    const userObjectId = new Types.ObjectId(userId);
+    
+    // Find all paid session orders for this user
+    const paidOrders = await this.orderModel.find({
+      buyerId: userObjectId,
+      contentType: 'session',
+      status: 'paid',
+    }).exec();
+
+    console.log(`[syncBookingsFromPaidOrders] Found ${paidOrders.length} paid session orders`);
+
+    let synced = 0;
+    let existing = 0;
+
+    for (const order of paidOrders) {
+      // Find the session - contentId is stored as session._id.toString()
+      // Try findById first since that's how contentId is stored
+      let session = await this.sessionModel.findById(order.contentId);
+      if (!session) {
+        // Fallback to custom id field
+        session = await this.sessionModel.findOne({ id: order.contentId });
+      }
+      console.log(`[syncBookingsFromPaidOrders] Session lookup for contentId ${order.contentId}: ${session ? `found (id: ${session.id})` : 'not found'}`);
+
+      if (session) {
+        // Check if booking already exists using ObjectId.equals()
+        const existingBooking = session.bookings.find(b => {
+          if (b.userId instanceof Types.ObjectId) {
+            return b.userId.equals(userObjectId);
+          }
+          return String(b.userId) === String(userObjectId);
+        });
+
+        if (!existingBooking) {
+          // Get slot info from order metadata if available
+          const metadata = (order as any).metadata || {};
+          const slotStartTime = metadata.slotStartTime;
+          const notes = metadata.notes;
+
+          // Create booking - push directly to avoid validation checks since this is a sync from paid orders
+          const bookingId = new Types.ObjectId().toString();
+          const newBooking = {
+            id: bookingId,
+            userId: userObjectId,
+            scheduledAt: slotStartTime ? new Date(slotStartTime) : new Date(),
+            status: 'confirmed' as const,
+            notes: notes || undefined,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          };
+          
+          // Push directly to bookings array (bypass addBooking validation)
+          session.bookings.push(newBooking as any);
+          
+          // Mark the bookings array as modified to ensure Mongoose saves it
+          session.markModified('bookings');
+          
+          await session.save();
+          synced++;
+          console.log(`[syncBookingsFromPaidOrders] Created booking ${bookingId} for session ${session.id}, userId: ${userId}`);
+          console.log(`[syncBookingsFromPaidOrders] Session now has ${session.bookings.length} bookings`);
+        } else {
+          existing++;
+          console.log(`[syncBookingsFromPaidOrders] Booking already exists for session ${session.id}, bookingUserId: ${existingBooking.userId}`);
+        }
+      } else {
+        console.log(`[syncBookingsFromPaidOrders] Session not found for order ${order._id}, contentId: ${order.contentId}`);
+      }
+    }
+
+    return { synced, existing };
+  }
+
+  /**
+   * Clean up duplicate bookings for a user in all sessions
+   * Keeps only the oldest booking per user per session
+   */
+  async cleanupDuplicateBookings(userId?: string): Promise<{ sessionsProcessed: number; duplicatesRemoved: number }> {
+    console.log(`[cleanupDuplicateBookings] Starting cleanup${userId ? ` for user: ${userId}` : ' for all users'}`);
+    
+    // Find sessions with bookings
+    const query = userId 
+      ? { 'bookings.userId': new Types.ObjectId(userId) }
+      : { 'bookings.0': { $exists: true } };
+    
+    const sessions = await this.sessionModel.find(query).exec();
+    
+    let sessionsProcessed = 0;
+    let duplicatesRemoved = 0;
+
+    for (const session of sessions) {
+      const bookingsByUser = new Map<string, any[]>();
+      
+      // Group bookings by userId
+      for (const booking of session.bookings) {
+        const bookingUserId = String(booking.userId);
+        if (!bookingsByUser.has(bookingUserId)) {
+          bookingsByUser.set(bookingUserId, []);
+        }
+        bookingsByUser.get(bookingUserId)!.push(booking);
+      }
+
+      // Find users with duplicate bookings
+      let sessionHadDuplicates = false;
+      const bookingsToKeep: any[] = [];
+
+      for (const [userIdKey, userBookings] of bookingsByUser) {
+        if (userBookings.length > 1) {
+          // Sort by createdAt (oldest first) and keep only the first one
+          userBookings.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+          bookingsToKeep.push(userBookings[0]);
+          duplicatesRemoved += userBookings.length - 1;
+          sessionHadDuplicates = true;
+          console.log(`[cleanupDuplicateBookings] Session ${session.id}: Removing ${userBookings.length - 1} duplicate(s) for user ${userIdKey}`);
+        } else {
+          bookingsToKeep.push(userBookings[0]);
+        }
+      }
+
+      if (sessionHadDuplicates) {
+        session.bookings = bookingsToKeep;
+        session.markModified('bookings');
+        await session.save();
+        sessionsProcessed++;
+      }
+    }
+
+    console.log(`[cleanupDuplicateBookings] Completed: ${sessionsProcessed} sessions processed, ${duplicatesRemoved} duplicates removed`);
+    return { sessionsProcessed, duplicatesRemoved };
+  }
+
+  /**
    * Récupérer les réservations d'un créateur
    */
   async getCreatorBookings(creatorId: string): Promise<CreatorBookingsResponseDto> {
     const sessions = await this.sessionModel
       .find({ creatorId: new Types.ObjectId(creatorId) })
-      .populate('creatorId', 'name email profile_picture')
+      .populate('creatorId', 'name email profile_picture photo_profil avatar')
       .exec();
 
     interface BookingWithSession {
@@ -1078,20 +1246,22 @@ export class SessionService {
    * Transformer un document Session en DTO de réponse
    */
   private async transformToResponseDto(session: SessionDocument, community?: CommunityDocument | null): Promise<SessionResponseDto> {
-    // Récupérer les informations du créateur
-    const creator = await this.userModel.findById(session.creatorId).select('name email profile_picture');
+    // Récupérer les informations du créateur - include all possible avatar fields
+    const creator = await this.userModel.findById(session.creatorId).select('name email profile_picture photo_profil');
 
     // Transformer les réservations
     const bookingUserIds = session.bookings.map(b => b.userId);
-    const bookingUsers = await this.userModel.find({ _id: { $in: bookingUserIds } }).select('name email profile_picture');
+    const bookingUsers = await this.userModel.find({ _id: { $in: bookingUserIds } }).select('name email profile_picture photo_profil');
 
     const bookings = session.bookings.map(booking => {
       const user = bookingUsers.find(u => u._id.equals(booking.userId));
+      // Check all possible avatar fields
+      const userAvatar = user?.photo_profil || user?.profile_picture;
       return {
         id: booking.id,
         userId: booking.userId.toString(),
         userName: user?.name || 'Utilisateur inconnu',
-        userAvatar: user?.profile_picture,
+        userAvatar: userAvatar,
         scheduledAt: booking.scheduledAt.toISOString(),
         status: booking.status,
         meetingUrl: booking.meetingUrl,
@@ -1100,6 +1270,9 @@ export class SessionService {
         updatedAt: booking.updatedAt.toISOString()
       };
     });
+
+    // Get creator avatar from all possible fields
+    const creatorAvatar = creator?.photo_profil || creator?.profile_picture;
 
     return {
       id: session.id,
@@ -1112,7 +1285,7 @@ export class SessionService {
       communitySlug: community?.slug || '',
       creatorId: session.creatorId.toString(),
       creatorName: creator?.name || 'Créateur inconnu',
-      creatorAvatar: creator?.profile_picture,
+      creatorAvatar: creatorAvatar,
       isActive: session.isActive,
       bookings: bookings,
       createdAt: session.createdAt.toISOString(),
