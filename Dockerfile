@@ -49,8 +49,9 @@ RUN npm install --omit=dev && \
 # Copy built application from builder stage
 COPY --from=builder /app/dist ./dist
 
-# Create uploads directory
-RUN mkdir -p uploads && chmod 755 uploads
+# Create uploads directory with all subdirectories
+RUN mkdir -p uploads/image uploads/video uploads/document uploads/audio && \
+    chmod -R 755 uploads
 
 # Create a non-root user for security
 RUN addgroup -g 1001 -S nodejs && \

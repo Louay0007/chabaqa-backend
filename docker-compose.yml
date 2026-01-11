@@ -18,6 +18,8 @@ services:
       MONGO_URI: "mongodb+srv://admin:admin@chabaqa.bmmujoq.mongodb.net/?appName=chabaqa"
       NODE_ENV: production
       PORT: 3000
+      # Set SERVER_URL for correct image URLs
+      SERVER_URL: "http://51.254.132.77:3000"
     volumes:
       # Persist uploaded files
       - ./uploads:/app/uploads
