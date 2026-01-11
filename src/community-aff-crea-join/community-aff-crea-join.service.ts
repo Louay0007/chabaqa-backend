@@ -267,13 +267,30 @@ export class CommunityAffCreaJoinService {
       'https://via.placeholder.com/150?text=Community'
     );
 
+    // DEBUG: Log the raw creator data
+    console.log('🔍 [TRANSFORM] Processing community:', community.name);
+    console.log('🔍 [TRANSFORM] Raw createur object:', {
+      id: (community.createur as any)?._id || community.createur,
+      name: (community.createur as any)?.name,
+      profile_picture: (community.createur as any)?.profile_picture,
+      photo_profil: (community.createur as any)?.photo_profil,
+    });
+    console.log('🔍 [TRANSFORM] Stored creatorAvatar field:', community.creatorAvatar);
+
     // Get creator avatar with proper fallback chain
-    const creatorAvatarUrl = this.uploadService.ensureAbsoluteUrl(
-      (community.createur as any)?.profile_picture ||
-      (community.createur as any)?.photo_profil ||
-      community.creatorAvatar ||
-      ''
-    );
+    const rawProfilePic = (community.createur as any)?.profile_picture;
+    const rawPhotoProfil = (community.createur as any)?.photo_profil;
+    const rawCreatorAvatar = community.creatorAvatar;
+
+    const selectedRawUrl = rawProfilePic || rawPhotoProfil || rawCreatorAvatar || '';
+    console.log('🔍 [TRANSFORM] Selected raw URL:', selectedRawUrl);
+
+    const creatorAvatarUrl = this.uploadService.ensureAbsoluteUrl(selectedRawUrl);
+    console.log('🔍 [TRANSFORM] After ensureAbsoluteUrl:', creatorAvatarUrl);
+
+    // Final avatar with fallback
+    const finalAvatar = creatorAvatarUrl || 'https://placehold.co/64x64?text=U';
+    console.log('🔍 [TRANSFORM] Final avatar URL:', finalAvatar);
 
     return {
       _id: community._id,
@@ -284,11 +301,14 @@ export class CommunityAffCreaJoinService {
       creator: {
         id: community.createur.toString(),
         name: (community.createur as any)?.name || 'Unknown Creator',
-        avatar: creatorAvatarUrl || 'https://placehold.co/64x64?text=U',
+        avatar: finalAvatar,
+        // Also include raw fields for mobile to try extracting
+        profile_picture: creatorAvatarUrl,
+        photo_profil: creatorAvatarUrl,
         verified: false, // TODO: Add verified status
       },
       creatorId: community.createur.toString(),
-      creatorAvatar: creatorAvatarUrl || 'https://placehold.co/64x64?text=U',
+      creatorAvatar: finalAvatar,
       description: community.short_description,
       longDescription: community.longDescription || community.short_description,
       coverImage: this.uploadService.ensureAbsoluteUrl(
