@@ -228,9 +228,9 @@ export class CommunityAffCreaJoinService {
       // Retourner la communauté avec les relations peuplées
       const populatedCommunity = await this.communityModel
         .findById(savedCommunity._id)
-        .populate('createur', 'name email profile_picture photo_profil')
-        .populate('members', 'name email')
-        .populate('admins', 'name email')
+        .populate('createur', 'name email profile_picture photo_profil avatar photo')
+        .populate('members', 'name email profile_picture photo_profil avatar photo')
+        .populate('admins', 'name email profile_picture photo_profil avatar photo')
         .exec();
 
 
@@ -280,9 +280,11 @@ export class CommunityAffCreaJoinService {
     // Get creator avatar with proper fallback chain
     const rawProfilePic = (community.createur as any)?.profile_picture;
     const rawPhotoProfil = (community.createur as any)?.photo_profil;
+    const rawAvatar = (community.createur as any)?.avatar;
+    const rawPhoto = (community.createur as any)?.photo;
     const rawCreatorAvatar = community.creatorAvatar;
 
-    const selectedRawUrl = rawProfilePic || rawPhotoProfil || rawCreatorAvatar || '';
+    const selectedRawUrl = rawProfilePic || rawPhotoProfil || rawAvatar || rawPhoto || rawCreatorAvatar || '';
     console.log('🔍 [TRANSFORM] Selected raw URL:', selectedRawUrl);
 
     const creatorAvatarUrl = this.uploadService.ensureAbsoluteUrl(selectedRawUrl);
@@ -396,9 +398,9 @@ export class CommunityAffCreaJoinService {
     try {
       const communities = await this.communityModel
         .find({ isActive: true })
-        .populate('createur', 'name email profile_picture photo_profil')
-        .populate('members', 'name email')
-        .populate('admins', 'name email')
+        .populate('createur', 'name email profile_picture photo_profil avatar photo')
+        .populate('members', 'name email profile_picture photo_profil avatar photo')
+        .populate('admins', 'name email profile_picture photo_profil avatar photo')
         .sort({ createdAt: -1 })
         .exec();
 
