@@ -11,7 +11,8 @@ import {
   ValidationPipe,
   UsePipes,
   UseInterceptors,
-  UploadedFile
+  UploadedFile,
+  InternalServerErrorException
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -156,6 +157,7 @@ export class CommunityAffCreaJoinController {
       console.log('🔍 [CREATE COMMUNITY] Request received')
       console.log('🔍 [CREATE COMMUNITY] DTO:', JSON.stringify(createCommunityDto, null, 2))
       console.log('🔍 [CREATE COMMUNITY] User:', req.user?._id)
+      console.log('🔍 [CREATE COMMUNITY] User role before:', req.user?.role)
 
       const userId = req.user._id;
       const uploadedFiles: { logo?: string } = {};
@@ -187,16 +189,34 @@ export class CommunityAffCreaJoinController {
         userId
       );
 
+      console.log('✅ [CREATE COMMUNITY] Communauté créée avec succès:', {
+        id: community._id,
+        name: community.name,
+        slug: community.slug
+      });
+
       return {
         success: true,
         message: 'Communauté créée avec succès',
-        data: community
+        data: community,
+        communityId: community._id
       };
     } catch (error) {
       console.error('❌ [CREATE COMMUNITY] Error:', error);
       console.error('❌ [CREATE COMMUNITY] Error message:', error.message);
       console.error('❌ [CREATE COMMUNITY] Error stack:', error.stack);
-      throw error;
+      
+      // Return proper error response for validation errors
+      if (error.response && error.response.statusCode) {
+        throw error;
+      }
+      
+      // Handle other errors
+      throw new InternalServerErrorException({
+        success: false,
+        message: error.message || 'Erreur lors de la création de la communauté',
+        error: 'Internal Server Error'
+      });
     }
   }
 

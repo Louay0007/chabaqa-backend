@@ -204,7 +204,8 @@ export class CommunityAffCreaJoinService {
       }
 
       // Mettre à jour l'utilisateur avec la nouvelle communauté et changer son rôle en creator
-      await this.userModel.findByIdAndUpdate(
+      console.log('🔄 Mise à jour du rôle utilisateur vers CREATOR...');
+      const updatedUser = await this.userModel.findByIdAndUpdate(
         userId,
         {
           $push: {
@@ -217,6 +218,12 @@ export class CommunityAffCreaJoinService {
         },
         { new: true }
       );
+
+      console.log('✅ Rôle utilisateur mis à jour:', {
+        userId: updatedUser?._id,
+        newRole: updatedUser?.role,
+        createdCommunities: updatedUser?.createdCommunities?.length
+      });
 
       // Retourner la communauté avec les relations peuplées
       const populatedCommunity = await this.communityModel
