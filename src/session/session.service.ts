@@ -16,9 +16,12 @@ import { FeeService } from '../common/services/fee.service';
 import { TrackableContentType } from '../schema/content-tracking.schema';
 import { GoogleCalendarService } from '../google-calendar/google-calendar.service';
 import { EmailService, SessionBookingEmailData } from '../email/email.service';
+import { Logger } from '@nestjs/common';
 
 @Injectable()
 export class SessionService {
+  private readonly logger = new Logger(SessionService.name);
+  
   constructor(
     @InjectModel(Session.name) private sessionModel: Model<SessionDocument>,
     @InjectModel(Community.name) private communityModel: Model<CommunityDocument>,
@@ -70,7 +73,7 @@ export class SessionService {
     if (type === 'booked' || type === 'all') {
       const bookedSessions = await this.sessionModel
         .find({ 'bookings.userId': new Types.ObjectId(userId) })
-        .populate('creatorId', 'name email profile_picture photo_profil avatar')
+        .populate('creatorId', 'name email profile_picture photo_profil')
         .populate('communityId', 'name slug')
         .sort({ startTime: -1 })
         .exec();
@@ -117,7 +120,7 @@ export class SessionService {
     if (type === 'created' || type === 'all') {
       const createdSessions = await this.sessionModel
         .find({ creatorId: new Types.ObjectId(userId) })
-        .populate('creatorId', 'name email profile_picture photo_profil avatar')
+        .populate('creatorId', 'name email profile_picture photo_profil')
         .populate('communityId', 'name slug')
         .sort({ startTime: -1 })
         .exec();
@@ -294,7 +297,7 @@ export class SessionService {
     const [sessions, total] = await Promise.all([
       this.sessionModel
         .find(query)
-        .populate('creatorId', 'name email profile_picture photo_profil avatar')
+        .populate('creatorId', 'name email profile_picture photo_profil')
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
@@ -333,7 +336,7 @@ export class SessionService {
   async findOne(id: string): Promise<SessionResponseDto> {
     const session = await this.sessionModel
       .findOne({ id })
-      .populate('creatorId', 'name email profile_picture photo_profil avatar')
+      .populate('creatorId', 'name email profile_picture photo_profil')
       .exec();
 
     if (!session) {
@@ -371,7 +374,7 @@ export class SessionService {
 
     const sessions = await this.sessionModel
       .find({ communityId: community._id.toString() })
-      .populate('creatorId', 'name email profile_picture photo_profil avatar')
+      .populate('creatorId', 'name email profile_picture photo_profil')
       .sort({ createdAt: -1 })
       .exec();
 
@@ -557,15 +560,78 @@ export class SessionService {
       throw new BadRequestException('Cette réservation ne peut pas être confirmée');
     }
 
+    // Try to create Google Meet link if creator has Google Calendar connected
+    let meetingUrl = confirmBookingDto.meetingUrl;
+    let googleEventId: string | undefined;
+    
+    if (!meetingUrl) {
+      try {
+        const hasGoogleAccess = await this.googleCalendarService.hasValidAccess(userId);
+        if (hasGoogleAccess) {
+          // Get participant email
+          const participant = await this.userModel.findById(booking.userId).select('email name');
+          if (participant?.email) {
+            const scheduledAt = new Date(booking.scheduledAt);
+            const endTime = new Date(scheduledAt.getTime() + (session.duration || 60) * 60 * 1000);
+            
+            this.logger.log(`[confirmBooking] Creating Google Meet for booking ${bookingId}`);
+            const result = await this.googleCalendarService.createCalendarEventWithMeet(
+              userId,
+              session.id,
+              participant.email,
+              scheduledAt,
+              endTime,
+              session.title,
+              session.description
+            );
+            
+            meetingUrl = result.meetLink;
+            googleEventId = result.eventId;
+            this.logger.log(`[confirmBooking] Google Meet created: ${meetingUrl}`);
+          }
+        }
+      } catch (error: any) {
+        this.logger.warn(`[confirmBooking] Failed to create Google Meet: ${error.message}`);
+        // Continue without Meet link - don't fail the confirmation
+      }
+    }
+
     // Mettre à jour la réservation
     booking.status = 'confirmed';
-    booking.meetingUrl = confirmBookingDto.meetingUrl;
+    booking.meetingUrl = meetingUrl;
+    if (googleEventId) {
+      (booking as any).googleEventId = googleEventId;
+    }
     if (confirmBookingDto.notes) {
       booking.notes = confirmBookingDto.notes;
     }
     booking.updatedAt = new Date();
 
+    session.markModified('bookings');
     await session.save();
+
+    // Send confirmation email to participant
+    try {
+      const participant = await this.userModel.findById(booking.userId).select('email name');
+      const creator = await this.userModel.findById(userId).select('email name');
+      if (participant?.email && creator?.email) {
+        await this.emailService.sendBookingConfirmation({
+          participantEmail: participant.email,
+          participantName: participant.name || 'Participant',
+          creatorName: creator.name || 'Creator',
+          creatorEmail: creator.email,
+          sessionTitle: session.title,
+          sessionDescription: session.description,
+          scheduledAt: booking.scheduledAt,
+          duration: session.duration || 60,
+          meetingUrl: meetingUrl,
+          bookingId: bookingId,
+          sessionId: session.id,
+        });
+      }
+    } catch (emailError: any) {
+      this.logger.warn(`[confirmBooking] Failed to send confirmation email: ${emailError.message}`);
+    }
 
     const community = await this.communityModel.findOne({ id: session.communityId });
     return this.transformToResponseDto(session, community || undefined);
@@ -612,6 +678,80 @@ export class SessionService {
   }
 
   /**
+   * Create Google Meet link for an existing booking
+   */
+  async createMeetLinkForBooking(bookingId: string, userId: string): Promise<{ meetingUrl: string; googleEventId: string }> {
+    this.logger.debug(`[createMeetLinkForBooking] Looking for booking: ${bookingId}`);
+    const session = await this.sessionModel.findOne({ 'bookings.id': bookingId });
+    if (!session) {
+      throw new NotFoundException('Booking not found');
+    }
+
+    this.logger.debug(`[createMeetLinkForBooking] Found session: ${session.id}, title: ${session.title}`);
+    this.logger.debug(`[createMeetLinkForBooking] Session creatorId type: ${typeof session.creatorId}, value: ${session.creatorId}`);
+    
+    // Verify user is the creator - handle both ObjectId and string comparisons
+    const creatorIdStr = session.creatorId?.toString();
+    const userIdStr = userId?.toString();
+    this.logger.debug(`[createMeetLinkForBooking] Comparing creatorId: "${creatorIdStr}" with userId: "${userIdStr}"`);
+    this.logger.debug(`[createMeetLinkForBooking] Are they equal: ${creatorIdStr === userIdStr}`);
+    
+    if (creatorIdStr !== userIdStr) {
+      this.logger.warn(`[createMeetLinkForBooking] Creator mismatch: session.creatorId=${creatorIdStr}, userId=${userIdStr}`);
+      throw new ForbiddenException('Only the session creator can create Meet links');
+    }
+
+    const booking = session.getBooking(bookingId);
+    if (!booking) {
+      throw new NotFoundException('Booking not found');
+    }
+
+    // Check if booking already has a Meet link
+    if (booking.meetingUrl) {
+      throw new BadRequestException('This booking already has a Meet link');
+    }
+
+    // Check if creator has Google Calendar connected
+    const hasGoogleAccess = await this.googleCalendarService.hasValidAccess(userId);
+    if (!hasGoogleAccess) {
+      throw new BadRequestException('Please connect your Google Calendar first');
+    }
+
+    // Get participant email
+    const participant = await this.userModel.findById(booking.userId).select('email name');
+    if (!participant?.email) {
+      throw new BadRequestException('Participant email not found');
+    }
+
+    const scheduledAt = new Date(booking.scheduledAt);
+    const endTime = new Date(scheduledAt.getTime() + (session.duration || 60) * 60 * 1000);
+
+    this.logger.log(`[createMeetLinkForBooking] Creating Google Meet for booking ${bookingId}`);
+    
+    const result = await this.googleCalendarService.createCalendarEventWithMeet(
+      userId,
+      session.id,
+      participant.email,
+      scheduledAt,
+      endTime,
+      session.title,
+      session.description
+    );
+
+    // Update booking with Meet link
+    booking.meetingUrl = result.meetLink;
+    (booking as any).googleEventId = result.eventId;
+    booking.updatedAt = new Date();
+
+    session.markModified('bookings');
+    await session.save();
+
+    this.logger.log(`[createMeetLinkForBooking] Google Meet created: ${result.meetLink}`);
+
+    return { meetingUrl: result.meetLink, googleEventId: result.eventId };
+  }
+
+  /**
    * Marquer une session comme terminée
    */
   async completeSession(bookingId: string, completeSessionDto: CompleteSessionDto, userId: string): Promise<SessionResponseDto> {
@@ -621,7 +761,12 @@ export class SessionService {
     }
 
     // Vérifier que l'utilisateur est le créateur de la session
-    if (session.creatorId.toString() !== userId) {
+    const creatorIdStr = session.creatorId?.toString();
+    const userIdStr = userId?.toString();
+    this.logger.debug(`[completeSession] Comparing creatorId: "${creatorIdStr}" with userId: "${userIdStr}"`);
+    
+    if (creatorIdStr !== userIdStr) {
+      this.logger.warn(`[completeSession] Creator mismatch: session.creatorId=${creatorIdStr}, userId=${userIdStr}`);
       throw new ForbiddenException('Seul le créateur de la session peut la marquer comme terminée');
     }
 
@@ -658,7 +803,7 @@ export class SessionService {
     
     const sessions = await this.sessionModel
       .find({ 'bookings.userId': userObjectId })
-      .populate('creatorId', 'name email profile_picture photo_profil avatar')
+      .populate('creatorId', 'name email profile_picture photo_profil')
       .exec();
 
     console.log(`[getUserBookings] Found ${sessions.length} sessions with bookings for user`);
@@ -878,62 +1023,174 @@ export class SessionService {
   }
 
   /**
-   * Récupérer les réservations d'un créateur
+   * Récupérer les réservations d'un créateur avec filtres et pagination
    */
-  async getCreatorBookings(creatorId: string): Promise<CreatorBookingsResponseDto> {
+  async getCreatorBookings(
+    creatorId: string,
+    options: {
+      page?: number;
+      limit?: number;
+      status?: string;
+      timeFilter?: string;
+      sessionId?: string;
+      search?: string;
+    } = {}
+  ): Promise<CreatorBookingsResponseDto> {
+    const { page = 1, limit = 20, status, timeFilter = 'all', sessionId, search } = options;
+    
+    // Build query for sessions
+    const sessionQuery: any = { creatorId: new Types.ObjectId(creatorId) };
+    if (sessionId) {
+      sessionQuery.id = sessionId;
+    }
+    
     const sessions = await this.sessionModel
-      .find({ creatorId: new Types.ObjectId(creatorId) })
-      .populate('creatorId', 'name email profile_picture photo_profil avatar')
+      .find(sessionQuery)
+      .populate('creatorId', 'name email profile_picture photo_profil')
       .exec();
 
     interface BookingWithSession {
       id: string;
+      oderId?: string;
       userId: Types.ObjectId;
       scheduledAt: Date;
       status: 'pending' | 'confirmed' | 'completed' | 'cancelled';
       meetingUrl?: string;
+      googleEventId?: string;
       notes?: string;
       createdAt: Date;
       updatedAt: Date;
       sessionId: string;
       sessionTitle: string;
+      sessionDuration: number;
+      sessionPrice: number;
     }
 
-    const allBookings: BookingWithSession[] = [];
+    let allBookings: BookingWithSession[] = [];
+    const now = new Date();
+    
     for (const session of sessions) {
       for (const booking of session.bookings) {
+        // Skip bookings without userId
+        if (!booking.userId) {
+          this.logger.warn(`[getCreatorBookings] Skipping booking ${booking.id} without userId`);
+          continue;
+        }
+        
+        const scheduledAt = new Date(booking.scheduledAt);
+        const isUpcoming = scheduledAt > now;
+        const isPast = scheduledAt <= now;
+        
+        // Apply time filter
+        if (timeFilter === 'upcoming' && !isUpcoming) continue;
+        if (timeFilter === 'past' && !isPast) continue;
+        
+        // Apply status filter
+        if (status && booking.status !== status) continue;
+        
         allBookings.push({
-          ...booking,
+          id: booking.id,
+          oderId: (booking as any).oderId,
+          userId: booking.userId,
+          scheduledAt: booking.scheduledAt,
+          status: booking.status,
+          meetingUrl: booking.meetingUrl,
+          googleEventId: (booking as any).googleEventId,
+          notes: booking.notes,
+          createdAt: booking.createdAt,
+          updatedAt: booking.updatedAt,
           sessionId: session.id,
-          sessionTitle: session.title
+          sessionTitle: session.title,
+          sessionDuration: session.duration || 60,
+          sessionPrice: session.price || 0,
         });
       }
     }
 
-    // Trier par date de création
-    allBookings.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-
     // Récupérer les informations des utilisateurs
-    const userIds = [...new Set(allBookings.map(booking => booking.userId.toString()))];
-    const users = await this.userModel.find({ _id: { $in: userIds } }).select('name email profile_picture');
+    const userIds = [...new Set(allBookings.filter(b => b.userId).map(booking => booking.userId.toString()))];
+    const users = await this.userModel.find({ _id: { $in: userIds } }).select('name email profile_picture photo_profil');
+    
+    // Create a map for quick user lookup
+    const userMap = new Map(users.map(u => [u._id.toString(), u]));
+    
+    // Apply search filter (after getting user info)
+    if (search) {
+      const searchLower = search.toLowerCase();
+      allBookings = allBookings.filter(booking => {
+        const user = userMap.get(booking.userId.toString());
+        const userName = user?.name?.toLowerCase() || '';
+        const sessionTitle = booking.sessionTitle.toLowerCase();
+        return userName.includes(searchLower) || sessionTitle.includes(searchLower);
+      });
+    }
+
+    // Sort: upcoming first (by date asc), then past (by date desc)
+    allBookings.sort((a, b) => {
+      const dateA = new Date(a.scheduledAt);
+      const dateB = new Date(b.scheduledAt);
+      const aIsUpcoming = dateA > now;
+      const bIsUpcoming = dateB > now;
+      
+      if (aIsUpcoming && bIsUpcoming) {
+        return dateA.getTime() - dateB.getTime(); // Upcoming: earliest first
+      }
+      if (!aIsUpcoming && !bIsUpcoming) {
+        return dateB.getTime() - dateA.getTime(); // Past: most recent first
+      }
+      return aIsUpcoming ? -1 : 1; // Upcoming before past
+    });
+
+    // Calculate totals before pagination
+    const total = allBookings.length;
+    const totalPages = Math.ceil(total / limit);
+    
+    // Apply pagination
+    const skip = (page - 1) * limit;
+    const paginatedBookings = allBookings.slice(skip, skip + limit);
+
+    // Calculate stats
+    const stats = {
+      total,
+      pending: allBookings.filter(b => b.status === 'pending').length,
+      confirmed: allBookings.filter(b => b.status === 'confirmed').length,
+      completed: allBookings.filter(b => b.status === 'completed').length,
+      cancelled: allBookings.filter(b => b.status === 'cancelled').length,
+      upcoming: allBookings.filter(b => new Date(b.scheduledAt) > now && b.status !== 'cancelled').length,
+      past: allBookings.filter(b => new Date(b.scheduledAt) <= now).length,
+    };
 
     return {
-      bookings: allBookings.map(booking => {
-        const user = users.find(u => u._id.equals(booking.userId));
+      bookings: paginatedBookings.map(booking => {
+        const user = userMap.get(booking.userId.toString());
+        const userAvatar = user?.photo_profil || user?.profile_picture;
+        const scheduledAt = new Date(booking.scheduledAt);
         return {
           id: booking.id,
-          userId: booking.userId.toString(),
+          oderId: booking.oderId,
+          sessionId: booking.sessionId,
+          sessionTitle: booking.sessionTitle,
+          sessionDuration: booking.sessionDuration,
+          sessionPrice: booking.sessionPrice,
+          userId: booking.userId?.toString() || '',
           userName: user?.name || 'Utilisateur inconnu',
-          userAvatar: user?.profile_picture,
-          scheduledAt: booking.scheduledAt.toISOString(),
+          userEmail: user?.email,
+          userAvatar: userAvatar,
+          scheduledAt: booking.scheduledAt?.toISOString() || new Date().toISOString(),
+          isUpcoming: scheduledAt > now,
           status: booking.status,
           meetingUrl: booking.meetingUrl,
+          googleEventId: booking.googleEventId,
           notes: booking.notes,
-          createdAt: booking.createdAt.toISOString(),
-          updatedAt: booking.updatedAt.toISOString()
+          createdAt: booking.createdAt?.toISOString() || new Date().toISOString(),
+          updatedAt: booking.updatedAt?.toISOString() || new Date().toISOString()
         };
       }),
-      total: allBookings.length
+      total,
+      page,
+      limit,
+      totalPages,
+      stats,
     };
   }
 

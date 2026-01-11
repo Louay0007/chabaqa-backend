@@ -35,14 +35,24 @@ export class GoogleCalendarService {
       'https://www.googleapis.com/auth/calendar.events'
     ];
 
-    const authUrl = this.oauth2Client.generateAuthUrl({
+    // Generate base auth URL
+    let authUrl = this.oauth2Client.generateAuthUrl({
       access_type: 'offline',
       scope: scopes,
-      state: userId, // Pass user ID in state for security
-      prompt: 'consent' // Force consent screen to get refresh token
+      prompt: 'consent', // Force consent screen to get refresh token
+      include_granted_scopes: true
     });
     
-    this.logger.log(`[getAuthUrl] Generated auth URL: ${authUrl.substring(0, 100)}...`);
+    // Manually add state parameter (the library sometimes doesn't include it properly)
+    const stateParam = `state=${encodeURIComponent(userId)}`;
+    if (authUrl.includes('?')) {
+      authUrl = `${authUrl}&${stateParam}`;
+    } else {
+      authUrl = `${authUrl}?${stateParam}`;
+    }
+    
+    this.logger.log(`[getAuthUrl] Generated auth URL with state=${userId}`);
+    this.logger.debug(`[getAuthUrl] Full auth URL: ${authUrl}`);
     return authUrl;
   }
 

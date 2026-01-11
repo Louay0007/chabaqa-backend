@@ -149,14 +149,16 @@ export class SessionController {
     @Body() confirmBookingDto: ConfirmBookingDto,
     @Request() req: any
   ): Promise<SessionResponseDto> {
-    return this.sessionService.confirmBooking(bookingId, confirmBookingDto, req.user.userId);
+    const userId = req.user._id || req.user.userId || req.user.sub || req.user.id;
+    console.log(`[confirmBooking] bookingId: ${bookingId}, userId: ${userId}`);
+    return this.sessionService.confirmBooking(bookingId, confirmBookingDto, userId);
   }
 
   @Patch('bookings/:bookingId/cancel')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Annuler une réservation' })
-  @ApiResponse({ status: 200, description: 'Réservation annulée avec succès', type: SessionResponseDto })
+  @ApiResponse({ status: 200, description: 'Réservation annulée avec succès', type: SessionResponseDto })   
   @ApiResponse({ status: 400, description: 'Impossible d\'annuler la réservation' })
   @ApiResponse({ status: 403, description: 'Accès non autorisé' })
   @ApiResponse({ status: 404, description: 'Réservation non trouvée' })
@@ -165,7 +167,26 @@ export class SessionController {
     @Body() cancelBookingDto: CancelBookingDto,
     @Request() req: any
   ): Promise<SessionResponseDto> {
-    return this.sessionService.cancelBooking(bookingId, cancelBookingDto, req.user.userId);
+    const userId = req.user._id || req.user.userId || req.user.sub || req.user.id;
+    console.log(`[cancelBooking] bookingId: ${bookingId}, userId: ${userId}`);
+    return this.sessionService.cancelBooking(bookingId, cancelBookingDto, userId);
+  }
+
+  @Post('bookings/:bookingId/create-meet')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Create Google Meet link for a booking' })
+  @ApiResponse({ status: 200, description: 'Meet link created successfully' })
+  @ApiResponse({ status: 400, description: 'Cannot create Meet link' })
+  @ApiResponse({ status: 403, description: 'Access denied' })
+  @ApiResponse({ status: 404, description: 'Booking not found' })
+  async createMeetLink(
+    @Param('bookingId') bookingId: string,
+    @Request() req: any
+  ): Promise<{ meetingUrl: string; googleEventId: string }> {
+    const userId = req.user._id || req.user.userId || req.user.sub || req.user.id;
+    console.log(`[createMeetLink] bookingId: ${bookingId}, userId: ${userId}`);
+    return this.sessionService.createMeetLinkForBooking(bookingId, userId);
   }
 
   @Patch('bookings/:bookingId/complete')
@@ -181,7 +202,9 @@ export class SessionController {
     @Body() completeSessionDto: CompleteSessionDto,
     @Request() req: any
   ): Promise<SessionResponseDto> {
-    return this.sessionService.completeSession(bookingId, completeSessionDto, req.user.userId);
+    const userId = req.user._id || req.user.userId || req.user.sub || req.user.id;
+    console.log(`[completeSession] bookingId: ${bookingId}, userId: ${userId}`);
+    return this.sessionService.completeSession(bookingId, completeSessionDto, userId);
   }
 
   @Get('bookings/user')
@@ -221,9 +244,33 @@ export class SessionController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Récupérer les réservations d\'un créateur' })
   @ApiResponse({ status: 200, description: 'Réservations du créateur récupérées avec succès', type: CreatorBookingsResponseDto })
-  async getCreatorBookings(@Request() req: any): Promise<CreatorBookingsResponseDto> {
+  @ApiQuery({ name: 'page', required: false, description: 'Page number', example: 1 })
+  @ApiQuery({ name: 'limit', required: false, description: 'Items per page', example: 10 })
+  @ApiQuery({ name: 'status', required: false, description: 'Filter by status (pending, confirmed, completed, cancelled)' })
+  @ApiQuery({ name: 'timeFilter', required: false, description: 'Filter by time (upcoming, past, all)', example: 'all' })
+  @ApiQuery({ name: 'sessionId', required: false, description: 'Filter by session ID' })
+  @ApiQuery({ name: 'search', required: false, description: 'Search by user name or session title' })
+  async getCreatorBookings(
+    @Request() req: any,
+    @Query('page') page?: number,
+    @Query('limit') limit?: number,
+    @Query('status') status?: string,
+    @Query('timeFilter') timeFilter?: string,
+    @Query('sessionId') sessionId?: string,
+    @Query('search') search?: string,
+  ): Promise<CreatorBookingsResponseDto> {
     const userId = req.user._id || req.user.userId || req.user.sub;
-    return this.sessionService.getCreatorBookings(userId);
+    console.log(`[getCreatorBookings] Fetching bookings for creator: ${userId}`);
+    const result = await this.sessionService.getCreatorBookings(userId, {
+      page: page || 1,
+      limit: limit || 20,
+      status,
+      timeFilter: timeFilter || 'all',
+      sessionId,
+      search,
+    });
+    console.log(`[getCreatorBookings] Found ${result.total} bookings`);
+    return result;
   }
 
   // Get sessions for a specific user (for profile viewing)
