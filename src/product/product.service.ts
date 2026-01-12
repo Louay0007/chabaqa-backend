@@ -768,6 +768,8 @@ export class ProductService {
       variants,
       files,
       rating: product.rating,
+      averageRating: (product as any).averageRating || 0,
+      ratingCount: (product as any).ratingCount || 0,
       licenseTerms: (product as any).licenseTerms,
       isRecurring: (product as any).isRecurring,
       recurringInterval: (product as any).recurringInterval,
@@ -890,7 +892,7 @@ export class ProductService {
         throw new NotFoundException('Product not found');
       }
 
-      // Check for existing order
+      // Check for existing order (manual payment flow)
       const order = await this.orderModel.findOne({
         buyerId: new Types.ObjectId(userId),
         contentType: TrackableContentType.PRODUCT,
@@ -910,6 +912,21 @@ export class ProductService {
             downloadCount: totalDownloads,
             orderId: order._id.toString(),
             amountPaid: order.amountDT || order.amount || product.price
+          }
+        };
+      }
+
+      // Check if user has product in purchasedProducts array (wallet payment flow)
+      const user = await this.userModel.findById(userId).select('purchasedProducts');
+      if (user?.purchasedProducts?.some((p: Types.ObjectId) => p.equals(product._id))) {
+        const totalDownloads = product.files?.reduce((sum, file) => sum + (file.downloadCount || 0), 0) || 0;
+        return {
+          purchased: true,
+          purchase: {
+            productId: product.id,
+            purchasedAt: new Date().toISOString(),
+            downloadCount: totalDownloads,
+            amountPaid: product.price
           }
         };
       }

@@ -236,6 +236,20 @@ export class ProductResponseDto {
   rating?: number;
 
   @ApiPropertyOptional({
+    description: 'Note moyenne du produit (calculée)',
+    example: 4.5,
+    minimum: 0,
+    maximum: 5
+  })
+  averageRating?: number;
+
+  @ApiPropertyOptional({
+    description: 'Nombre d\'avis',
+    example: 10
+  })
+  ratingCount?: number;
+
+  @ApiPropertyOptional({
     description: 'Termes de licence',
     example: 'Ce produit est sous licence MIT'
   })
