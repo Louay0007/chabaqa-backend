@@ -16,6 +16,6 @@ import {
     ])
   ],
   providers: [ContentTrackingService],
-  exports: [ContentTrackingService]
+  exports: [ContentTrackingService, MongooseModule]
 })
 export class TrackingModule {}

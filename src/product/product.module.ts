@@ -7,6 +7,7 @@ import { Community, CommunitySchema } from '../schema/community.schema';
 import { User, UserSchema } from '../schema/user.schema';
 import { AuthModule } from '../auth/auth.module';
 import { FeeModule } from '../common/modules/fee.module';
+import { TrackingModule } from '../common/modules/tracking.module';
 import { OrderSchema } from '../schema/order.schema';
 import { PolicyModule } from '../common/modules/policy.module';
 import { PromoModule } from '../common/modules/promo.module';
@@ -22,6 +23,7 @@ import { UploadModule } from '../upload/upload.module';
     ]),
     AuthModule,
     FeeModule,
+    TrackingModule,
     PolicyModule,
     PromoModule,
     UploadModule

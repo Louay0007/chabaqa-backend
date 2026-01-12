@@ -125,6 +125,43 @@ export class ProductController {
     return { success: true, data: products };
   }
 
+  @Get(':id/reviews')
+  @ApiOperation({ summary: 'Lister les avis d\'un produit (rating + message)' })
+  async getReviews(
+    @Param('id') id: string,
+  ): Promise<{ success: boolean; reviews: any[]; averageRating: number; ratingCount: number }> {
+    const result = await this.productService.getProductReviews(id);
+    return { success: true, ...result } as any;
+  }
+
+  @Get(':id/reviews/me')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Récupérer mon avis sur un produit' })
+  async getMyReview(
+    @Param('id') id: string,
+    @Request() req
+  ): Promise<{ success: boolean; review: any | null }> {
+    const userId = (req.user?._id || req.user?.sub || req.user?.userId || '').toString();
+    const review = await this.productService.getMyProductReview(id, userId);
+    return { success: true, review };
+  }
+
+  @Post(':id/reviews')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Créer / Mettre à jour mon avis (1 seul avis par utilisateur)' })
+  async upsertReview(
+    @Param('id') id: string,
+    @Body('rating') rating: number,
+    @Body('message') message: string,
+    @Request() req
+  ): Promise<{ success: boolean; averageRating: number; ratingCount: number; myReview: any | null }> {
+    const userId = (req.user?._id || req.user?.sub || req.user?.userId || '').toString();
+    const result = await this.productService.upsertProductReview(id, userId, rating, message);
+    return { success: true, ...result };
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Récupérer un produit par son ID' })
   @ApiResponse({ status: 200, description: 'Produit récupéré avec succès', type: ProductResponseDto })
@@ -321,7 +358,8 @@ export class ProductController {
     @Param('id') id: string,
     @Request() req
   ): Promise<{ success: boolean; purchased: boolean; purchase?: any }> {
-    const result = await this.productService.checkUserPurchase(id, req.user.userId);
+    const userId = (req.user?._id || req.user?.sub || req.user?.userId || '').toString();
+    const result = await this.productService.checkUserPurchase(id, userId);
     return { success: true, ...result };
   }
 

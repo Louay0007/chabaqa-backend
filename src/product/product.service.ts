@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { Model, Types, isValidObjectId } from 'mongoose';
 import { Product, ProductDocument, ProductVariant, ProductFile } from '../schema/product.schema';
 import { Community, CommunityDocument } from '../schema/community.schema';
 import { User, UserDocument } from '../schema/user.schema';
@@ -14,6 +14,7 @@ import {
   ProductFileResponseDto
 } from '../dto-product/product-response.dto';
 import { FeeService } from '../common/services/fee.service';
+import { ContentTrackingService } from '../common/services/content-tracking.service';
 import { TrackableContentType } from '../schema/content-tracking.schema';
 import { PolicyService } from '../common/services/policy.service';
 import { PromoService } from '../common/services/promo.service';
@@ -26,11 +27,116 @@ export class ProductService {
     @InjectModel(Community.name) private communityModel: Model<CommunityDocument>,
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     @InjectModel('Order') private orderModel: Model<any>,
+    @InjectModel('ContentProgress') private contentProgressModel: Model<any>,
     private readonly feeService: FeeService,
+    private readonly trackingService: ContentTrackingService,
     private readonly policyService: PolicyService,
     private readonly promoService: PromoService,
     private readonly uploadService: UploadService,
   ) { }
+
+  private async findProductByAnyId(productId: string): Promise<ProductDocument> {
+    let product = await this.productModel.findOne({ id: productId });
+    if (!product && isValidObjectId(productId)) {
+      product = await this.productModel.findById(productId);
+    }
+    if (!product) {
+      throw new NotFoundException('Product not found');
+    }
+    return product;
+  }
+
+  private async recomputeProductRatings(productMongoId: string) {
+    const stats = await this.contentProgressModel.aggregate([
+      {
+        $match: {
+          contentType: TrackableContentType.PRODUCT,
+          contentId: productMongoId,
+          rating: { $gte: 1, $lte: 5 },
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          averageRating: { $avg: '$rating' },
+          ratingCount: { $sum: 1 },
+        },
+      },
+    ]);
+
+    const averageRating = Number(stats?.[0]?.averageRating || 0);
+    const ratingCount = Number(stats?.[0]?.ratingCount || 0);
+
+    await this.productModel.updateOne(
+      { _id: new Types.ObjectId(productMongoId) },
+      { $set: { averageRating, ratingCount } }
+    );
+
+    return { averageRating, ratingCount };
+  }
+
+  async getProductReviews(productId: string) {
+    const product = await this.findProductByAnyId(productId);
+    const contentId = product._id.toString();
+
+    const docs = await this.contentProgressModel
+      .find({
+        contentType: TrackableContentType.PRODUCT,
+        contentId,
+        rating: { $gte: 1, $lte: 5 },
+      })
+      .populate('userId', 'name profile_picture photo_profil avatar')
+      .sort({ updatedAt: -1 })
+      .lean()
+      .exec();
+
+    const reviews = (docs || []).map((d: any) => ({
+      id: d.id || d._id?.toString(),
+      user: {
+        id: d.userId?._id?.toString() || d.userId?.toString(),
+        name: d.userId?.name || 'User',
+        avatar: d.userId?.avatar || d.userId?.profile_picture || d.userId?.photo_profil,
+      },
+      rating: d.rating || 0,
+      message: d.review || '',
+      createdAt: d.createdAt,
+      updatedAt: d.updatedAt,
+    }));
+
+    const ratingSummary = await this.recomputeProductRatings(contentId);
+    return { reviews, ...ratingSummary };
+  }
+
+  async getMyProductReview(productId: string, userId: string) {
+    const product = await this.findProductByAnyId(productId);
+    const contentId = product._id.toString();
+
+    const doc: any = await this.contentProgressModel
+      .findOne({
+        contentType: TrackableContentType.PRODUCT,
+        contentId,
+        userId: new Types.ObjectId(userId),
+      })
+      .lean()
+      .exec();
+
+    if (!doc?.rating) return null;
+    return {
+      rating: doc.rating,
+      message: doc.review || '',
+      updatedAt: doc.updatedAt,
+    };
+  }
+
+  async upsertProductReview(productId: string, userId: string, rating: number, message?: string) {
+    const product = await this.findProductByAnyId(productId);
+    const contentId = product._id.toString();
+
+    await this.trackingService.addRating(userId, contentId, TrackableContentType.PRODUCT, rating, message);
+    const ratingSummary = await this.recomputeProductRatings(contentId);
+    const myReview = await this.getMyProductReview(productId, userId);
+    return { ...ratingSummary, myReview };
+  }
 
   /**
    * Créer un nouveau produit
@@ -208,10 +314,17 @@ export class ProductService {
    * Récupérer un produit par son ID
    */
   async findOne(id: string): Promise<ProductResponseDto> {
-    const product = await this.productModel
+    let product = await this.productModel
       .findOne({ id })
       .populate('creatorId', 'name email profile_picture')
       .exec();
+
+    if (!product && isValidObjectId(id)) {
+      product = await this.productModel
+        .findById(id)
+        .populate('creatorId', 'name email profile_picture')
+        .exec();
+    }
 
     if (!product) {
       throw new NotFoundException('Produit non trouvé');
@@ -768,10 +881,13 @@ export class ProductService {
    */
   async checkUserPurchase(productId: string, userId: string): Promise<{ purchased: boolean; purchase?: any }> {
     try {
-      // Find the product first
-      const product = await this.productModel.findOne({ id: productId });
+      // Find the product first (accept both custom id and Mongo _id)
+      let product = await this.productModel.findOne({ id: productId });
+      if (!product && isValidObjectId(productId)) {
+        product = await this.productModel.findById(productId);
+      }
       if (!product) {
-        throw new NotFoundException('Produit non trouvé');
+        throw new NotFoundException('Product not found');
       }
 
       // Check for existing order

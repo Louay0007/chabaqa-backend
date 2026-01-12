@@ -1289,7 +1289,11 @@ export class PaymentController {
   ) {
     if (!file) throw new BadRequestException('Payment proof file is required');
     const userId = (req.user?._id || req.user?.sub || '').toString();
-    const product = await this.productModel.findById(productId);
+    // Accept both Mongo _id and custom product.id
+    let product = await this.productModel.findById(productId);
+    if (!product) {
+      product = await this.productModel.findOne({ id: productId });
+    }
     if (!product) throw new BadRequestException('Product not found');
 
     const existing = await this.orderModel.findOne({
