@@ -1003,14 +1003,15 @@ export class PostService {
    * Ajouter un post aux favoris
    */
   async bookmarkPost(postId: string, userId: string): Promise<void> {
-    const post = await this.postModel.findById(postId);
+    // Use findOne({ id }) instead of findById() because Post schema has custom 'id' field
+    const post = await this.postModel.findOne({ id: postId });
     if (!post) {
       throw new NotFoundException('Post non trouvé');
     }
 
     // Vérifier si le post n'est pas déjà dans les favoris
     const userObjectId = new Types.ObjectId(userId);
-    if (!post.bookmarks.includes(userObjectId)) {
+    if (!post.bookmarks.some((bookmark) => bookmark.equals(userObjectId))) {
       post.bookmarks.push(userObjectId);
       await post.save();
     }
@@ -1020,7 +1021,8 @@ export class PostService {
    * Retirer un post des favoris
    */
   async unbookmarkPost(postId: string, userId: string): Promise<void> {
-    const post = await this.postModel.findById(postId);
+    // Use findOne({ id }) instead of findById() because Post schema has custom 'id' field
+    const post = await this.postModel.findOne({ id: postId });
     if (!post) {
       throw new NotFoundException('Post non trouvé');
     }

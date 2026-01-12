@@ -24,6 +24,7 @@ export interface UserDocument extends Document {
   joinedCommunities: Types.ObjectId[];
   adminCommunities: Types.ObjectId[];
   moderatorCommunities: Types.ObjectId[];
+  purchasedProducts: Types.ObjectId[];
   numtel: string;
   date_naissance: Date;
   sexe: string;
@@ -36,6 +37,7 @@ export interface UserDocument extends Document {
   lien_instagram: string;
   profile_picture: string;
   twoFactorEnabled: boolean;
+  walletBalance: number;
   googleTokens?: {
     access_token: string;
     refresh_token: string;
@@ -141,6 +143,15 @@ export class User {
     default: []
   })
   moderatorCommunities: Types.ObjectId[];
+
+  /**
+   * Products purchased by the user
+   */
+  @Prop({
+    type: [{ type: Types.ObjectId, ref: 'Product' }],
+    default: []
+  })
+  purchasedProducts: Types.ObjectId[];
 
   /**
    * Google OAuth tokens for calendar integration
@@ -278,6 +289,16 @@ export class User {
     default: () => new Date()
   })
   lastActive: Date;
+
+  /**
+   * Wallet balance in points (1 DT = 1 point)
+   */
+  @Prop({
+    type: Number,
+    default: 0,
+    min: 0
+  })
+  walletBalance: number;
 }
 
 /**

@@ -71,6 +71,7 @@ import { AchievementModule } from './achievement/achievement.module';
 import { Achievement, AchievementSchema } from './schema/achievement.schema';
 import { UserAchievement, UserAchievementSchema } from './schema/user-achievement.schema';
 import { ManualPaymentService } from './common/services/manual-payment.service';
+import { WalletModule } from './wallet/wallet.module';
 
 @Module({
   imports: [
@@ -165,6 +166,7 @@ import { ManualPaymentService } from './common/services/manual-payment.service';
     ProgressionModule,
     AchievementModule,
     PayoutModule,
+    WalletModule,
   ],
   controllers: [AppController, UserController, TrackingController, PaymentController],
   providers: [
