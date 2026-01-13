@@ -2091,6 +2091,118 @@ export class ChallengeService {
   }
 
   /**
+   * Obtenir le classement d'un défi
+   * @param challengeId ID du défi
+   * @param limit Nombre d'entrées à retourner
+   * @returns Classement des participants
+   */
+  async getChallengeLeaderboard(challengeId: string, limit: number = 500) {
+    console.log('🏅 DEBUG - getChallengeLeaderboard');
+    console.log(`   📋 Challenge ID: ${challengeId}`);
+    console.log(`   📊 Limit: ${limit}`);
+
+    try {
+      // 1. Récupérer le défi
+      const challenge = await this.findChallengeById(challengeId);
+      
+      if (!challenge) {
+        console.error(`   ❌ Challenge not found with ID: ${challengeId}`);
+        console.error(`   🔍 Tried MongoDB _id lookup: ${Types.ObjectId.isValid(challengeId)}`);
+        throw new NotFoundException('Défi non trouvé');
+      }
+
+      console.log(`   ✅ Challenge found: ${challenge.title}`);
+      console.log(`   👥 Total participants: ${challenge.participants?.length || 0}`);
+      console.log(`   ✅ Active participants: ${challenge.participants?.filter(p => p.isActive).length || 0}`);
+
+      // 2. Handle case with no participants
+      if (!challenge.participants || challenge.participants.length === 0) {
+        console.log(`   ⚠️ No participants in challenge`);
+        return {
+          success: true,
+          data: {
+            leaderboard: [],
+            totalParticipants: 0,
+            activeParticipants: 0,
+            challengeId: challenge.id,
+            challengeTitle: challenge.title,
+          }
+        };
+      }
+
+      // 3. Trier les participants par points et progression
+      const sortedParticipants = [...challenge.participants]
+        .filter(p => p.isActive)
+        .sort((a, b) => {
+          // Trier d'abord par points totaux (décroissant)
+          if (b.totalPoints !== a.totalPoints) {
+            return b.totalPoints - a.totalPoints;
+          }
+          // Puis par progression (décroissant)
+          if (b.progress !== a.progress) {
+            return b.progress - a.progress;
+          }
+          // Puis par date d'inscription (croissant - premier inscrit en premier)
+          return new Date(a.joinedAt).getTime() - new Date(b.joinedAt).getTime();
+        })
+        .slice(0, limit);
+
+      console.log(`   📊 Sorted ${sortedParticipants.length} active participants`);
+
+      // 4. Récupérer les informations des utilisateurs
+      const userIds = sortedParticipants.map(p => p.userId);
+      const users = await this.userModel
+        .find({ _id: { $in: userIds } })
+        .select('name email profile_picture photo_profil avatar')
+        .lean();
+
+      console.log(`   👤 Found ${users.length} user records`);
+
+      // 5. Construire le classement
+      const leaderboard = sortedParticipants.map((participant, index) => {
+        const user = users.find(u => u._id.toString() === participant.userId.toString());
+        
+        return {
+          rank: index + 1,
+          userId: participant.userId.toString(),
+          userName: user?.name || 'Utilisateur inconnu',
+          userAvatar: user?.profile_picture || user?.photo_profil  || null,
+          totalPoints: participant.totalPoints || 0,
+          completedTasks: participant.completedTasks?.length || 0,
+          progress: participant.progress || 0,
+          joinedAt: participant.joinedAt,
+          lastActivityAt: participant.lastActivityAt,
+        };
+      });
+
+      console.log(`   ✅ Classement généré avec ${leaderboard.length} participants`);
+      if (leaderboard.length > 0) {
+        console.log(`   📊 Top 3:`, leaderboard.slice(0, 3).map(p => `${p.rank}. ${p.userName} (${p.totalPoints}pts)`));
+      }
+
+      return {
+        success: true,
+        data: {
+          leaderboard,
+          totalParticipants: challenge.participants.length,
+          activeParticipants: challenge.participants.filter(p => p.isActive).length,
+          challengeId: challenge.id,
+          challengeTitle: challenge.title,
+        }
+      };
+    } catch (error) {
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
+
+      console.error('❌ Erreur lors de la récupération du classement:', error);
+      throw new BadRequestException(
+        'Erreur lors de la récupération du classement',
+      );
+    }
+  }
+
+  /**
    * Obtenir les analytics détaillées d'un défi
    * @param challengeId ID du défi
    * @param userId ID de l'utilisateur (pour vérifier les permissions)

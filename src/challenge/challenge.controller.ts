@@ -88,6 +88,50 @@ export class ChallengeController {
     return this.challengeService.findByCommunity(communitySlug);
   }
 
+  // IMPORTANT: This route MUST be before the generic :id route to avoid route conflicts
+  @Get(':id/leaderboard')
+  @ApiOperation({ 
+    summary: 'Obtenir le classement d\'un défi',
+    description: 'Retourne le classement des participants triés par points et progression'
+  })
+  @ApiParam({ name: 'id', description: 'ID du défi', type: 'string' })
+  @ApiQuery({ name: 'limit', required: false, description: 'Nombre d\'entrées à retourner (défaut: 50)', type: 'number' })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Classement récupéré avec succès',
+    schema: {
+      example: {
+        success: true,
+        data: {
+          leaderboard: [
+            {
+              rank: 1,
+              userId: '507f1f77bcf86cd799439011',
+              userName: 'John Doe',
+              userAvatar: 'https://example.com/avatar.jpg',
+              totalPoints: 450,
+              completedTasks: 15,
+              progress: 75,
+              joinedAt: '2024-01-01T00:00:00.000Z',
+              lastActivityAt: '2024-01-15T14:22:00.000Z'
+            }
+          ],
+          totalParticipants: 25,
+          activeParticipants: 20,
+          challengeId: '507f1f77bcf86cd799439012',
+          challengeTitle: 'Challenge Title'
+        }
+      }
+    }
+  })
+  @ApiResponse({ status: 404, description: 'Défi non trouvé' })
+  async getLeaderboard(
+    @Param('id') id: string,
+    @Query('limit') limit: number = 50
+  ) {
+    return this.challengeService.getChallengeLeaderboard(id, limit);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Récupérer un défi par son ID' })
   @ApiResponse({ status: 200, description: 'Défi récupéré avec succès', type: ChallengeResponseDto })

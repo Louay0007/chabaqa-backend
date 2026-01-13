@@ -11,6 +11,7 @@ import { FeeModule } from '../common/modules/fee.module';
 import { OrderSchema } from '../schema/order.schema';
 import { PolicyModule } from '../common/modules/policy.module';
 import { UploadModule } from '../upload/upload.module';
+import { ContentProgressSchema } from '../schema/content-tracking.schema';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { UploadModule } from '../upload/upload.module';
       { name: Community.name, schema: CommunitySchema },
       { name: User.name, schema: UserSchema },
       { name: 'Order', schema: OrderSchema },
+      { name: 'ContentProgress', schema: ContentProgressSchema },
     ]),
     AuthModule,
     TrackingModule,
