@@ -263,10 +263,11 @@ export class PostController {
     @Body() updatePostDto: UpdatePostDto,
     @Request() req,
   ): Promise<{ success: boolean; data: PostResponseDto }> {
+    const userId = req.user._id || req.user.userId || req.user.sub;
     const post = await this.postService.update(
       id,
       updatePostDto,
-      req.user.userId,
+      userId,
     );
     return { success: true, data: post };
   }
@@ -283,7 +284,8 @@ export class PostController {
     @Param('id') id: string,
     @Request() req,
   ): Promise<{ success: boolean; message: string }> {
-    const result = await this.postService.remove(id, req.user.userId);
+    const userId = req.user._id || req.user.userId || req.user.sub;
+    const result = await this.postService.remove(id, userId);
     return { success: true, message: result.message };
   }
 

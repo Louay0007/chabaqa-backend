@@ -292,7 +292,18 @@ export class PostService {
     }
 
     // Vérifier que l'utilisateur est l'auteur du post
-    if (post.authorId.toString() !== userId) {
+    // Normalize both IDs to strings for comparison
+    const postAuthorId = post.authorId?.toString() || '';
+    const normalizedUserId = userId?.toString() || '';
+    
+    console.log('🔐 [POST-SERVICE] Authorization check for update:', {
+      postId: id,
+      postAuthorId,
+      normalizedUserId,
+      match: postAuthorId === normalizedUserId
+    });
+    
+    if (postAuthorId !== normalizedUserId) {
       throw new ForbiddenException(
         'Vous ne pouvez modifier que vos propres posts',
       );
@@ -327,7 +338,18 @@ export class PostService {
     }
 
     // Vérifier que l'utilisateur est l'auteur du post
-    if (post.authorId.toString() !== userId) {
+    // Normalize both IDs to strings for comparison
+    const postAuthorId = post.authorId?.toString() || '';
+    const normalizedUserId = userId?.toString() || '';
+    
+    console.log('🔐 [POST-SERVICE] Authorization check for delete:', {
+      postId: id,
+      postAuthorId,
+      normalizedUserId,
+      match: postAuthorId === normalizedUserId
+    });
+    
+    if (postAuthorId !== normalizedUserId) {
       throw new ForbiddenException(
         'Vous ne pouvez supprimer que vos propres posts',
       );
@@ -450,8 +472,22 @@ export class PostService {
     }
 
     // Vérifier que l'utilisateur est l'auteur du commentaire ou l'auteur du post
-    const isCommentAuthor = comment.userId.toString() === userId;
-    const isPostAuthor = post.authorId.toString() === userId;
+    // Normalize IDs to strings for comparison
+    const commentAuthorId = comment.userId?.toString() || '';
+    const postAuthorId = post.authorId?.toString() || '';
+    const normalizedUserId = userId?.toString() || '';
+    
+    console.log('🔐 [POST-SERVICE] Authorization check for comment delete:', {
+      commentId,
+      commentAuthorId,
+      postAuthorId,
+      normalizedUserId,
+      isCommentAuthor: commentAuthorId === normalizedUserId,
+      isPostAuthor: postAuthorId === normalizedUserId
+    });
+    
+    const isCommentAuthor = commentAuthorId === normalizedUserId;
+    const isPostAuthor = postAuthorId === normalizedUserId;
 
     if (!isCommentAuthor && !isPostAuthor) {
       throw new ForbiddenException(
@@ -485,7 +521,18 @@ export class PostService {
     }
 
     // Vérifier que l'utilisateur est l'auteur du commentaire
-    if (comment.userId.toString() !== userId) {
+    // Normalize IDs to strings for comparison
+    const commentAuthorId = comment.userId?.toString() || '';
+    const normalizedUserId = userId?.toString() || '';
+    
+    console.log('🔐 [POST-SERVICE] Authorization check for comment update:', {
+      commentId,
+      commentAuthorId,
+      normalizedUserId,
+      match: commentAuthorId === normalizedUserId
+    });
+    
+    if (commentAuthorId !== normalizedUserId) {
       throw new ForbiddenException(
         'Vous ne pouvez modifier que vos propres commentaires',
       );
