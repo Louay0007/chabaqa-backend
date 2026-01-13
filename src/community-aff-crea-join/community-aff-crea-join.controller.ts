@@ -2,6 +2,7 @@ import {
   Controller,
   Post,
   Get,
+  Delete,
   Body,
   UseGuards,
   Request,
@@ -12,7 +13,9 @@ import {
   UsePipes,
   UseInterceptors,
   UploadedFile,
-  InternalServerErrorException
+  InternalServerErrorException,
+  ForbiddenException,
+  NotFoundException
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -1012,6 +1015,171 @@ export class CommunityAffCreaJoinController {
         data: stats
       };
     } catch (error) {
+      throw error;
+    }
+  }
+
+  /**
+   * Delete a community (only creator can delete)
+   * Route: DELETE /community-aff-crea-join/:id
+   * Authentification: JWT obligatoire
+   */
+  @Delete(':id')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Supprimer une communauté',
+    description: 'Permet au créateur de supprimer définitivement sa communauté'
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'ID de la communauté à supprimer',
+    example: '507f1f77bcf86cd799439011'
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Communauté supprimée avec succès',
+    schema: {
+      example: {
+        success: true,
+        message: 'Communauté supprimée avec succès'
+      }
+    }
+  })
+  @ApiResponse({
+    status: HttpStatus.NOT_FOUND,
+    description: 'Communauté non trouvée'
+  })
+  @ApiResponse({
+    status: HttpStatus.FORBIDDEN,
+    description: 'Seul le créateur peut supprimer la communauté'
+  })
+  async deleteCommunity(
+    @Param('id') communityId: string,
+    @Request() req: any
+  ) {
+    try {
+      const userId = req.user._id;
+      console.log('🗑️ [DELETE COMMUNITY] Request to delete community:', communityId, 'by user:', userId);
+
+      // Get the community to check ownership
+      const community = await this.communityService.getCommunityById(communityId);
+      
+      if (!community) {
+        throw new NotFoundException('Communauté non trouvée');
+      }
+
+      // Check if user is the creator
+      const creatorId = community.createur?._id?.toString() || community.createur?.toString();
+      const requestUserId = userId.toString();
+
+      if (creatorId !== requestUserId) {
+        throw new ForbiddenException('Seul le créateur peut supprimer cette communauté');
+      }
+
+      // Delete the community
+      await this.communityService.deleteCommunity(communityId);
+
+      console.log('✅ [DELETE COMMUNITY] Community deleted successfully:', communityId);
+
+      return {
+        success: true,
+        message: 'Communauté supprimée avec succès'
+      };
+    } catch (error) {
+      console.error('❌ [DELETE COMMUNITY] Error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get community reviews
+   * Route: GET /community-aff-crea-join/:id/reviews
+   */
+  @Get(':id/reviews')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Get all reviews for a community' })
+  @ApiParam({ name: 'id', description: 'Community ID' })
+  @ApiResponse({ status: HttpStatus.OK, description: 'Reviews retrieved successfully' })
+  async getCommunityReviews(@Param('id') communityId: string) {
+    try {
+      const result = await this.communityService.getCommunityReviews(communityId);
+      return {
+        success: true,
+        ...result
+      };
+    } catch (error) {
+      console.error('❌ [GET REVIEWS] Error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get current user's review for a community
+   * Route: GET /community-aff-crea-join/:id/reviews/me
+   */
+  @Get(':id/reviews/me')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Get current user\'s review for a community' })
+  @ApiParam({ name: 'id', description: 'Community ID' })
+  @ApiResponse({ status: HttpStatus.OK, description: 'User review retrieved successfully' })
+  async getMyReview(
+    @Param('id') communityId: string,
+    @Request() req: any
+  ) {
+    try {
+      const userId = req.user._id || req.user.userId;
+      const review = await this.communityService.getUserCommunityReview(communityId, userId);
+      return {
+        success: true,
+        review
+      };
+    } catch (error) {
+      console.error('❌ [GET MY REVIEW] Error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Submit or update a review for a community
+   * Route: POST /community-aff-crea-join/:id/reviews
+   */
+  @Post(':id/reviews')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Submit or update a review for a community' })
+  @ApiParam({ name: 'id', description: 'Community ID' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        rating: { type: 'number', minimum: 1, maximum: 5 },
+        comment: { type: 'string', maxLength: 1000 }
+      },
+      required: ['rating']
+    }
+  })
+  @ApiResponse({ status: HttpStatus.OK, description: 'Review submitted successfully' })
+  async submitReview(
+    @Param('id') communityId: string,
+    @Body('rating') rating: number,
+    @Body('comment') comment: string,
+    @Request() req: any
+  ) {
+    try {
+      const userId = req.user._id || req.user.userId;
+      const result = await this.communityService.submitCommunityReview(communityId, userId, rating, comment);
+      return {
+        success: true,
+        message: 'Review submitted successfully',
+        ...result
+      };
+    } catch (error) {
+      console.error('❌ [SUBMIT REVIEW] Error:', error);
       throw error;
     }
   }

@@ -9,6 +9,8 @@ import { PolicyModule } from '../common/modules/policy.module';
 import { FeeModule } from '../common/modules/fee.module';
 import { PromoModule } from '../common/modules/promo.module';
 import { OrderSchema } from '../schema/order.schema';
+import { TrackingModule } from '../common/modules/tracking.module';
+import { NotificationModule } from '../notification/notification.module';
 
 @Module({
   imports: [
@@ -20,7 +22,9 @@ import { OrderSchema } from '../schema/order.schema';
     UploadModule,
     PolicyModule,
     FeeModule,
-    PromoModule
+    PromoModule,
+    TrackingModule,
+    NotificationModule
   ],
   controllers: [CommunityAffCreaJoinController],
   providers: [CommunityAffCreaJoinService],

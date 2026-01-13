@@ -9,6 +9,7 @@ import { TopUpRequest, TopUpRequestSchema } from '../schema/topup-request.schema
 import { WalletTransaction, WalletTransactionSchema } from '../schema/wallet-transaction.schema';
 import { Community, CommunitySchema } from '../schema/community.schema';
 import { Product, ProductSchema } from '../schema/product.schema';
+import { Challenge, ChallengeSchema } from '../schema/challenge.schema';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { Product, ProductSchema } from '../schema/product.schema';
       { name: WalletTransaction.name, schema: WalletTransactionSchema },
       { name: Community.name, schema: CommunitySchema },
       { name: Product.name, schema: ProductSchema },
+      { name: Challenge.name, schema: ChallengeSchema },
     ]),
     MulterModule.register({
       dest: './uploads/topup-proofs',

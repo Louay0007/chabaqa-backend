@@ -6,6 +6,7 @@ import { TopUpRequest, TopUpRequestDocument, TopUpRequestStatus, TopUpCurrency }
 import { WalletTransaction, WalletTransactionDocument, WalletTransactionType, WalletPurchaseContentType } from '../schema/wallet-transaction.schema';
 import { Community, CommunityDocument } from '../schema/community.schema';
 import { Product, ProductDocument } from '../schema/product.schema';
+import { Challenge, ChallengeDocument } from '../schema/challenge.schema';
 
 // Live exchange rates API (you can use any free API)
 const EXCHANGE_RATE_API = 'https://api.exchangerate-api.com/v4/latest/TND';
@@ -18,6 +19,7 @@ export class WalletService {
     @InjectModel(WalletTransaction.name) private walletTransactionModel: Model<WalletTransactionDocument>,
     @InjectModel(Community.name) private communityModel: Model<CommunityDocument>,
     @InjectModel(Product.name) private productModel: Model<ProductDocument>,
+    @InjectModel(Challenge.name) private challengeModel: Model<ChallengeDocument>,
   ) {}
 
   /**
@@ -415,7 +417,43 @@ export class WalletService {
         }
         break;
 
-      // TODO: Add other content types (course, challenge, event, session)
+      case WalletPurchaseContentType.CHALLENGE:
+        // Find challenge by either _id or custom id field
+        let challenge = await this.challengeModel.findById(contentId) as ChallengeDocument;
+        if (!challenge) {
+          challenge = await this.challengeModel.findOne({ id: contentId }) as ChallengeDocument;
+        }
+        
+        if (challenge) {
+          // Check if user is already a participant
+          const isAlreadyParticipant = challenge.participants.some(
+            p => p.userId.toString() === userId || p.userId.equals(userObjectId)
+          );
+          
+          if (!isAlreadyParticipant) {
+            // Add user as participant
+            const newParticipant = {
+              id: new Types.ObjectId().toString(),
+              userId: userObjectId,
+              joinedAt: new Date(),
+              isActive: true,
+              progress: 0,
+              totalPoints: 0,
+              completedTasks: [],
+              lastActivityAt: new Date(),
+            };
+            challenge.participants.push(newParticipant as any);
+            await challenge.save();
+            console.log(`✅ [WALLET] Added user ${userId} as participant to challenge ${contentId}`);
+          } else {
+            console.log(`ℹ️ [WALLET] User ${userId} is already a participant in challenge ${contentId}`);
+          }
+        } else {
+          console.error(`❌ [WALLET] Challenge not found: ${contentId}`);
+        }
+        break;
+
+      // TODO: Add other content types (course, event, session)
       // These would follow similar patterns based on their respective schemas
       
       default:

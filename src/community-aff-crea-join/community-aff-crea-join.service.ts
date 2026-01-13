@@ -9,8 +9,9 @@ import { UploadService } from 'src/upload/upload.service';
 import { PolicyService } from '../common/services/policy.service';
 import { PromoService } from '../common/services/promo.service';
 import { FeeService } from '../common/services/fee.service';
-import { TrackableContentType } from '../schema/content-tracking.schema';
+import { TrackableContentType, ContentProgressDocument } from '../schema/content-tracking.schema';
 import { NotificationService } from '../notification/notification.service';
+import { ContentTrackingService } from '../common/services/content-tracking.service';
 
 @Injectable()
 export class CommunityAffCreaJoinService {
@@ -18,11 +19,13 @@ export class CommunityAffCreaJoinService {
     @InjectModel(Community.name) private communityModel: Model<CommunityDocument>,
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     @InjectModel('Order') private orderModel: Model<any>,
+    @InjectModel('ContentProgress') private contentProgressModel: Model<ContentProgressDocument>,
     private readonly uploadService: UploadService,
     private readonly policyService: PolicyService,
     private readonly promoService: PromoService,
     private readonly feeService: FeeService,
     private readonly notificationService: NotificationService,
+    private readonly trackingService: ContentTrackingService,
   ) { }
 
   /**
@@ -38,12 +41,15 @@ export class CommunityAffCreaJoinService {
       console.log('🔍 Debug - ID utilisateur reçu:', userId, 'Type:', typeof userId);
       console.log('🚀 Création de communauté avec logo intégré');
       console.log('   Logo:', uploadedFiles.logo);
+      console.log('   Cover Image from DTO:', createCommunityDto.coverImage);
 
       // Intégrer le logo dans les données de la communauté (même pattern que le thumbnail)
       const communityDataAvecLogo = {
         ...createCommunityDto,
         logo: uploadedFiles.logo || createCommunityDto.logo
       };
+      
+      console.log('🖼️ [CREATE COMMUNITY] Cover image URL:', communityDataAvecLogo.coverImage);
 
       // Vérifier si l'utilisateur existe
       const user = await this.userModel.findById(userId);
@@ -161,14 +167,14 @@ export class CommunityAffCreaJoinService {
         logo: this.uploadService.ensureAbsoluteUrl(
           communityDataAvecLogo.logo || socialLinks.website || socialLinks.instagram || socialLinks.facebook || 'https://via.placeholder.com/150'
         ),
-        photo_de_couverture: this.uploadService.ensureAbsoluteUrl(
-          communityDataAvecLogo.coverImage || 'https://via.placeholder.com/800x400'
-        ),
+        photo_de_couverture: communityDataAvecLogo.coverImage && communityDataAvecLogo.coverImage.trim() 
+          ? this.uploadService.ensureAbsoluteUrl(communityDataAvecLogo.coverImage)
+          : `https://ui-avatars.com/api/?name=${encodeURIComponent(communityDataAvecLogo.name)}&size=600&background=8e78fb&color=ffffff&format=png`,
         creatorAvatar: this.uploadService.ensureAbsoluteUrl(
           user.profile_picture || 'https://via.placeholder.com/100'
         ),
         category: communityDataAvecLogo.category || 'Général',
-        priceType: communityDataAvecLogo.joinFee === 'paid' ? 'one-time' : 'free',
+        priceType: communityDataAvecLogo.pricing?.priceType || (communityDataAvecLogo.joinFee === 'paid' ? 'one-time' : 'free'),
         image: this.uploadService.ensureAbsoluteUrl(
           communityDataAvecLogo.image || 'https://via.placeholder.com/600x400'
         ),
@@ -184,7 +190,9 @@ export class CommunityAffCreaJoinService {
 
         // ============ Champs supplémentaires pour compatibilité frontend ============
         longDescription: communityDataAvecLogo.longDescription || communityDataAvecLogo.bio || `Bienvenue dans ${communityDataAvecLogo.name}, une communauté dédiée à l'apprentissage et au partage.`,
-        coverImage: communityDataAvecLogo.coverImage || 'https://via.placeholder.com/800x400',
+        coverImage: communityDataAvecLogo.coverImage && communityDataAvecLogo.coverImage.trim() 
+          ? this.uploadService.ensureAbsoluteUrl(communityDataAvecLogo.coverImage)
+          : `https://ui-avatars.com/api/?name=${encodeURIComponent(communityDataAvecLogo.name)}&size=600&background=8e78fb&color=ffffff&format=png`,
         rating: 0,
         price: communityDataAvecLogo.joinFee === 'paid' ? feeAmount : 0,
         createdDate: new Date().toISOString(),
@@ -294,6 +302,31 @@ export class CommunityAffCreaJoinService {
     const finalAvatar = creatorAvatarUrl || 'https://placehold.co/64x64?text=U';
     console.log('🔍 [TRANSFORM] Final avatar URL:', finalAvatar);
 
+    // Get cover image with proper fallback chain
+    const rawCoverImage = community.photo_de_couverture || community.coverImage || community.settings?.heroBackground || '';
+    let coverImageUrl = '';
+    
+    if (rawCoverImage && rawCoverImage.trim() !== '') {
+      coverImageUrl = this.uploadService.ensureAbsoluteUrl(rawCoverImage);
+    } else {
+      // If no cover image, use creator avatar as fallback, or generate placeholder
+      const creatorAvatar = (community.createur as any)?.profile_picture || (community.createur as any)?.photo_profil || community.creatorAvatar;
+      if (creatorAvatar && creatorAvatar.trim() !== '') {
+        coverImageUrl = this.uploadService.ensureAbsoluteUrl(creatorAvatar);
+      } else {
+        coverImageUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(community.name)}&size=600&background=8e78fb&color=ffffff&format=png`;
+      }
+    }
+    
+    console.log('🖼️ [TRANSFORM] Cover image debug:', {
+      photo_de_couverture: community.photo_de_couverture,
+      coverImage: community.coverImage,
+      heroBackground: community.settings?.heroBackground,
+      creatorAvatar: (community.createur as any)?.profile_picture,
+      selectedRaw: rawCoverImage,
+      finalUrl: coverImageUrl,
+    });
+
     return {
       _id: community._id,
       id: community._id.toString(),
@@ -313,9 +346,8 @@ export class CommunityAffCreaJoinService {
       creatorAvatar: finalAvatar,
       description: community.short_description,
       longDescription: community.longDescription || community.short_description,
-      coverImage: this.uploadService.ensureAbsoluteUrl(
-        community.coverImage || community.photo_de_couverture
-      ),
+      coverImage: coverImageUrl,
+      photo_de_couverture: coverImageUrl,
       image: this.uploadService.ensureAbsoluteUrl(community.image),
       category: community.category,
       members: community.membersCount,
@@ -1247,6 +1279,233 @@ export class CommunityAffCreaJoinService {
 
       console.error('❌ [COMMUNITY-STATS] Error:', error);
       throw new InternalServerErrorException('Error fetching community stats');
+    }
+  }
+
+  /**
+   * Delete a community permanently
+   * @param communityId - ID of the community to delete
+   * @returns void
+   */
+  async deleteCommunity(communityId: string): Promise<void> {
+    try {
+      console.log('🗑️ [DELETE-COMMUNITY] Deleting community:', communityId);
+
+      // Find and delete the community
+      const result = await this.communityModel.findByIdAndDelete(communityId);
+      
+      if (!result) {
+        throw new NotFoundException('Community not found');
+      }
+
+      console.log('✅ [DELETE-COMMUNITY] Community deleted successfully:', communityId);
+
+    } catch (error) {
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
+
+      console.error('❌ [DELETE-COMMUNITY] Error:', error);
+      throw new InternalServerErrorException('Error deleting community');
+    }
+  }
+
+  /**
+   * Get all reviews for a community
+   * @param communityId - ID of the community
+   * @returns Reviews list with average rating
+   */
+  async getCommunityReviews(communityId: string): Promise<{
+    reviews: Array<{
+      id: string;
+      userId: string;
+      userName: string;
+      userAvatar: string;
+      rating: number;
+      comment: string;
+      createdAt: Date;
+    }>;
+    averageRating: number;
+    totalReviews: number;
+    ratingDistribution: { [key: number]: number };
+  }> {
+    try {
+      console.log('⭐ [REVIEWS] Getting reviews for community:', communityId);
+
+      // Find community to validate it exists
+      const community = await this.communityModel.findById(communityId);
+      if (!community) {
+        throw new NotFoundException('Community not found');
+      }
+
+      // Get all reviews for this community
+      const progressRecords = await this.contentProgressModel
+        .find({
+          contentId: communityId,
+          contentType: TrackableContentType.COMMUNITY,
+          rating: { $exists: true, $ne: null, $gte: 1 }
+        })
+        .populate('userId', 'name profile_picture photo_profil avatar')
+        .sort({ updatedAt: -1 })
+        .exec();
+
+      // Transform reviews
+      const reviews = progressRecords.map((record: any) => ({
+        id: record._id.toString(),
+        userId: record.userId?._id?.toString() || record.userId?.toString(),
+        userName: record.userId?.name || 'Anonymous',
+        userAvatar: this.uploadService.ensureAbsoluteUrl(
+          record.userId?.profile_picture || record.userId?.photo_profil || record.userId?.avatar || ''
+        ),
+        rating: record.rating,
+        comment: record.review || '',
+        createdAt: record.updatedAt || record.createdAt,
+      }));
+
+      // Calculate rating distribution
+      const ratingDistribution: { [key: number]: number } = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+      reviews.forEach(r => {
+        if (r.rating >= 1 && r.rating <= 5) {
+          ratingDistribution[Math.round(r.rating)]++;
+        }
+      });
+
+      // Calculate average
+      const totalReviews = reviews.length;
+      const averageRating = totalReviews > 0
+        ? reviews.reduce((sum, r) => sum + r.rating, 0) / totalReviews
+        : 0;
+
+      console.log('✅ [REVIEWS] Found', totalReviews, 'reviews, average:', averageRating.toFixed(1));
+
+      return {
+        reviews,
+        averageRating: Math.round(averageRating * 10) / 10,
+        totalReviews,
+        ratingDistribution,
+      };
+    } catch (error) {
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
+      console.error('❌ [REVIEWS] Error getting reviews:', error);
+      throw new InternalServerErrorException('Error fetching reviews');
+    }
+  }
+
+  /**
+   * Get current user's review for a community
+   * @param communityId - ID of the community
+   * @param userId - ID of the user
+   * @returns User's review or null
+   */
+  async getUserCommunityReview(communityId: string, userId: string): Promise<{
+    rating: number;
+    comment: string;
+    createdAt: Date;
+  } | null> {
+    try {
+      console.log('⭐ [REVIEWS] Getting user review for community:', communityId, 'user:', userId);
+
+      const progress = await this.contentProgressModel.findOne({
+        contentId: communityId,
+        contentType: TrackableContentType.COMMUNITY,
+        userId: new Types.ObjectId(userId),
+      });
+
+      if (!progress || !progress.rating) {
+        return null;
+      }
+
+      return {
+        rating: progress.rating,
+        comment: progress.review || '',
+        createdAt: progress.updatedAt || progress.createdAt,
+      };
+    } catch (error) {
+      console.error('❌ [REVIEWS] Error getting user review:', error);
+      throw new InternalServerErrorException('Error fetching user review');
+    }
+  }
+
+  /**
+   * Submit or update a review for a community
+   * @param communityId - ID of the community
+   * @param userId - ID of the user
+   * @param rating - Rating (1-5)
+   * @param comment - Optional comment
+   * @returns Updated review and community stats
+   */
+  async submitCommunityReview(
+    communityId: string,
+    userId: string,
+    rating: number,
+    comment?: string
+  ): Promise<{
+    review: { rating: number; comment: string };
+    averageRating: number;
+    totalReviews: number;
+  }> {
+    try {
+      console.log('⭐ [REVIEWS] Submitting review for community:', communityId, 'user:', userId, 'rating:', rating);
+
+      // Validate rating
+      if (rating < 1 || rating > 5) {
+        throw new BadRequestException('Rating must be between 1 and 5');
+      }
+
+      // Find community
+      const community = await this.communityModel.findById(communityId);
+      if (!community) {
+        throw new NotFoundException('Community not found');
+      }
+
+      // Check if user is a member
+      const isMember = community.members.some(m => m.equals(new Types.ObjectId(userId)));
+      if (!isMember) {
+        throw new ForbiddenException('Only community members can leave reviews');
+      }
+
+      // Use tracking service to add/update rating
+      await this.trackingService.addRating(
+        userId,
+        communityId,
+        TrackableContentType.COMMUNITY,
+        rating,
+        comment
+      );
+
+      // Recalculate community average rating
+      const allReviews = await this.contentProgressModel.find({
+        contentId: communityId,
+        contentType: TrackableContentType.COMMUNITY,
+        rating: { $exists: true, $ne: null, $gte: 1 }
+      });
+
+      const totalReviews = allReviews.length;
+      const averageRating = totalReviews > 0
+        ? allReviews.reduce((sum, r) => sum + (r.rating || 0), 0) / totalReviews
+        : 0;
+
+      // Update community with new average
+      await this.communityModel.findByIdAndUpdate(communityId, {
+        averageRating: Math.round(averageRating * 10) / 10,
+        ratingCount: totalReviews,
+      });
+
+      console.log('✅ [REVIEWS] Review submitted, new average:', averageRating.toFixed(1));
+
+      return {
+        review: { rating, comment: comment || '' },
+        averageRating: Math.round(averageRating * 10) / 10,
+        totalReviews,
+      };
+    } catch (error) {
+      if (error instanceof NotFoundException || error instanceof ForbiddenException || error instanceof BadRequestException) {
+        throw error;
+      }
+      console.error('❌ [REVIEWS] Error submitting review:', error);
+      throw new InternalServerErrorException('Error submitting review');
     }
   }
 }

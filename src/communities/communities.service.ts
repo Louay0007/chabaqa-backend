@@ -449,8 +449,12 @@ export class CommunitiesService {
       ratingCount: (community as any).ratingCount || 0,
       price: community.pricing?.price || community.fees_of_join || 0,
       priceType: community.priceType,
-      image: this.uploadService.ensureAbsoluteUrl(community.photo_de_couverture),
-      coverImage: this.uploadService.ensureAbsoluteUrl(community.photo_de_couverture),
+      image: this.uploadService.ensureAbsoluteUrl(community.photo_de_couverture) || 
+             this.uploadService.ensureAbsoluteUrl(community.creatorAvatar) || 
+             `https://ui-avatars.com/api/?name=${encodeURIComponent(community.name)}&size=600&background=8e78fb&color=ffffff&format=png`,
+      coverImage: this.uploadService.ensureAbsoluteUrl(community.photo_de_couverture) || 
+                  this.uploadService.ensureAbsoluteUrl(community.creatorAvatar) || 
+                  `https://ui-avatars.com/api/?name=${encodeURIComponent(community.name)}&size=600&background=8e78fb&color=ffffff&format=png`,
       tags: community.tags,
       featured: community.featured,
       verified: community.isVerified,

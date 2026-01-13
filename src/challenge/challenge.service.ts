@@ -1059,7 +1059,7 @@ export class ChallengeService {
       communitySlug: community?.slug || '',
       creatorId: challenge.creatorId.toString(),
       creatorName: creator?.name || 'Créateur inconnu',
-      creatorAvatar: creator?.profile_picture,
+      creatorAvatar: creator?.profile_picture || creator?.photo_profil || undefined,
       startDate: challenge.startDate.toISOString(),
       endDate: challenge.endDate.toISOString(),
       isActive: challenge.isActive,
@@ -1087,7 +1087,8 @@ export class ChallengeService {
       isCompleted: isCompleted,
 
       // Informations de pricing
-      participationFee: challenge.pricing?.participationFee,
+      // Use participationFee if set, otherwise fall back to depositAmount for backward compatibility
+      participationFee: challenge.pricing?.participationFee || challenge.depositAmount || 0,
       currency: challenge.pricing?.currency,
       depositRequired: challenge.pricing?.depositRequired,
       isPremium: challenge.pricing?.isPremium,
@@ -1095,10 +1096,9 @@ export class ChallengeService {
       paymentOptions: challenge.pricing?.paymentOptions,
       freeTrialDays: challenge.pricing?.freeTrialDays,
       trialFeatures: challenge.pricing?.trialFeatures,
-      isFree: challenge.pricing
-        ? challenge.pricing.participationFee === 0
-        : true,
-      finalPrice: challenge.pricing?.participationFee || 0,
+      // Challenge is free only if both participationFee and depositAmount are 0 or undefined
+      isFree: (challenge.pricing?.participationFee || challenge.depositAmount || 0) === 0,
+      finalPrice: challenge.pricing?.participationFee || challenge.depositAmount || 0,
     };
   }
 
