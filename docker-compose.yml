@@ -24,7 +24,7 @@ services:
       # Set SERVER_URL for correct image URLs
       SERVER_URL: "http://51.254.132.77:3000"
       # Node.js optimizations
-      NODE_OPTIONS: "--max-old-space-size=2048 --max-semi-space-size=64 --optimize-for-size"
+      NODE_OPTIONS: "--max-old-space-size=2048 --max-semi-space-size=64"
       UV_THREADPOOL_SIZE: 128
     volumes:
       # Persist uploaded files
