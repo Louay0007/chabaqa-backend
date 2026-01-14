@@ -63,7 +63,7 @@ RUN apk update && \
 
 # Set production environment
 ENV NODE_ENV=production \
-    NODE_OPTIONS="--max-old-space-size=2048 --max-semi-space-size=64 --optimize-for-size" \
+    NODE_OPTIONS="--max-old-space-size=2048 --max-semi-space-size=64" \
     UV_THREADPOOL_SIZE=128 \
     PORT=3000
 
