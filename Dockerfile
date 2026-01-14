@@ -17,7 +17,7 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install dependencies with production optimizations
-RUN npm ci --only=production --ignore-scripts && \
+RUN npm ci --omit=dev --ignore-scripts && \
     npm cache clean --force
 
 # ================================
@@ -58,7 +58,6 @@ RUN apk update && \
     apk add --no-cache \
     dumb-init \
     curl \
-    tini \
     && rm -rf /var/cache/apk/*
 
 # Set production environment
@@ -94,9 +93,6 @@ EXPOSE 3000
 # Health check with optimized settings
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
     CMD curl -f http://localhost:3000/api/health || exit 1
-
-# Use tini as init system for proper signal handling
-ENTRYPOINT ["/sbin/tini", "--"]
 
 # Start application with production optimizations
 CMD ["node", "--enable-source-maps", "dist/main.js"]
