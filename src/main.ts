@@ -8,6 +8,21 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import * as express from 'express';
 import { SecurityMiddleware } from './common/middleware/security.middleware';
 import { WAFMiddleware } from './common/middleware/waf.middleware';
+import os from 'os';
+
+const getLocalNetworkIp = (): string => {
+  const networkInterfaces = os.networkInterfaces();
+  for (const interfaceName in networkInterfaces) {
+    const networkInterface = networkInterfaces[interfaceName];
+    if (!networkInterface) continue;
+    for (const network of networkInterface) {
+      if (network.family === 'IPv4' && !network.internal) {
+        return network.address;
+      }
+    }
+  }
+  return 'localhost';
+};
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -93,6 +108,10 @@ async function bootstrap() {
   }
 
 
+  // Start the application
+  const port = process.env.PORT || 3000;
+  const localIP = getLocalNetworkIp();
+
   const config = new DocumentBuilder()
     .setTitle('Shabaka API')
     .setDescription(`
@@ -157,7 +176,7 @@ async function bootstrap() {
     .setVersion('2.0.0')
     .setContact('Shabaka Team', 'https://shabaka.com', 'support@shabaka.com')
     .setLicense('MIT', 'https://opensource.org/licenses/MIT')
-    .addServer('http://localhost:3001', 'Development Server')
+    .addServer(`http://${localIP}:${port}`, 'Development Server')
     .addServer('https://api.shabaka.com', 'Production Server')
     .addServer('https://staging-api.shabaka.com', 'Staging Server')
     .addBearerAuth(
@@ -371,35 +390,20 @@ async function bootstrap() {
     ].join('\n')
   });
 
-  // Start the application
-  const port = process.env.PORT || 3000;
-
   // Bind to 0.0.0.0 to allow connections from both localhost and network
   await app.listen(port, '0.0.0.0');
+
+  const baseUrl = `http://${localIP}:${port}`;
 
   if (isProduction) {
     // Minimal production logging
     console.log(`🚀 Chabaqa API Server started on port ${port}`);
-    console.log(`📚 API Docs: http://localhost:${port}/api/docs`);
+    console.log(`🌐 Base URL: ${baseUrl}`);
+    console.log(`📚 API Docs: ${baseUrl}/api/docs`);
     console.log(`🌐 Environment: production\n`);
   } else {
     // Detailed development logging
     // Get local network IP address
-    const os = require('os');
-    const networkInterfaces = os.networkInterfaces();
-    let localIP = 'localhost';
-
-    for (const interfaceName in networkInterfaces) {
-      const networkInterface = networkInterfaces[interfaceName];
-      for (const network of networkInterface) {
-        if (network.family === 'IPv4' && !network.internal) {
-          localIP = network.address;
-          break;
-        }
-      }
-      if (localIP !== 'localhost') break;
-    }
-
     console.log('\n╔════════════════════════════════════════════════════════════════╗');
     console.log('║          🚀 CHABAQA BACKEND SERVER STARTED                    ║');
     console.log('╚════════════════════════════════════════════════════════════════╝\n');
@@ -407,6 +411,8 @@ async function bootstrap() {
     console.log(`📍 Port: ${port}`);
     console.log(`🌐 Binding: 0.0.0.0 (all network interfaces)`);
     console.log(`🌐 Detected IP: ${localIP}\n`);
+
+    console.log(`🌐 Base URL (LAN): ${baseUrl}`);
 
     console.log('📋 AVAILABLE ENDPOINTS:\n');
     console.log(`   💻 Web Browser (localhost):`);

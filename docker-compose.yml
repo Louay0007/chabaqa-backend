@@ -7,8 +7,6 @@ services:
       context: .
       dockerfile: Dockerfile
       target: production
-      args:
-        - NODE_ENV=production
     image: chabaqa-backend:latest
     container_name: chabaqa-backend
     restart: always
@@ -17,21 +15,14 @@ services:
     env_file:
       - .env
     environment:
-      # MongoDB Atlas cloud database
       MONGO_URI: "mongodb+srv://admin:admin@chabaqa.bmmujoq.mongodb.net/?appName=chabaqa"
       NODE_ENV: production
       PORT: 3000
-      # Set SERVER_URL for correct image URLs
       SERVER_URL: "http://51.254.132.77:3000"
-      # Node.js optimizations
-      NODE_OPTIONS: "--max-old-space-size=2048 --max-semi-space-size=64"
-      UV_THREADPOOL_SIZE: 128
+      NODE_OPTIONS: "--max-old-space-size=2048"
     volumes:
-      # Persist uploaded files
       - ./uploads:/app/uploads:rw
-      # Optional: Mount public directory if you have static files
       - ./public:/app/public:rw
-    # Resource limits for production VPS
     deploy:
       resources:
         limits:
@@ -40,28 +31,17 @@ services:
         reservations:
           cpus: '0.5'
           memory: 512M
-    # Security options
-    security_opt:
-      - no-new-privileges:true
-    # Read-only root filesystem (except volumes)
-    read_only: false
-    tmpfs:
-      - /tmp:noexec,nosuid,size=100M
-    # Logging configuration
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
-        compress: "true"
-    # Health check
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 60s
-    # Network configuration
     networks:
       - chabaqa-network
 

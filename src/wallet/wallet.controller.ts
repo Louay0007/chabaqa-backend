@@ -221,8 +221,32 @@ export class WalletController {
     @Body('creatorId') creatorId: string,
     @Body('description') description?: string,
   ) {
+    console.log('🔍 [PURCHASE] Request body:', req.body);
+    console.log('🔍 [PURCHASE] Parsed params:', { contentType, contentId, amount, creatorId, description });
+    console.log('🔍 [PURCHASE] User:', this.getUserId(req));
+
     if (!contentType || !contentId || !amount || !creatorId) {
-      throw new BadRequestException('Missing required fields');
+      const missing: string[] = [];
+      if (!contentType) missing.push('contentType');
+      if (!contentId) missing.push('contentId');
+      if (!amount) missing.push('amount');
+      if (!creatorId) missing.push('creatorId');
+      
+      console.error('❌ [PURCHASE] Missing required fields:', missing);
+      throw new BadRequestException(`Missing required fields: ${missing.join(', ')}`);
+    }
+
+    // Validate contentType
+    const validContentTypes = Object.values(WalletPurchaseContentType);
+    if (!validContentTypes.includes(contentType)) {
+      console.error('❌ [PURCHASE] Invalid contentType:', contentType, 'Valid types:', validContentTypes);
+      throw new BadRequestException(`Invalid contentType. Must be one of: ${validContentTypes.join(', ')}`);
+    }
+
+    // Validate amount
+    if (typeof amount !== 'number' || amount <= 0) {
+      console.error('❌ [PURCHASE] Invalid amount:', amount);
+      throw new BadRequestException('Amount must be a positive number');
     }
 
     const result = await this.walletService.purchaseWithWallet(
