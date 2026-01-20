@@ -44,7 +44,8 @@ export class DmController {
   @ApiOperation({ summary: 'Lister les messages d\'une conversation' })
   async listMessages(@Param('conversationId') conversationId: string, @Query('page') page = 1, @Query('limit') limit = 30, @Request() req: any) {
     const isAdmin = req.user?.role === 'admin' || req.user?.isAdmin === true;
-    return this.dmService.listMessages(conversationId, req.user._id || req.user.userId, Number(page), Number(limit), { isAdmin });
+    const userId = (req.user?._id || req.user?.userId || req.user?.sub || req.user?.id || '').toString();
+    return this.dmService.listMessages(conversationId, userId, Number(page), Number(limit), { isAdmin });
   }
 
   @Post(':conversationId/messages')

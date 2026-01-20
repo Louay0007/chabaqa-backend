@@ -33,6 +33,18 @@ export class WalletController {
   }
 
   /**
+   * Check if FREE_MODE is enabled
+   */
+  @Get('free-mode-check')
+  async checkFreeMode() {
+    const freeMode = process.env.FREE_MODE === 'true';
+    return {
+      freeMode,
+      message: freeMode ? 'FREE MODE enabled - all content is free' : 'Payment required for paid content'
+    };
+  }
+
+  /**
    * Get current exchange rates
    */
   @Get('exchange-rates')

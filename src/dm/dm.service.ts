@@ -135,8 +135,12 @@ export class DmService {
     }
     
     // Check permissions: user must be participant or admin viewing help conversation
-    const isParticipantA = uid.equals(conv.participantA);
-    const isParticipantB = conv.participantB && uid.equals(conv.participantB);
+    // When populated, participantA/B become documents; normalize to ObjectId before comparing.
+    const participantAId = (conv as any)?.participantA?._id ? (conv as any).participantA._id : (conv as any).participantA;
+    const participantBId = (conv as any)?.participantB?._id ? (conv as any).participantB._id : (conv as any).participantB;
+
+    const isParticipantA = participantAId ? uid.equals(participantAId) : false;
+    const isParticipantB = participantBId ? uid.equals(participantBId) : false;
     const isParticipant = isParticipantA || isParticipantB;
     const isAdminViewingHelp = options?.isAdmin && conv.type === 'HELP_DM';
     

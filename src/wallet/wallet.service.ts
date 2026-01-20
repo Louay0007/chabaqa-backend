@@ -319,6 +319,7 @@ export class WalletService {
 
   /**
    * Purchase content with wallet balance
+   * If FREE_MODE is enabled, grants access without payment
    */
   async purchaseWithWallet(
     userId: string,
@@ -328,6 +329,36 @@ export class WalletService {
     creatorId: string,
     description?: string,
   ): Promise<{ success: boolean; transaction: WalletTransactionDocument; newBalance: number }> {
+    const FREE_MODE = process.env.FREE_MODE === 'true';
+
+    // If FREE_MODE is enabled, grant access without payment
+    if (FREE_MODE) {
+      console.log('💚 [FREE MODE] Granting free access to', contentType, contentId);
+      
+      // Grant access immediately
+      await this.grantContentAccess(userId, contentType, contentId);
+
+      // Create a mock transaction for record keeping
+      const transaction = await this.walletTransactionModel.create({
+        userId: new Types.ObjectId(userId),
+        type: WalletTransactionType.PURCHASE,
+        amount: 0, // Free!
+        balanceBefore: 0,
+        balanceAfter: 0,
+        description: `Free access: ${description || contentType}`,
+        contentType,
+        contentId,
+        reference: this.generateReference('FREE'),
+      });
+
+      return {
+        success: true,
+        transaction,
+        newBalance: 0,
+      };
+    }
+
+    // Normal payment flow (when FREE_MODE is disabled)
     const user = await this.userModel.findById(userId) as any;
     if (!user) {
       throw new NotFoundException('User not found');
