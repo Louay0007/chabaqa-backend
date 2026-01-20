@@ -76,6 +76,19 @@ export class EventController {
     return { success: true, data: events };
   }
 
+  @Get('my-registrations')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Récupérer les événements auxquels l\'utilisateur est inscrit' })
+  @ApiResponse({ status: 200, description: 'Événements récupérés avec succès', type: EventListResponseDto })
+  @ApiResponse({ status: 401, description: 'Non autorisé' })
+  async getMyRegistrations(
+    @Request() req
+  ): Promise<{ success: boolean; events: any[] }> {
+    const events = await this.eventService.getMyRegistrations(req.user.userId);
+    return { success: true, events };
+  }
+
   @Get('stats')
   @ApiOperation({ summary: 'Récupérer les statistiques des événements' })
   @ApiQuery({ name: 'communityId', required: false, type: String, description: 'ID de la communauté' })
@@ -124,6 +137,40 @@ export class EventController {
   ): Promise<{ success: boolean; data: EventListResponseDto }> {
     const events = await this.eventService.findByCreator(creatorId, page, limit, communityId);
     return { success: true, data: events };
+  }
+
+  @Post(':id/register')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'S\'inscrire à un événement' })
+  @ApiResponse({ status: 201, description: 'Inscription réussie' })
+  @ApiResponse({ status: 400, description: 'Inscription impossible' })
+  @ApiResponse({ status: 401, description: 'Non autorisé' })
+  @ApiResponse({ status: 404, description: 'Événement ou type de billet non trouvé' })
+  @ApiQuery({ name: 'promoCode', required: false, type: String })
+  async registerAttendee(
+    @Param('id') eventId: string,
+    @Body('ticketType') ticketType: string,
+    @Query('promoCode') promoCode: string | undefined,
+    @Request() req
+  ): Promise<{ success: boolean; message: string }> {
+    const result = await this.eventService.registerAttendee(eventId, ticketType, req.user.userId, promoCode);
+    return { success: true, ...result };
+  }
+
+  @Post(':id/unregister')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Se désinscrire d\'un événement' })
+  @ApiResponse({ status: 200, description: 'Désinscription réussie' })
+  @ApiResponse({ status: 401, description: 'Non autorisé' })
+  @ApiResponse({ status: 404, description: 'Événement ou inscription non trouvé' })
+  async unregisterAttendee(
+    @Param('id') eventId: string,
+    @Request() req
+  ): Promise<{ success: boolean; message: string }> {
+    const result = await this.eventService.unregisterAttendee(eventId, req.user.userId);
+    return { success: true, ...result };
   }
 
   @Patch(':id')
@@ -263,53 +310,6 @@ export class EventController {
   ): Promise<{ success: boolean; message: string }> {
     const result = await this.eventService.removeSpeaker(eventId, speakerId, req.user.userId);
     return { success: true, ...result };
-  }
-
-  @Post(':id/register')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'S\'inscrire à un événement' })
-  @ApiResponse({ status: 201, description: 'Inscription réussie' })
-  @ApiResponse({ status: 400, description: 'Inscription impossible' })
-  @ApiResponse({ status: 401, description: 'Non autorisé' })
-  @ApiResponse({ status: 404, description: 'Événement ou type de billet non trouvé' })
-  @ApiQuery({ name: 'promoCode', required: false, type: String })
-  async registerAttendee(
-    @Param('id') eventId: string,
-    @Body('ticketType') ticketType: string,
-    @Query('promoCode') promoCode: string | undefined,
-    @Request() req
-  ): Promise<{ success: boolean; message: string }> {
-    const result = await this.eventService.registerAttendee(eventId, ticketType, req.user.userId, promoCode);
-    return { success: true, ...result };
-  }
-
-  @Post(':id/unregister')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Se désinscrire d\'un événement' })
-  @ApiResponse({ status: 200, description: 'Désinscription réussie' })
-  @ApiResponse({ status: 401, description: 'Non autorisé' })
-  @ApiResponse({ status: 404, description: 'Événement ou inscription non trouvé' })
-  async unregisterAttendee(
-    @Param('id') eventId: string,
-    @Request() req
-  ): Promise<{ success: boolean; message: string }> {
-    const result = await this.eventService.unregisterAttendee(eventId, req.user.userId);
-    return { success: true, ...result };
-  }
-
-  @Get('my-registrations')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Récupérer les événements auxquels l\'utilisateur est inscrit' })
-  @ApiResponse({ status: 200, description: 'Événements récupérés avec succès', type: EventListResponseDto })
-  @ApiResponse({ status: 401, description: 'Non autorisé' })
-  async getMyRegistrations(
-    @Request() req
-  ): Promise<{ success: boolean; events: any[] }> {
-    const events = await this.eventService.getMyRegistrations(req.user.userId);
-    return { success: true, events };
   }
 
   @Patch(':id/toggle-published')

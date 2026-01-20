@@ -391,6 +391,83 @@ export class UserController {
       }
     }
 
+    // Delete own account (authenticated user)
+    @Delete('delete-account')
+    @UseGuards(JwtAuthGuard)
+    @ApiBearerAuth('JWT-auth')
+    @ApiOperation({
+      summary: 'Delete Own Account',
+      description: 'Permanently delete the authenticated user account and all associated data. This action cannot be undone.',
+      tags: ['Users']
+    })
+    @ApiResponse({
+      status: 200,
+      description: 'Account deleted successfully',
+      content: {
+        'application/json': {
+          example: {
+            success: true,
+            message: 'Your account and all associated data have been permanently deleted'
+          }
+        }
+      }
+    })
+    @ApiResponse({
+      status: 401,
+      description: 'Unauthorized - Invalid token',
+      content: {
+        'application/json': {
+          example: {
+            statusCode: 401,
+            message: 'Unauthorized',
+            error: 'Unauthorized'
+          }
+        }
+      }
+    })
+    @ApiResponse({
+      status: 400,
+      description: 'Bad request - Error during deletion',
+      content: {
+        'application/json': {
+          example: {
+            success: false,
+            status: 400,
+            message: 'Error deleting account',
+            error: 'BAD_REQUEST',
+            details: 'Error message'
+          }
+        }
+      }
+    })
+    async deleteOwnAccount(@Res() response, @Request() req) {
+      try {
+        // Get user ID from JWT token
+        const userId = req.user.sub || req.user._id;
+        
+        console.log(`🗑️ [DELETE ACCOUNT] User ${userId} requested account deletion`);
+        
+        // Delete user and all associated data
+        await this.userService.deleteUserAccount(userId);
+        
+        console.log(`✅ [DELETE ACCOUNT] User ${userId} account deleted successfully`);
+        
+        return response.status(HttpStatus.OK).json({
+          success: true,
+          message: 'Your account and all associated data have been permanently deleted',
+        });
+      } catch (err) {
+        console.error(`❌ [DELETE ACCOUNT] Error deleting account:`, err);
+        return response.status(HttpStatus.BAD_REQUEST).json({
+          success: false,
+          status: 400,
+          message: 'Error deleting account',
+          error: 'BAD_REQUEST',
+          details: err.message
+        });
+      }
+    }
+
     // Mettre à jour son propre profil (sans ID dans l'URL)
     @Put('update-profile')
     @UseGuards(JwtAuthGuard)

@@ -366,7 +366,7 @@ export class SessionService {
   /**
    * Récupérer les sessions d'une communauté
    */
-  async findByCommunity(communitySlug: string): Promise<SessionResponseDto[]> {
+  async findByCommunity(communitySlug: string, currentUserId?: string): Promise<SessionResponseDto[]> {
     const community = await this.communityModel.findOne({ slug: communitySlug });
     if (!community) {
       throw new NotFoundException('Communauté non trouvée');
@@ -379,7 +379,7 @@ export class SessionService {
       .exec();
 
     return Promise.all(
-      sessions.map(session => this.transformToResponseDto(session, community))
+      sessions.map(session => this.transformToResponseDto(session, community, currentUserId))
     );
   }
 
@@ -534,7 +534,7 @@ export class SessionService {
     await session.save();
 
     const community = await this.communityModel.findOne({ id: session.communityId });
-    return this.transformToResponseDto(session, community || undefined);
+    return this.transformToResponseDto(session, community || undefined, userId);
   }
 
   /**
@@ -1502,15 +1502,30 @@ export class SessionService {
   /**
    * Transformer un document Session en DTO de réponse
    */
-  private async transformToResponseDto(session: SessionDocument, community?: CommunityDocument | null): Promise<SessionResponseDto> {
+  private async transformToResponseDto(
+    session: SessionDocument, 
+    community?: CommunityDocument | null,
+    currentUserId?: string
+  ): Promise<SessionResponseDto> {
     // Récupérer les informations du créateur - include all possible avatar fields
     const creator = await this.userModel.findById(session.creatorId).select('name email profile_picture photo_profil');
 
+    // Filter bookings based on currentUserId if provided
+    let bookingsToShow = session.bookings;
+    if (currentUserId) {
+      const userObjectId = new Types.ObjectId(currentUserId);
+      // Only show bookings for the current user OR if user is the creator
+      const isCreator = session.creatorId.equals(userObjectId);
+      if (!isCreator) {
+        bookingsToShow = session.bookings.filter(b => b.userId.equals(userObjectId));
+      }
+    }
+
     // Transformer les réservations
-    const bookingUserIds = session.bookings.map(b => b.userId);
+    const bookingUserIds = bookingsToShow.map(b => b.userId);
     const bookingUsers = await this.userModel.find({ _id: { $in: bookingUserIds } }).select('name email profile_picture photo_profil');
 
-    const bookings = session.bookings.map(booking => {
+    const bookings = bookingsToShow.map(booking => {
       const user = bookingUsers.find(u => u._id.equals(booking.userId));
       // Check all possible avatar fields
       const userAvatar = user?.photo_profil || user?.profile_picture;

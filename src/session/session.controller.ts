@@ -77,8 +77,13 @@ export class SessionController {
   @ApiOperation({ summary: 'Récupérer les sessions d\'une communauté' })
   @ApiResponse({ status: 200, description: 'Sessions de la communauté récupérées avec succès', type: [SessionResponseDto] })
   @ApiResponse({ status: 404, description: 'Communauté non trouvée' })
-  async findByCommunity(@Param('communitySlug') communitySlug: string): Promise<SessionResponseDto[]> {
-    return this.sessionService.findByCommunity(communitySlug);
+  async findByCommunity(
+    @Param('communitySlug') communitySlug: string,
+    @Request() req: any
+  ): Promise<SessionResponseDto[]> {
+    // Get userId from JWT if authenticated, otherwise undefined
+    const userId = req.user?._id || req.user?.userId || req.user?.sub;
+    return this.sessionService.findByCommunity(communitySlug, userId);
   }
 
   @Get(':id')

@@ -123,9 +123,9 @@ export class WalletService {
     const conversionRate = rates[currency] || 1;
     const amountDT = currency === TopUpCurrency.DT ? amount : amount * conversionRate;
 
-    // TEST MODE: Auto-approve - set status to APPROVED directly
-    // TODO: Change to PENDING in production and use admin approval flow
-    const AUTO_APPROVE_TEST_MODE = true; // Set to false for production
+    // PRODUCTION MODE: Requests require admin approval
+    // Set to true only for testing/development
+    const AUTO_APPROVE_TEST_MODE = false; // Changed to false for production
 
     const topUpRequest = new this.topUpRequestModel({
       userId: new Types.ObjectId(userId),
@@ -147,6 +147,8 @@ export class WalletService {
     if (AUTO_APPROVE_TEST_MODE) {
       console.log('🧪 [TEST MODE] Auto-approving top-up request:', savedRequest._id);
       await this.addPointsToWallet(userId, savedRequest);
+    } else {
+      console.log('⏳ [PRODUCTION] Top-up request created, waiting for admin approval:', savedRequest._id);
     }
 
     return savedRequest;
@@ -453,8 +455,97 @@ export class WalletService {
         }
         break;
 
-      // TODO: Add other content types (course, event, session)
-      // These would follow similar patterns based on their respective schemas
+      case WalletPurchaseContentType.EVENT:
+        // Import Event model dynamically to avoid circular dependency
+        const EventModel = this.userModel.db.model('Event');
+        const event = await EventModel.findById(contentId);
+        
+        if (event) {
+          // Check if user is already registered
+          const isAlreadyRegistered = event.attendees?.some(
+            (a: any) => a.userId?.toString() === userId || a.userId?.equals(userObjectId)
+          );
+          
+          if (!isAlreadyRegistered) {
+            // Add user as attendee
+            if (!event.attendees) {
+              event.attendees = [];
+            }
+            event.attendees.push({
+              userId: userObjectId,
+              ticketType: 'regular', // Default, should be passed from purchase
+              registeredAt: new Date(),
+              attended: false,
+            });
+            event.totalAttendees = (event.totalAttendees || 0) + 1;
+            await event.save();
+            console.log(`✅ [WALLET] Registered user ${userId} for event ${contentId}`);
+          } else {
+            console.log(`ℹ️ [WALLET] User ${userId} is already registered for event ${contentId}`);
+          }
+        } else {
+          console.error(`❌ [WALLET] Event not found: ${contentId}`);
+        }
+        break;
+
+      case WalletPurchaseContentType.COURSE:
+        // Import Course model dynamically to avoid circular dependency
+        const CourseModel = this.userModel.db.model('Course');
+        const course = await CourseModel.findById(contentId);
+        
+        if (course) {
+          // Check if user is already enrolled
+          const isAlreadyEnrolled = course.enrolledUsers?.some(
+            (userId_: any) => userId_?.toString() === userId || userId_?.equals(userObjectId)
+          );
+          
+          if (!isAlreadyEnrolled) {
+            // Add user to enrolled users
+            if (!course.enrolledUsers) {
+              course.enrolledUsers = [];
+            }
+            course.enrolledUsers.push(userObjectId);
+            course.enrolledCount = (course.enrolledCount || 0) + 1;
+            await course.save();
+            console.log(`✅ [WALLET] Enrolled user ${userId} in course ${contentId}`);
+          } else {
+            console.log(`ℹ️ [WALLET] User ${userId} is already enrolled in course ${contentId}`);
+          }
+        } else {
+          console.error(`❌ [WALLET] Course not found: ${contentId}`);
+        }
+        break;
+
+      case WalletPurchaseContentType.SESSION:
+        // Import Session model dynamically to avoid circular dependency
+        const SessionModel = this.userModel.db.model('Session');
+        const session = await SessionModel.findById(contentId);
+        
+        if (session) {
+          // Check if user already has a booking
+          const isAlreadyBooked = session.bookings?.some(
+            (b: any) => b.userId?.toString() === userId || b.userId?.equals(userObjectId)
+          );
+          
+          if (!isAlreadyBooked) {
+            // Add booking
+            if (!session.bookings) {
+              session.bookings = [];
+            }
+            session.bookings.push({
+              userId: userObjectId,
+              bookedAt: new Date(),
+              status: 'confirmed',
+            });
+            await session.save();
+            console.log(`✅ [WALLET] Booked session ${contentId} for user ${userId}`);
+          } else {
+            console.log(`ℹ️ [WALLET] User ${userId} already has a booking for session ${contentId}`);
+          }
+        } else {
+          console.error(`❌ [WALLET] Session not found: ${contentId}`);
+        }
+        break;
       
       default:
         console.log(`⚠️ [WALLET] Access grant not implemented for content type: ${contentType}`);

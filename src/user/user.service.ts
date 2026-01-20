@@ -129,6 +129,156 @@ export class UserService {
     return deletedUser;
   }
 
+  /**
+   * Delete user account and all associated data
+   * This is a comprehensive deletion that removes:
+   * - User profile
+   * - User posts and comments
+   * - User communities (if creator)
+   * - User memberships
+   * - User bookings
+   * - User wallet data
+   * - User uploaded files
+   */
+  async deleteUserAccount(userId: string): Promise<void> {
+    console.log(`🗑️ [DELETE ACCOUNT] Starting deletion process for user ${userId}`);
+    
+    // Find user first
+    const user = await this.userModel.findById(userId);
+    if (!user) {
+      throw new NotFoundException(`User #${userId} not found`);
+    }
+
+    try {
+      // 1. Delete user's posts
+      const Post = this.userModel.db.model('Post');
+      const deletedPosts = await Post.deleteMany({ authorId: userId });
+      console.log(`✅ [DELETE ACCOUNT] Deleted ${deletedPosts.deletedCount} posts`);
+
+      // 2. Delete user's comments
+      const Comment = this.userModel.db.model('Comment');
+      const deletedComments = await Comment.deleteMany({ userId: userId });
+      console.log(`✅ [DELETE ACCOUNT] Deleted ${deletedComments.deletedCount} comments`);
+
+      // 3. Remove user from communities (memberships)
+      const Community = this.userModel.db.model('Community');
+      const updatedCommunities = await Community.updateMany(
+        { members: userId },
+        { 
+          $pull: { members: userId },
+          $inc: { membersCount: -1 }
+        }
+      );
+      console.log(`✅ [DELETE ACCOUNT] Removed from ${updatedCommunities.modifiedCount} communities`);
+
+      // 4. Delete communities created by user (optional - or transfer ownership)
+      const deletedCommunities = await Community.deleteMany({ creatorId: userId });
+      console.log(`✅ [DELETE ACCOUNT] Deleted ${deletedCommunities.deletedCount} created communities`);
+
+      // 5. Delete user's events
+      const Event = this.userModel.db.model('Event');
+      const deletedEvents = await Event.deleteMany({ creatorId: userId });
+      console.log(`✅ [DELETE ACCOUNT] Deleted ${deletedEvents.deletedCount} events`);
+
+      // 6. Delete user's event registrations
+      const EventRegistration = this.userModel.db.model('EventRegistration');
+      const deletedRegistrations = await EventRegistration.deleteMany({ userId: userId });
+      console.log(`✅ [DELETE ACCOUNT] Deleted ${deletedRegistrations.deletedCount} event registrations`);
+
+      // 7. Delete user's session bookings
+      const SessionBooking = this.userModel.db.model('SessionBooking');
+      const deletedBookings = await SessionBooking.deleteMany({ userId: userId });
+      console.log(`✅ [DELETE ACCOUNT] Deleted ${deletedBookings.deletedCount} session bookings`);
+
+      // 8. Delete user's sessions
+      const Session = this.userModel.db.model('Session');
+      const deletedSessions = await Session.deleteMany({ creatorId: userId });
+      console.log(`✅ [DELETE ACCOUNT] Deleted ${deletedSessions.deletedCount} sessions`);
+
+      // 9. Delete user's challenges
+      const Challenge = this.userModel.db.model('Challenge');
+      const deletedChallenges = await Challenge.deleteMany({ creatorId: userId });
+      console.log(`✅ [DELETE ACCOUNT] Deleted ${deletedChallenges.deletedCount} challenges`);
+
+      // 10. Remove user from challenge participants
+      await Challenge.updateMany(
+        { 'participants.userId': userId },
+        { $pull: { participants: { userId: userId } } }
+      );
+      console.log(`✅ [DELETE ACCOUNT] Removed from challenge participants`);
+
+      // 11. Delete user's courses
+      const Cours = this.userModel.db.model('Cours');
+      const deletedCourses = await Cours.deleteMany({ creatorId: userId });
+      console.log(`✅ [DELETE ACCOUNT] Deleted ${deletedCourses.deletedCount} courses`);
+
+      // 12. Delete user's products
+      const Product = this.userModel.db.model('Product');
+      const deletedProducts = await Product.deleteMany({ creatorId: userId });
+      console.log(`✅ [DELETE ACCOUNT] Deleted ${deletedProducts.deletedCount} products`);
+
+      // 13. Delete user's wallet transactions
+      const WalletTransaction = this.userModel.db.model('WalletTransaction');
+      const deletedTransactions = await WalletTransaction.deleteMany({ userId: userId });
+      console.log(`✅ [DELETE ACCOUNT] Deleted ${deletedTransactions.deletedCount} wallet transactions`);
+
+      // 14. Delete user's top-up requests
+      const TopUpRequest = this.userModel.db.model('TopUpRequest');
+      const deletedTopUps = await TopUpRequest.deleteMany({ userId: userId });
+      console.log(`✅ [DELETE ACCOUNT] Deleted ${deletedTopUps.deletedCount} top-up requests`);
+
+      // 15. Delete user's messages
+      const Message = this.userModel.db.model('Message');
+      const deletedMessages = await Message.deleteMany({ 
+        $or: [{ senderId: userId }, { receiverId: userId }]
+      });
+      console.log(`✅ [DELETE ACCOUNT] Deleted ${deletedMessages.deletedCount} messages`);
+
+      // 16. Delete user's conversations
+      const Conversation = this.userModel.db.model('Conversation');
+      const deletedConversations = await Conversation.deleteMany({
+        participants: userId
+      });
+      console.log(`✅ [DELETE ACCOUNT] Deleted ${deletedConversations.deletedCount} conversations`);
+
+      // 17. Delete user's notifications
+      const Notification = this.userModel.db.model('Notification');
+      const deletedNotifications = await Notification.deleteMany({ userId: userId });
+      console.log(`✅ [DELETE ACCOUNT] Deleted ${deletedNotifications.deletedCount} notifications`);
+
+      // 18. Delete user's tracking data (views, bookmarks, etc.)
+      const TrackingData = this.userModel.db.model('TrackingData');
+      const deletedTracking = await TrackingData.deleteMany({ userId: userId });
+      console.log(`✅ [DELETE ACCOUNT] Deleted ${deletedTracking.deletedCount} tracking records`);
+
+      // 19. Delete user's verification codes
+      const deletedCodes = await this.verificationCodeModel.deleteMany({ email: user.email });
+      console.log(`✅ [DELETE ACCOUNT] Deleted ${deletedCodes.deletedCount} verification codes`);
+
+      // 20. Delete user's uploaded files (avatar, etc.)
+      if (user.avatar || user.photo_profil) {
+        try {
+          const avatarPath = user.avatar || user.photo_profil;
+          if (avatarPath && !avatarPath.startsWith('http')) {
+            await this.uploadService.deleteFile(avatarPath);
+            console.log(`✅ [DELETE ACCOUNT] Deleted avatar file`);
+          }
+        } catch (error) {
+          console.warn(`⚠️ [DELETE ACCOUNT] Could not delete avatar file:`, error.message);
+        }
+      }
+
+      // 21. Finally, delete the user account
+      await this.userModel.findByIdAndDelete(userId);
+      console.log(`✅ [DELETE ACCOUNT] User account deleted`);
+
+      console.log(`🎉 [DELETE ACCOUNT] Account deletion completed successfully for user ${userId}`);
+    } catch (error) {
+      console.error(`❌ [DELETE ACCOUNT] Error during deletion:`, error);
+      throw new BadRequestException(`Failed to delete account: ${error.message}`);
+    }
+  }
+
   // update user
   async updateUser(id: string, updateUserDto: UpdateUserDto): Promise<IUser> {
     const updatedUser = await this.userModel.findByIdAndUpdate(id, updateUserDto, { new: true });

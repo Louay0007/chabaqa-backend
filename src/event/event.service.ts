@@ -215,6 +215,15 @@ export class EventService {
       throw new ForbiddenException('Vous ne pouvez modifier que vos propres événements');
     }
 
+    // Vérifier la gating pour publication/activation si applicable
+    if ((updateEventDto.isActive !== undefined && updateEventDto.isActive && !event.isActive) ||
+        (updateEventDto.isPublished !== undefined && updateEventDto.isPublished && !event.isPublished)) {
+      const hasSub = await this.policyService.hasActiveSubscription(userId);
+      if (!hasSub) {
+        throw new ForbiddenException('Un abonnement actif est requis pour publier ou activer un événement');
+      }
+    }
+
     // Mettre à jour les dates si fournies
     if (updateEventDto.startDate) {
       updateEventDto.startDate = new Date(updateEventDto.startDate) as any;
@@ -223,31 +232,43 @@ export class EventService {
       updateEventDto.endDate = new Date(updateEventDto.endDate) as any;
     }
 
-    // Mettre à jour les sessions si fournies
+    // Mettre à jour les sessions si fournies - PRESERVE existing IDs
     if (updateEventDto.sessions) {
-      updateEventDto.sessions = updateEventDto.sessions.map(session => ({
-        id: new Types.ObjectId().toString(),
-        ...session,
-        isActive: session.isActive ?? true,
-        attendance: session.attendance ?? 0
-      })) as any;
+      updateEventDto.sessions = updateEventDto.sessions.map(session => {
+        // If session has an ID, keep it; otherwise generate new one
+        const sessionId = (session as any).id || new Types.ObjectId().toString();
+        return {
+          id: sessionId,
+          ...session,
+          isActive: session.isActive ?? true,
+          attendance: session.attendance ?? 0
+        };
+      }) as any;
     }
 
-    // Mettre à jour les billets si fournis
+    // Mettre à jour les billets si fournis - PRESERVE existing IDs and sold count
     if (updateEventDto.tickets) {
-      updateEventDto.tickets = updateEventDto.tickets.map(ticket => ({
-        id: new Types.ObjectId().toString(),
-        ...ticket,
-        sold: ticket.sold ?? 0
-      })) as any;
+      updateEventDto.tickets = updateEventDto.tickets.map(ticket => {
+        const ticketId = (ticket as any).id || new Types.ObjectId().toString();
+        // Find existing ticket to preserve sold count
+        const existingTicket = event.tickets.find(t => t.id === ticketId);
+        return {
+          id: ticketId,
+          ...ticket,
+          sold: existingTicket?.sold ?? ticket.sold ?? 0
+        };
+      }) as any;
     }
 
-    // Mettre à jour les conférenciers si fournis
+    // Mettre à jour les conférenciers si fournis - PRESERVE existing IDs
     if (updateEventDto.speakers) {
-      updateEventDto.speakers = updateEventDto.speakers.map(speaker => ({
-        id: new Types.ObjectId().toString(),
-        ...speaker
-      })) as any;
+      updateEventDto.speakers = updateEventDto.speakers.map(speaker => {
+        const speakerId = (speaker as any).id || new Types.ObjectId().toString();
+        return {
+          id: speakerId,
+          ...speaker
+        };
+      }) as any;
     }
 
     Object.assign(event, updateEventDto);
@@ -390,6 +411,12 @@ export class EventService {
       throw new NotFoundException('Billet non trouvé');
     }
 
+    // Check if ticket has been sold - prevent deletion if attendees have this ticket
+    const ticket = event.tickets[ticketIndex];
+    if (ticket.sold > 0) {
+      throw new BadRequestException('Impossible de supprimer un billet qui a déjà été vendu');
+    }
+
     event.tickets.splice(ticketIndex, 1);
     await event.save();
 
@@ -482,6 +509,12 @@ export class EventService {
       throw new BadRequestException('Vous êtes déjà inscrit à cet événement');
     }
 
+    // Check if event date has passed
+    const now = new Date();
+    if (event.startDate < now) {
+      throw new BadRequestException('Impossible de s\'inscrire à un événement passé');
+    }
+
     const attendee = {
       id: new Types.ObjectId().toString(),
       userId: new Types.ObjectId(userId),
@@ -492,20 +525,29 @@ export class EventService {
 
     event.attendees.push(attendee);
     ticket.sold += 1;
+    
     // Si billet payant, appliquer promo et créer une commande avec calcul des frais
     if (ticket.price && ticket.price > 0) {
       let effective = ticket.price;
       let discountDT = 0;
       let appliedCode: string | undefined;
+      
       if (promoCode) {
         const buyer = await this.userModel.findById(userId).select('email');
-      const promo = await this.promoService.validateAndApply(promoCode, ticket.price, TrackableContentType.EVENT, (event as any)._id.toString(), (buyer as any)?.email);
+        const promo = await this.promoService.validateAndApply(
+          promoCode, 
+          ticket.price, 
+          TrackableContentType.EVENT, 
+          (event as any)._id.toString(), 
+          (buyer as any)?.email
+        );
         if (promo.valid) {
           effective = promo.finalAmountDT;
           discountDT = promo.discountDT;
           appliedCode = promo.appliedCode;
         }
       }
+      
       const breakdown = await this.feeService.calculateForAmount(effective, event.creatorId.toString());
       await this.orderModel.create({
         buyerId: new Types.ObjectId(userId),
@@ -522,6 +564,7 @@ export class EventService {
         status: 'paid'
       });
     }
+    
     await event.save();
 
     return { message: 'Inscription réussie' };
@@ -542,13 +585,28 @@ export class EventService {
     }
 
     const attendee = event.attendees[attendeeIndex];
+    
+    // Check if already checked in - prevent unregistration after check-in
+    if (attendee.checkedIn) {
+      throw new BadRequestException('Impossible de se désinscrire après avoir effectué le check-in');
+    }
+
+    // Check if event has already started
+    const now = new Date();
+    if (event.startDate < now) {
+      throw new BadRequestException('Impossible de se désinscrire d\'un événement qui a déjà commencé');
+    }
+
     const ticket = event.tickets.find(t => t.type === attendee.ticketType);
-    if (ticket) {
+    if (ticket && ticket.sold > 0) {
       ticket.sold -= 1;
     }
 
     event.attendees.splice(attendeeIndex, 1);
     await event.save();
+
+    // TODO: Handle refund logic for paid tickets if needed
+    // This would require checking if there was a payment and processing a refund
 
     return { message: 'Désinscription réussie' };
   }
@@ -565,6 +623,24 @@ export class EventService {
     // Vérifier que l'utilisateur est le créateur de l'événement
     if (event.creatorId.toString() !== userId) {
       throw new ForbiddenException('Vous ne pouvez modifier que vos propres événements');
+    }
+
+    // Check subscription requirement when publishing
+    if (!event.isPublished) {
+      const hasSub = await this.policyService.hasActiveSubscription(userId);
+      if (!hasSub) {
+        throw new ForbiddenException('Un abonnement actif est requis pour publier un événement');
+      }
+    }
+
+    // Validate event has required data before publishing
+    if (!event.isPublished) {
+      if (!event.tickets || event.tickets.length === 0) {
+        throw new BadRequestException('L\'événement doit avoir au moins un type de billet avant d\'être publié');
+      }
+      if (!event.startDate) {
+        throw new BadRequestException('L\'événement doit avoir une date de début avant d\'être publié');
+      }
     }
 
     event.isPublished = !event.isPublished;
@@ -661,12 +737,13 @@ export class EventService {
       profile_picture: 'https://placehold.co/64x64?text=UC'
     };
 
-    // Transformer les participants
+    // Transformer les participants - handle missing users gracefully
     const attendees = await Promise.all(
       event.attendees.map(async (attendee) => {
         const user = await this.userModel.findById(attendee.userId).select('name email');
+        // Skip attendees whose user accounts no longer exist
         if (!user) {
-          throw new NotFoundException('Utilisateur non trouvé');
+          return null;
         }
         return {
           id: attendee.id,
@@ -681,7 +758,7 @@ export class EventService {
           checkedInAt: attendee.checkedInAt?.toISOString()
         };
       })
-    );
+    ).then(results => results.filter(attendee => attendee !== null));
 
     return {
       id: event.id,
