@@ -88,10 +88,8 @@ import { WalletModule } from './wallet/wallet.module';
     MongooseModule.forRootAsync({
       useFactory: () => ({
         uri: process.env.MONGO_URI,
-        serverSelectionTimeoutMS: 5000,
+        serverSelectionTimeoutMS: 30000,
         socketTimeoutMS: 45000,
-        family: 4,
-        directConnection: true,
         connectionFactory: (connection) => {
           // log OK / KO
           connection.on('connected', async () => {
