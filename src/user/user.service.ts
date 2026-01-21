@@ -9,7 +9,7 @@ import { ForgotPasswordDto } from 'src/dto-user/forgot-password.dto';
 import { ResetPasswordDto } from 'src/dto-user/reset-password.dto';
 import { EmailService } from 'src/common/services/email.service';
 import { VerificationCode, VerificationCodeDocument } from 'src/schema/verification-code.schema';
-import { UploadService } from '../upload/upload.service';
+import { UploadService, FileType } from '../upload/upload.service';
 
 @Injectable()
 export class UserService {
@@ -256,12 +256,17 @@ export class UserService {
       console.log(`✅ [DELETE ACCOUNT] Deleted ${deletedCodes.deletedCount} verification codes`);
 
       // 20. Delete user's uploaded files (avatar, etc.)
-      if (user.avatar || user.photo_profil) {
+      if (user.photo_profil || user.profile_picture) {
         try {
-          const avatarPath = user.avatar || user.photo_profil;
-          if (avatarPath && !avatarPath.startsWith('http')) {
-            await this.uploadService.deleteFile(avatarPath);
-            console.log(`✅ [DELETE ACCOUNT] Deleted avatar file`);
+          const avatarUrl = user.photo_profil || user.profile_picture;
+          if (avatarUrl && !avatarUrl.startsWith('http')) {
+            // Extract filename from URL like '/uploads/image/filename.jpg'
+            const urlParts = avatarUrl.split('/uploads/image/');
+            if (urlParts.length === 2) {
+              const filename = urlParts[1];
+              await this.uploadService.deleteFile(filename, FileType.IMAGE);
+              console.log(`✅ [DELETE ACCOUNT] Deleted avatar file`);
+            }
           }
         } catch (error) {
           console.warn(`⚠️ [DELETE ACCOUNT] Could not delete avatar file:`, error.message);
