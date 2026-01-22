@@ -8,8 +8,8 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install all dependencies for build with retry logic
-RUN npm ci --prefer-offline --no-audit || npm ci --prefer-offline --no-audit || npm ci
+# Install all dependencies for build
+RUN npm install --prefer-offline --no-audit
 
 # Copy source code
 COPY . .
@@ -37,7 +37,7 @@ RUN addgroup -g 1001 -S nodejs && \
 
 # Copy package files and install production dependencies only
 COPY package*.json ./
-RUN npm ci --omit=dev --prefer-offline --no-audit || npm ci --omit=dev && npm cache clean --force
+RUN npm install --omit=dev --prefer-offline --no-audit && npm cache clean --force
 
 # Copy built application from builder
 COPY --from=builder --chown=nestjs:nodejs /app/dist ./dist
