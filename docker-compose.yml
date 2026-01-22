@@ -6,18 +6,15 @@ services:
     image: mongo:7.0
     container_name: chabaqa-mongodb
     restart: always
-    ports:
-      - "27017:27017"
+    network_mode: "host"
     environment:
       MONGO_INITDB_ROOT_USERNAME: admin
       MONGO_INITDB_ROOT_PASSWORD: admin123
       MONGO_INITDB_DATABASE: chabaqa
-    command: ["mongod", "--bind_ip_all"]
+    command: ["mongod", "--bind_ip", "127.0.0.1", "--port", "27017"]
     volumes:
       - mongodb_data:/data/db
       - mongodb_config:/data/configdb
-    networks:
-      - chabaqa-network
     ulimits:
       nofile:
         soft: 64000
@@ -30,12 +27,6 @@ services:
         reservations:
           cpus: '0.25'
           memory: 256M
-    healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping').ok", "--quiet"]
-      interval: 10s
-      timeout: 10s
-      retries: 5
-      start_period: 60s
 
   # ================================
   # NestJS Backend Service
@@ -62,8 +53,7 @@ services:
       - ./uploads:/app/uploads:rw
       - ./public:/app/public:rw
     depends_on:
-      mongodb:
-        condition: service_healthy
+      - mongodb
     deploy:
       resources:
         limits:
