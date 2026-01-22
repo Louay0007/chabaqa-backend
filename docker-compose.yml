@@ -12,6 +12,7 @@ services:
       MONGO_INITDB_ROOT_USERNAME: admin
       MONGO_INITDB_ROOT_PASSWORD: admin123
       MONGO_INITDB_DATABASE: chabaqa
+    command: ["mongod", "--bind_ip_all"]
     volumes:
       - mongodb_data:/data/db
       - mongodb_config:/data/configdb
@@ -30,11 +31,11 @@ services:
           cpus: '0.25'
           memory: 256M
     healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')", "--quiet"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-      start_period: 40s
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping').ok", "--quiet"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
 
   # ================================
   # NestJS Backend Service
@@ -52,7 +53,7 @@ services:
     env_file:
       - .env
     environment:
-      MONGO_URI: "mongodb://admin:admin123@mongodb:27017/chabaqa?authSource=admin"
+      MONGO_URI: "mongodb://admin:admin123@mongodb:27017/chabaqa?authSource=admin&directConnection=true&serverSelectionTimeoutMS=60000&connectTimeoutMS=60000"
       NODE_ENV: production
       PORT: 3000
       SERVER_URL: "http://51.254.132.77:3000"
