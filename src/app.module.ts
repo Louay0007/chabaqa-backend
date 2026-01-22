@@ -90,6 +90,7 @@ import { WalletModule } from './wallet/wallet.module';
         uri: process.env.MONGO_URI,
         serverSelectionTimeoutMS: 30000,
         socketTimeoutMS: 45000,
+        connectTimeoutMS: 30000,
         connectionFactory: (connection) => {
           // log OK / KO
           connection.on('connected', async () => {
