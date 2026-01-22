@@ -38,20 +38,35 @@ else
 fi
 
 echo ""
-echo -e "${YELLOW}📦 Step 3: Installing project dependencies...${NC}"
-npm install
+echo -e "${YELLOW}🔨 Step 3: Building the application using Docker...${NC}"
+echo "This avoids memory issues and ensures consistent builds..."
+
+# Build using Docker (which has proper memory settings)
+sudo docker-compose build backend
+
+if [ $? -ne 0 ]; then
+    echo -e "${RED}❌ Docker build failed!${NC}"
+    exit 1
+fi
+
+# Extract the built files from Docker image
+echo "📦 Extracting built files from Docker image..."
+CONTAINER_ID=$(sudo docker create chabaqa-backend:latest)
+sudo docker cp $CONTAINER_ID:/app/dist ./dist
+sudo docker cp $CONTAINER_ID:/app/node_modules ./node_modules
+sudo docker rm $CONTAINER_ID
+
+# Fix permissions
+sudo chown -R $USER:$USER dist node_modules
+
+echo -e "${GREEN}✅ Build extracted successfully!${NC}"
 
 echo ""
-echo -e "${YELLOW}🔨 Step 4: Building the application...${NC}"
-echo "Using aggressive memory settings for build..."
-npm run build:prod
-
-echo ""
-echo -e "${YELLOW}📁 Step 5: Creating necessary directories...${NC}"
+echo -e "${YELLOW}📁 Step 4: Creating necessary directories...${NC}"
 mkdir -p logs uploads/image uploads/video uploads/document uploads/audio public
 
 echo ""
-echo -e "${YELLOW}🐳 Step 6: Starting MongoDB with Docker...${NC}"
+echo -e "${YELLOW}🐳 Step 5: Starting MongoDB with Docker...${NC}"
 sudo docker-compose up -d mongodb
 
 echo ""
@@ -67,16 +82,16 @@ else
 fi
 
 echo ""
-echo -e "${YELLOW}🚀 Step 7: Starting application with PM2...${NC}"
+echo -e "${YELLOW}🚀 Step 6: Starting application with PM2...${NC}"
 pm2 delete chabaqa-backend 2>/dev/null || true
 pm2 start ecosystem.config.js
 
 echo ""
-echo -e "${YELLOW}💾 Step 8: Saving PM2 configuration...${NC}"
+echo -e "${YELLOW}💾 Step 7: Saving PM2 configuration...${NC}"
 pm2 save
 
 echo ""
-echo -e "${YELLOW}🔄 Step 9: Setting up PM2 to start on system boot...${NC}"
+echo -e "${YELLOW}🔄 Step 8: Setting up PM2 to start on system boot...${NC}"
 sudo env PATH=$PATH:/usr/bin pm2 startup systemd -u $USER --hp $HOME
 
 echo ""
