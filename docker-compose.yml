@@ -6,12 +6,13 @@ services:
     image: mongo:7.0
     container_name: chabaqa-mongodb
     restart: always
-    network_mode: "host"
+    ports:
+      - "127.0.0.1:27017:27017"
     environment:
       MONGO_INITDB_ROOT_USERNAME: admin
       MONGO_INITDB_ROOT_PASSWORD: admin123
       MONGO_INITDB_DATABASE: chabaqa
-    command: ["mongod", "--bind_ip", "127.0.0.1", "--port", "27017"]
+    command: ["mongod", "--bind_ip_all", "--auth"]
     volumes:
       - mongodb_data:/data/db
       - mongodb_config:/data/configdb
