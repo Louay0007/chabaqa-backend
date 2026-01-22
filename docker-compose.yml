@@ -17,6 +17,18 @@ services:
       - mongodb_config:/data/configdb
     networks:
       - chabaqa-network
+    ulimits:
+      nofile:
+        soft: 64000
+        hard: 64000
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
     healthcheck:
       test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')", "--quiet"]
       interval: 5s
