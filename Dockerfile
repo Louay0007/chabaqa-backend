@@ -1,15 +1,15 @@
 # ================================
 # Stage 1: Builder
 # ================================
-FROM node:20.11.1-alpine3.19 AS builder
+FROM node:20.19.0-alpine3.20 AS builder
 
 WORKDIR /app
 
 # Copy package files
 COPY package*.json ./
 
-# Install all dependencies for build
-RUN npm ci
+# Install all dependencies for build with retry logic
+RUN npm ci --prefer-offline --no-audit || npm ci --prefer-offline --no-audit || npm ci
 
 # Copy source code
 COPY . .
@@ -20,7 +20,7 @@ RUN NODE_OPTIONS="--max-old-space-size=3072 --max-semi-space-size=128" npm run b
 # ================================
 # Stage 2: Production
 # ================================
-FROM node:20.11.1-alpine3.19 AS production
+FROM node:20.19.0-alpine3.20 AS production
 
 # Install only curl for healthcheck
 RUN apk add --no-cache curl
@@ -37,7 +37,7 @@ RUN addgroup -g 1001 -S nodejs && \
 
 # Copy package files and install production dependencies only
 COPY package*.json ./
-RUN npm ci --omit=dev && npm cache clean --force
+RUN npm ci --omit=dev --prefer-offline --no-audit || npm ci --omit=dev && npm cache clean --force
 
 # Copy built application from builder
 COPY --from=builder --chown=nestjs:nodejs /app/dist ./dist
