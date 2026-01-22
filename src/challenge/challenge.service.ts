@@ -244,10 +244,11 @@ export class ChallengeService {
         const progress =
           totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
 
+        const challengeId = challenge.id || challenge._id?.toString?.() || challenge._id;
         return {
-          challengeId: challenge._id,
+          challengeId,
           challenge: {
-            id: challenge._id,
+            id: challengeId,
             title: challenge.title,
             description: challenge.description,
             thumbnail: challenge.thumbnail || '/placeholder.svg',
