@@ -43,7 +43,8 @@ npm install
 
 echo ""
 echo -e "${YELLOW}🔨 Step 4: Building the application...${NC}"
-npm run build
+echo "Using aggressive memory settings for build..."
+npm run build:prod
 
 echo ""
 echo -e "${YELLOW}📁 Step 5: Creating necessary directories...${NC}"
