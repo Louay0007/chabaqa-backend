@@ -1,5 +1,30 @@
 services:
   # ================================
+  # MongoDB Database Service
+  # ================================
+  mongodb:
+    image: mongo:7.0
+    container_name: chabaqa-mongodb
+    restart: always
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: admin123
+      MONGO_INITDB_DATABASE: chabaqa
+    volumes:
+      - mongodb_data:/data/db
+      - mongodb_config:/data/configdb
+    networks:
+      - chabaqa-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ================================
   # NestJS Backend Service
   # ================================
   backend:
@@ -15,7 +40,7 @@ services:
     env_file:
       - .env
     environment:
-      MONGO_URI: "mongodb+srv://admin:admin@chabaqa.bmmujoq.mongodb.net/?appName=chabaqa"
+      MONGO_URI: "mongodb://admin:admin123@mongodb:27017/chabaqa?authSource=admin"
       NODE_ENV: production
       PORT: 3000
       SERVER_URL: "http://51.254.132.77:3000"
@@ -23,6 +48,9 @@ services:
     volumes:
       - ./uploads:/app/uploads:rw
       - ./public:/app/public:rw
+    depends_on:
+      mongodb:
+        condition: service_healthy
     deploy:
       resources:
         limits:
@@ -69,3 +97,9 @@ networks:
     ipam:
       config:
         - subnet: 172.25.0.0/16
+
+volumes:
+  mongodb_data:
+    driver: local
+  mongodb_config:
+    driver: local
