@@ -1,18 +1,19 @@
+# Docker Compose for PM2 mode (MongoDB + Redis only, backend runs via PM2)
 services:
   # ================================
-  # MongoDB Database Service Only
+  # MongoDB Database Service
   # ================================
   mongodb:
     image: mongo:7.0
     container_name: chabaqa-mongodb
     restart: always
     ports:
-      - "27017:27017"
+      - "127.0.0.1:27017:27017"
     environment:
       MONGO_INITDB_ROOT_USERNAME: admin
       MONGO_INITDB_ROOT_PASSWORD: admin123
       MONGO_INITDB_DATABASE: chabaqa
-    command: ["mongod", "--bind_ip_all"]
+    command: ["mongod", "--bind_ip_all", "--auth"]
     volumes:
       - mongodb_data:/data/db
       - mongodb_config:/data/configdb
@@ -35,8 +36,36 @@ services:
       retries: 5
       start_period: 60s
 
+  # ================================
+  # Redis Cache Service
+  # ================================
+  redis:
+    image: redis:7-alpine
+    container_name: chabaqa-redis
+    restart: always
+    ports:
+      - "127.0.0.1:6379:6379"
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru", "--requirepass", "chabaqa_redis_2024"]
+    volumes:
+      - redis_data:/data
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "chabaqa_redis_2024", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
 volumes:
   mongodb_data:
     driver: local
   mongodb_config:
+    driver: local
+  redis_data:
     driver: local

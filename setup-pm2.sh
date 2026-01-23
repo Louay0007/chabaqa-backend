@@ -66,11 +66,11 @@ echo -e "${YELLOW}📁 Step 4: Creating necessary directories...${NC}"
 mkdir -p logs uploads/image uploads/video uploads/document uploads/audio public
 
 echo ""
-echo -e "${YELLOW}🐳 Step 5: Starting MongoDB with Docker...${NC}"
-sudo docker-compose up -d mongodb
+echo -e "${YELLOW}🐳 Step 5: Starting MongoDB and Redis with Docker...${NC}"
+sudo docker-compose up -d mongodb redis
 
 echo ""
-echo -e "${YELLOW}⏳ Waiting for MongoDB to be ready...${NC}"
+echo -e "${YELLOW}⏳ Waiting for MongoDB and Redis to be ready...${NC}"
 sleep 10
 
 # Check MongoDB health
@@ -78,6 +78,14 @@ if sudo docker exec chabaqa-mongodb mongosh --eval "db.adminCommand('ping')" --q
     echo -e "${GREEN}✅ MongoDB is healthy${NC}"
 else
     echo -e "${RED}❌ MongoDB is not responding. Please check Docker logs.${NC}"
+    exit 1
+fi
+
+# Check Redis health
+if sudo docker exec chabaqa-redis redis-cli -a chabaqa_redis_2024 ping 2>/dev/null | grep -q PONG; then
+    echo -e "${GREEN}✅ Redis is healthy${NC}"
+else
+    echo -e "${RED}❌ Redis is not responding. Please check Docker logs.${NC}"
     exit 1
 fi
 
@@ -109,6 +117,8 @@ echo "  • Monitor:          pm2 monit"
 echo "  • Restart:          pm2 restart chabaqa-backend"
 echo "  • Stop:             pm2 stop chabaqa-backend"
 echo "  • View status:      pm2 status"
+echo "  • Redis CLI:        docker exec -it chabaqa-redis redis-cli -a chabaqa_redis_2024"
 echo ""
 echo "🌐 Application should be running at: http://51.254.132.77:3000"
+echo "🔴 Redis is enabled and running on port 6379"
 echo ""

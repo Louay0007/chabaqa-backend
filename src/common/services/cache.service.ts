@@ -1,14 +1,26 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
+import { ConfigService } from '@nestjs/config';
 
 @Injectable()
 export class CacheService {
   private readonly logger = new Logger(CacheService.name);
+  private readonly isRedisEnabled: boolean;
 
   constructor(
     @Inject(CACHE_MANAGER) private cacheManager: Cache,
-  ) {}
+    private configService: ConfigService,
+  ) {
+    this.isRedisEnabled = this.configService.get<string>('REDIS_ENABLED') === 'true';
+  }
+
+  /**
+   * Check if Redis is being used
+   */
+  isUsingRedis(): boolean {
+    return this.isRedisEnabled;
+  }
 
   /**
    * Set a value in cache
@@ -55,13 +67,32 @@ export class CacheService {
   }
 
   /**
-   * Clear all cache (Note: This may not be supported by all cache stores)
+   * Clear all cache
+   * Works with both Redis and in-memory cache
    */
   async clear(): Promise<void> {
     try {
-      // Cache clearing depends on the underlying store (Redis, Memory, etc.)
-      // Some stores may not support reset operation
-      this.logger.warn('Cache clear operation not implemented - depends on cache store');
+      if (this.isRedisEnabled) {
+        // For Redis, use the store's reset method or flush
+        const store = (this.cacheManager as any).store;
+        if (store && typeof store.reset === 'function') {
+          await store.reset();
+          this.logger.log('Redis cache cleared successfully');
+        } else if (store && store.getClient) {
+          const client = store.getClient();
+          if (client && typeof client.flushDb === 'function') {
+            await client.flushDb();
+            this.logger.log('Redis database flushed successfully');
+          }
+        }
+      } else {
+        // For in-memory cache, use reset if available
+        const store = (this.cacheManager as any).store;
+        if (store && typeof store.reset === 'function') {
+          await store.reset();
+          this.logger.log('In-memory cache cleared successfully');
+        }
+      }
     } catch (error) {
       this.logger.error('Cache clear error:', error);
     }
@@ -172,20 +203,73 @@ export class CacheService {
   }
 
   /**
+   * Delete keys matching a pattern (Redis only)
+   */
+  async deletePattern(pattern: string): Promise<number> {
+    if (!this.isRedisEnabled) {
+      this.logger.warn('Pattern deletion is only supported with Redis');
+      return 0;
+    }
+
+    try {
+      const store = (this.cacheManager as any).store;
+      if (store && store.getClient) {
+        const client = store.getClient();
+        if (client && typeof client.keys === 'function') {
+          const keys = await client.keys(pattern);
+          if (keys.length > 0) {
+            await Promise.all(keys.map(key => this.delete(key)));
+            this.logger.debug(`Deleted ${keys.length} keys matching pattern: ${pattern}`);
+            return keys.length;
+          }
+        }
+      }
+      return 0;
+    } catch (error) {
+      this.logger.error(`Error deleting pattern ${pattern}:`, error);
+      return 0;
+    }
+  }
+
+  /**
    * Get cache statistics
    */
   async getStats(): Promise<any> {
-    // This would depend on the underlying cache store
-    // For Redis, we could get more detailed stats
     try {
-      return {
+      const stats: any = {
         isConnected: true,
         lastAccessed: new Date(),
+        type: this.isRedisEnabled ? 'redis' : 'memory',
       };
+
+      if (this.isRedisEnabled) {
+        const store = (this.cacheManager as any).store;
+        if (store && store.getClient) {
+          const client = store.getClient();
+          if (client && typeof client.info === 'function') {
+            try {
+              const info = await client.info('memory');
+              stats.redisInfo = info;
+            } catch {
+              // Redis info not available
+            }
+          }
+          if (client && typeof client.dbSize === 'function') {
+            try {
+              stats.keyCount = await client.dbSize();
+            } catch {
+              // DB size not available
+            }
+          }
+        }
+      }
+
+      return stats;
     } catch (error) {
       return {
         isConnected: false,
         error: error.message,
+        type: this.isRedisEnabled ? 'redis' : 'memory',
       };
     }
   }

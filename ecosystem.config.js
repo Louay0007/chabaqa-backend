@@ -12,6 +12,13 @@ module.exports = {
       env: {
         NODE_ENV: 'production',
         PORT: 3000,
+        // Redis Configuration
+        REDIS_ENABLED: 'true',
+        REDIS_HOST: '127.0.0.1',
+        REDIS_PORT: 6379,
+        REDIS_PASSWORD: 'chabaqa_redis_2024',
+        REDIS_DB: 0,
+        REDIS_TTL: 300,
       },
       error_file: './logs/pm2-error.log',
       out_file: './logs/pm2-out.log',
