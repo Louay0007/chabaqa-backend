@@ -6,6 +6,7 @@ import { CoursSchema, CourseEnrollmentSchema, CourseProgressSchema } from '../sc
 import { CommunitySchema } from '../schema/community.schema';
 import { UserSchema } from '../schema/user.schema';
 import { OrderSchema } from '../schema/order.schema';
+import { ContentProgressSchema } from '../schema/content-tracking.schema';
 import { UploadModule } from '../upload/upload.module';
 import { TrackingModule } from '../common/modules/tracking.module';
 import { PolicyModule } from '../common/modules/policy.module';
@@ -21,7 +22,8 @@ import { AchievementModule } from '../achievement/achievement.module';
       { name: 'CourseProgress', schema: CourseProgressSchema },
       { name: 'Community', schema: CommunitySchema },
       { name: 'User', schema: UserSchema },
-      { name: 'Order', schema: OrderSchema }
+      { name: 'Order', schema: OrderSchema },
+      { name: 'ContentProgress', schema: ContentProgressSchema }
     ]),
     UploadModule,
     TrackingModule,

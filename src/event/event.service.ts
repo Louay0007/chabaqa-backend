@@ -527,7 +527,8 @@ export class EventService {
     ticket.sold += 1;
     
     // Si billet payant, appliquer promo et créer une commande avec calcul des frais
-    if (ticket.price && ticket.price > 0) {
+    const FREE_MODE = process.env.FREE_MODE === 'true';
+    if (ticket.price && ticket.price > 0 && !FREE_MODE) {
       let effective = ticket.price;
       let discountDT = 0;
       let appliedCode: string | undefined;

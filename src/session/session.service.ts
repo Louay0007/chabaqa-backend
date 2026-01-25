@@ -492,7 +492,8 @@ export class SessionService {
 
     session.addBooking(booking);
     // Si la session est payante, appliquer promo puis créer une commande avec calcul des frais
-    if (session.price && session.price > 0) {
+    const FREE_MODE = process.env.FREE_MODE === 'true';
+    if (session.price && session.price > 0 && !FREE_MODE) {
       // Check for existing paid order first
       const existingOrder = await this.orderModel.findOne({
         buyerId: new Types.ObjectId(userId),

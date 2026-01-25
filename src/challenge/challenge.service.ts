@@ -743,7 +743,8 @@ export class ChallengeService {
 
     // Si participation payante, créer un order avec fees s'il n'existe pas déjà
     const price = challenge.pricing?.participationFee || 0;
-    if (price > 0) {
+    const FREE_MODE = process.env.FREE_MODE === 'true';
+    if (price > 0 && !FREE_MODE) {
       const existingOrder = await (this.challengeModel as any).db.model('Order').findOne({
         buyerId: new Types.ObjectId(userId),
         contentType: TrackableContentType.CHALLENGE,

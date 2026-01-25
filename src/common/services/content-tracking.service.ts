@@ -1,34 +1,40 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { 
-  ContentProgress, 
-  ContentProgressDocument, 
-  TrackingAction, 
+import {
+  ContentProgress,
+  ContentProgressDocument,
+  TrackingAction,
   TrackingActionDocument,
   TrackableContentType,
-  TrackingActionType 
+  TrackingActionType,
 } from '../../schema/content-tracking.schema';
 
 @Injectable()
 export class ContentTrackingService {
   constructor(
-    @InjectModel('ContentProgress') private contentProgressModel: Model<ContentProgressDocument>,
-    @InjectModel('TrackingAction') private trackingActionModel: Model<TrackingActionDocument>,
+    @InjectModel('ContentProgress')
+    private contentProgressModel: Model<ContentProgressDocument>,
+    @InjectModel('TrackingAction')
+    private trackingActionModel: Model<TrackingActionDocument>,
   ) {}
 
   /**
    * Obtenir ou créer un suivi de progression pour un contenu
    */
   async getOrCreateProgress(
-    userId: string, 
-    contentId: string, 
-    contentType: TrackableContentType
+    userId: string,
+    contentId: string,
+    contentType: TrackableContentType,
   ): Promise<ContentProgressDocument> {
     let progress = await this.contentProgressModel.findOne({
       userId: new Types.ObjectId(userId),
       contentId,
-      contentType
+      contentType,
     });
 
     if (!progress) {
@@ -45,7 +51,7 @@ export class ContentTrackingService {
         likeCount: 0,
         shareCount: 0,
         downloadCount: 0,
-        metadata: {}
+        metadata: {},
       });
       await progress.save();
     }
@@ -61,7 +67,7 @@ export class ContentTrackingService {
     contentId: string,
     contentType: TrackableContentType,
     actionType: TrackingActionType,
-    metadata: Record<string, any> = {}
+    metadata: Record<string, any> = {},
   ): Promise<TrackingActionDocument> {
     const action = new this.trackingActionModel({
       id: new Types.ObjectId().toString(),
@@ -70,7 +76,7 @@ export class ContentTrackingService {
       contentType,
       actionType,
       metadata,
-      timestamp: new Date()
+      timestamp: new Date(),
     });
 
     return await action.save();
@@ -82,14 +88,23 @@ export class ContentTrackingService {
   async trackView(
     userId: string,
     contentId: string,
-    contentType: TrackableContentType
+    contentType: TrackableContentType,
   ): Promise<ContentProgressDocument> {
-    const progress = await this.getOrCreateProgress(userId, contentId, contentType);
+    const progress = await this.getOrCreateProgress(
+      userId,
+      contentId,
+      contentType,
+    );
     progress.incrementerView();
     await progress.save();
 
     // Enregistrer l'action
-    await this.trackAction(userId, contentId, contentType, TrackingActionType.VIEW);
+    await this.trackAction(
+      userId,
+      contentId,
+      contentType,
+      TrackingActionType.VIEW,
+    );
 
     return progress;
   }
@@ -100,14 +115,23 @@ export class ContentTrackingService {
   async trackStart(
     userId: string,
     contentId: string,
-    contentType: TrackableContentType
+    contentType: TrackableContentType,
   ): Promise<ContentProgressDocument> {
-    const progress = await this.getOrCreateProgress(userId, contentId, contentType);
+    const progress = await this.getOrCreateProgress(
+      userId,
+      contentId,
+      contentType,
+    );
     progress.mettreAJourDernierAcces();
     await progress.save();
 
     // Enregistrer l'action
-    await this.trackAction(userId, contentId, contentType, TrackingActionType.START);
+    await this.trackAction(
+      userId,
+      contentId,
+      contentType,
+      TrackingActionType.START,
+    );
 
     return progress;
   }
@@ -118,14 +142,23 @@ export class ContentTrackingService {
   async trackComplete(
     userId: string,
     contentId: string,
-    contentType: TrackableContentType
+    contentType: TrackableContentType,
   ): Promise<ContentProgressDocument> {
-    const progress = await this.getOrCreateProgress(userId, contentId, contentType);
+    const progress = await this.getOrCreateProgress(
+      userId,
+      contentId,
+      contentType,
+    );
     progress.marquerComplete();
     await progress.save();
 
     // Enregistrer l'action
-    await this.trackAction(userId, contentId, contentType, TrackingActionType.COMPLETE);
+    await this.trackAction(
+      userId,
+      contentId,
+      contentType,
+      TrackingActionType.COMPLETE,
+    );
 
     return progress;
   }
@@ -137,9 +170,13 @@ export class ContentTrackingService {
     userId: string,
     contentId: string,
     contentType: TrackableContentType,
-    additionalTime: number
+    additionalTime: number,
   ): Promise<ContentProgressDocument> {
-    const progress = await this.getOrCreateProgress(userId, contentId, contentType);
+    const progress = await this.getOrCreateProgress(
+      userId,
+      contentId,
+      contentType,
+    );
     progress.ajouterTempsVisionne(additionalTime);
     await progress.save();
 
@@ -152,14 +189,23 @@ export class ContentTrackingService {
   async trackLike(
     userId: string,
     contentId: string,
-    contentType: TrackableContentType
+    contentType: TrackableContentType,
   ): Promise<ContentProgressDocument> {
-    const progress = await this.getOrCreateProgress(userId, contentId, contentType);
+    const progress = await this.getOrCreateProgress(
+      userId,
+      contentId,
+      contentType,
+    );
     progress.incrementerLike();
     await progress.save();
 
     // Enregistrer l'action
-    await this.trackAction(userId, contentId, contentType, TrackingActionType.LIKE);
+    await this.trackAction(
+      userId,
+      contentId,
+      contentType,
+      TrackingActionType.LIKE,
+    );
 
     return progress;
   }
@@ -170,14 +216,23 @@ export class ContentTrackingService {
   async trackShare(
     userId: string,
     contentId: string,
-    contentType: TrackableContentType
+    contentType: TrackableContentType,
   ): Promise<ContentProgressDocument> {
-    const progress = await this.getOrCreateProgress(userId, contentId, contentType);
+    const progress = await this.getOrCreateProgress(
+      userId,
+      contentId,
+      contentType,
+    );
     progress.incrementerShare();
     await progress.save();
 
     // Enregistrer l'action
-    await this.trackAction(userId, contentId, contentType, TrackingActionType.SHARE);
+    await this.trackAction(
+      userId,
+      contentId,
+      contentType,
+      TrackingActionType.SHARE,
+    );
 
     return progress;
   }
@@ -188,14 +243,23 @@ export class ContentTrackingService {
   async trackDownload(
     userId: string,
     contentId: string,
-    contentType: TrackableContentType
+    contentType: TrackableContentType,
   ): Promise<ContentProgressDocument> {
-    const progress = await this.getOrCreateProgress(userId, contentId, contentType);
+    const progress = await this.getOrCreateProgress(
+      userId,
+      contentId,
+      contentType,
+    );
     progress.incrementerDownload();
     await progress.save();
 
     // Enregistrer l'action
-    await this.trackAction(userId, contentId, contentType, TrackingActionType.DOWNLOAD);
+    await this.trackAction(
+      userId,
+      contentId,
+      contentType,
+      TrackingActionType.DOWNLOAD,
+    );
 
     return progress;
   }
@@ -207,14 +271,24 @@ export class ContentTrackingService {
     userId: string,
     contentId: string,
     contentType: TrackableContentType,
-    bookmarkId: string
+    bookmarkId: string,
   ): Promise<ContentProgressDocument> {
-    const progress = await this.getOrCreateProgress(userId, contentId, contentType);
+    const progress = await this.getOrCreateProgress(
+      userId,
+      contentId,
+      contentType,
+    );
     progress.ajouterBookmark(bookmarkId);
     await progress.save();
 
     // Enregistrer l'action
-    await this.trackAction(userId, contentId, contentType, TrackingActionType.BOOKMARK, { bookmarkId });
+    await this.trackAction(
+      userId,
+      contentId,
+      contentType,
+      TrackingActionType.BOOKMARK,
+      { bookmarkId },
+    );
 
     return progress;
   }
@@ -226,9 +300,13 @@ export class ContentTrackingService {
     userId: string,
     contentId: string,
     contentType: TrackableContentType,
-    bookmarkId: string
+    bookmarkId: string,
   ): Promise<ContentProgressDocument> {
-    const progress = await this.getOrCreateProgress(userId, contentId, contentType);
+    const progress = await this.getOrCreateProgress(
+      userId,
+      contentId,
+      contentType,
+    );
     progress.retirerBookmark(bookmarkId);
     await progress.save();
 
@@ -243,13 +321,17 @@ export class ContentTrackingService {
     contentId: string,
     contentType: TrackableContentType,
     rating: number,
-    review?: string
+    review?: string,
   ): Promise<ContentProgressDocument> {
     if (rating < 1 || rating > 5) {
       throw new BadRequestException('La note doit être entre 1 et 5');
     }
 
-    const progress = await this.getOrCreateProgress(userId, contentId, contentType);
+    const progress = await this.getOrCreateProgress(
+      userId,
+      contentId,
+      contentType,
+    );
     progress.rating = rating;
     if (review) {
       progress.review = review;
@@ -257,7 +339,13 @@ export class ContentTrackingService {
     await progress.save();
 
     // Enregistrer l'action
-    await this.trackAction(userId, contentId, contentType, TrackingActionType.RATE, { rating, review });
+    await this.trackAction(
+      userId,
+      contentId,
+      contentType,
+      TrackingActionType.RATE,
+      { rating, review },
+    );
 
     return progress;
   }
@@ -268,12 +356,12 @@ export class ContentTrackingService {
   async getProgress(
     userId: string,
     contentId: string,
-    contentType: TrackableContentType
+    contentType: TrackableContentType,
   ): Promise<ContentProgressDocument | null> {
     return await this.contentProgressModel.findOne({
       userId: new Types.ObjectId(userId),
       contentId,
-      contentType
+      contentType,
     });
   }
 
@@ -284,7 +372,7 @@ export class ContentTrackingService {
     userId: string,
     contentType: TrackableContentType,
     page: number = 1,
-    limit: number = 10
+    limit: number = 10,
   ) {
     const skip = (page - 1) * limit;
 
@@ -295,7 +383,10 @@ export class ContentTrackingService {
         .skip(skip)
         .limit(limit)
         .exec(),
-      this.contentProgressModel.countDocuments({ userId: new Types.ObjectId(userId), contentType })
+      this.contentProgressModel.countDocuments({
+        userId: new Types.ObjectId(userId),
+        contentType,
+      }),
     ]);
 
     return {
@@ -303,7 +394,7 @@ export class ContentTrackingService {
       total,
       page,
       limit,
-      totalPages: Math.ceil(total / limit)
+      totalPages: Math.ceil(total / limit),
     };
   }
 
@@ -315,7 +406,7 @@ export class ContentTrackingService {
     contentTypes?: TrackableContentType[],
     page: number = 1,
     limit: number = 20,
-    contentFilters?: Partial<Record<TrackableContentType, string[]>>
+    contentFilters?: Partial<Record<TrackableContentType, string[]>>,
   ) {
     const skip = (page - 1) * limit;
     const filter: any = {
@@ -381,21 +472,30 @@ export class ContentTrackingService {
           totalShares: { $sum: '$shareCount' },
           totalDownloads: { $sum: '$downloadCount' },
           totalCompleted: { $sum: { $cond: ['$isCompleted', 1, 0] } },
-          averageRating: { $avg: '$rating' },
-          totalWatchTime: { $sum: '$watchTime' }
-        }
-      }
+          // Only average ratings > 0 (ignore unrated progress docs)
+          averageRating: {
+            $avg: {
+              $cond: [{ $gt: ['$rating', 0] }, '$rating', null],
+            },
+          },
+          totalRatings: { $sum: { $cond: [{ $gt: ['$rating', 0] }, 1, 0] } },
+          totalWatchTime: { $sum: '$watchTime' },
+        },
+      },
     ]);
 
-    return stats[0] || {
-      totalViews: 0,
-      totalLikes: 0,
-      totalShares: 0,
-      totalDownloads: 0,
-      totalCompleted: 0,
-      averageRating: 0,
-      totalWatchTime: 0
-    };
+    return (
+      stats[0] || {
+        totalViews: 0,
+        totalLikes: 0,
+        totalShares: 0,
+        totalDownloads: 0,
+        totalCompleted: 0,
+        averageRating: 0,
+        totalRatings: 0,
+        totalWatchTime: 0,
+      }
+    );
   }
 
   /**
@@ -404,7 +504,7 @@ export class ContentTrackingService {
   async getUserRecentActions(
     userId: string,
     contentType?: TrackableContentType,
-    limit: number = 20
+    limit: number = 20,
   ) {
     const filter: any = { userId: new Types.ObjectId(userId) };
     if (contentType) {

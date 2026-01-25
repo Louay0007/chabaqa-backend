@@ -858,6 +858,51 @@ export class CoursController {
 		return await this.coursService.getCoursStats(id);
 	}
 
+	@Get(':id/reviews')
+	@ApiOperation({
+		summary: 'Obtenir tous les avis d\'un cours',
+		description: 'Récupère tous les avis (ratings + reviews) d\'un cours avec les informations des utilisateurs.'
+	})
+	@ApiParam({ name: 'id', description: 'ID du cours', type: 'string' })
+	@ApiResponse({
+		status: 200,
+		description: 'Avis récupérés avec succès',
+		schema: {
+			type: 'object',
+			properties: {
+				success: { type: 'boolean' },
+				reviews: {
+					type: 'array',
+					items: {
+						type: 'object',
+						properties: {
+							id: { type: 'string' },
+							user: {
+								type: 'object',
+								properties: {
+									id: { type: 'string' },
+									name: { type: 'string' },
+									email: { type: 'string' },
+									avatar: { type: 'string' }
+								}
+							},
+							rating: { type: 'number' },
+							review: { type: 'string' },
+							createdAt: { type: 'string', format: 'date-time' },
+							updatedAt: { type: 'string', format: 'date-time' }
+						}
+					}
+				},
+				averageRating: { type: 'number' },
+				totalRatings: { type: 'number' }
+			}
+		}
+	})
+	@ApiResponse({ status: 404, description: 'Cours non trouvé' })
+	async getReviews(@Param('id') id: string) {
+		return await this.coursService.getCoursReviews(id);
+	}
+
 	@UseGuards(JwtAuthGuard)
 	@ApiBearerAuth('JWT-auth')
 	@Get('user/progress')

@@ -1,17 +1,31 @@
-import { Injectable, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ForbiddenException,
+  BadRequestException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types, isValidObjectId } from 'mongoose';
-import { Product, ProductDocument, ProductVariant, ProductFile } from '../schema/product.schema';
+import {
+  Product,
+  ProductDocument,
+  ProductVariant,
+  ProductFile,
+} from '../schema/product.schema';
 import { Community, CommunityDocument } from '../schema/community.schema';
 import { User, UserDocument } from '../schema/user.schema';
-import { CreateProductDto, CreateProductVariantDto, CreateProductFileDto } from '../dto-product/create-product.dto';
+import {
+  CreateProductDto,
+  CreateProductVariantDto,
+  CreateProductFileDto,
+} from '../dto-product/create-product.dto';
 import { UpdateProductDto } from '../dto-product/update-product.dto';
 import {
   ProductResponseDto,
   ProductListResponseDto,
   ProductStatsResponseDto,
   ProductVariantResponseDto,
-  ProductFileResponseDto
+  ProductFileResponseDto,
 } from '../dto-product/product-response.dto';
 import { FeeService } from '../common/services/fee.service';
 import { ContentTrackingService } from '../common/services/content-tracking.service';
@@ -24,7 +38,8 @@ import { UploadService } from '../upload/upload.service';
 export class ProductService {
   constructor(
     @InjectModel(Product.name) private productModel: Model<ProductDocument>,
-    @InjectModel(Community.name) private communityModel: Model<CommunityDocument>,
+    @InjectModel(Community.name)
+    private communityModel: Model<CommunityDocument>,
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     @InjectModel('Order') private orderModel: Model<any>,
     @InjectModel('ContentProgress') private contentProgressModel: Model<any>,
@@ -33,9 +48,11 @@ export class ProductService {
     private readonly policyService: PolicyService,
     private readonly promoService: PromoService,
     private readonly uploadService: UploadService,
-  ) { }
+  ) {}
 
-  private async findProductByAnyId(productId: string): Promise<ProductDocument> {
+  private async findProductByAnyId(
+    productId: string,
+  ): Promise<ProductDocument> {
     let product = await this.productModel.findOne({ id: productId });
     if (!product && isValidObjectId(productId)) {
       product = await this.productModel.findById(productId);
@@ -69,7 +86,7 @@ export class ProductService {
 
     await this.productModel.updateOne(
       { _id: new Types.ObjectId(productMongoId) },
-      { $set: { averageRating, ratingCount } }
+      { $set: { averageRating, ratingCount } },
     );
 
     return { averageRating, ratingCount };
@@ -95,7 +112,10 @@ export class ProductService {
       user: {
         id: d.userId?._id?.toString() || d.userId?.toString(),
         name: d.userId?.name || 'User',
-        avatar: d.userId?.avatar || d.userId?.profile_picture || d.userId?.photo_profil,
+        avatar:
+          d.userId?.avatar ||
+          d.userId?.profile_picture ||
+          d.userId?.photo_profil,
       },
       rating: d.rating || 0,
       message: d.review || '',
@@ -128,11 +148,22 @@ export class ProductService {
     };
   }
 
-  async upsertProductReview(productId: string, userId: string, rating: number, message?: string) {
+  async upsertProductReview(
+    productId: string,
+    userId: string,
+    rating: number,
+    message?: string,
+  ) {
     const product = await this.findProductByAnyId(productId);
     const contentId = product._id.toString();
 
-    await this.trackingService.addRating(userId, contentId, TrackableContentType.PRODUCT, rating, message);
+    await this.trackingService.addRating(
+      userId,
+      contentId,
+      TrackableContentType.PRODUCT,
+      rating,
+      message,
+    );
     const ratingSummary = await this.recomputeProductRatings(contentId);
     const myReview = await this.getMyProductReview(productId, userId);
     return { ...ratingSummary, myReview };
@@ -141,15 +172,18 @@ export class ProductService {
   /**
    * Créer un nouveau produit
    */
-  async create(createProductDto: CreateProductDto, userId: string): Promise<ProductResponseDto> {
+  async create(
+    createProductDto: CreateProductDto,
+    userId: string,
+  ): Promise<ProductResponseDto> {
     try {
       // Vérifier que la communauté existe (lookup by _id or slug)
       const community = await this.communityModel.findOne({
         $or: [
           { _id: createProductDto.communityId },
           { id: createProductDto.communityId },
-          { slug: createProductDto.communityId }
-        ]
+          { slug: createProductDto.communityId },
+        ],
       });
       if (!community) {
         throw new NotFoundException('Communauté non trouvée');
@@ -157,13 +191,20 @@ export class ProductService {
 
       // Vérifier que l'utilisateur est créateur de la communauté
       // Normalize both IDs to strings for comparison
-      const normalizedUserId = typeof userId === 'object' ? (userId as any).toString() : String(userId);
+      const normalizedUserId =
+        typeof userId === 'object'
+          ? (userId as any).toString()
+          : String(userId);
       const communityCreatorId = community.createur?.toString();
 
-      console.log(`🔍 Creator check: user=${normalizedUserId}, community creator=${communityCreatorId}`);
+      console.log(
+        `🔍 Creator check: user=${normalizedUserId}, community creator=${communityCreatorId}`,
+      );
 
       if (communityCreatorId !== normalizedUserId) {
-        throw new ForbiddenException('Seuls les créateurs de communauté peuvent créer des produits');
+        throw new ForbiddenException(
+          'Seuls les créateurs de communauté peuvent créer des produits',
+        );
       }
 
       // Créer le produit
@@ -173,33 +214,36 @@ export class ProductService {
       const productId = new Types.ObjectId().toString();
 
       // Normalize file types and add IDs
-      const normalizedFiles = (createProductDto.files || []).map((f: any, idx: number) => {
-        // Map MIME types to enum values
-        const mimeToEnum: { [key: string]: string } = {
-          'image/png': 'PNG',
-          'image/jpeg': 'JPG',
-          'image/jpg': 'JPG',
-          'application/pdf': 'PDF',
-          'application/zip': 'ZIP',
-          'video/mp4': 'MP4',
-          'audio/mpeg': 'MP3',
-          'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'DOCX',
-          'application/msword': 'DOC',
-        };
+      const normalizedFiles = (createProductDto.files || []).map(
+        (f: any, idx: number) => {
+          // Map MIME types to enum values
+          const mimeToEnum: { [key: string]: string } = {
+            'image/png': 'PNG',
+            'image/jpeg': 'JPG',
+            'image/jpg': 'JPG',
+            'application/pdf': 'PDF',
+            'application/zip': 'ZIP',
+            'video/mp4': 'MP4',
+            'audio/mpeg': 'MP3',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
+              'DOCX',
+            'application/msword': 'DOC',
+          };
 
-        const fileType = mimeToEnum[f.type] || f.type || 'OTHER';
+          const fileType = mimeToEnum[f.type] || f.type || 'OTHER';
 
-        return {
-          id: f.id || new Types.ObjectId().toString(),
-          name: f.name,
-          url: f.url,
-          type: fileType,
-          size: f.size,
-          description: f.description,
-          order: f.order ?? idx,
-          isActive: f.isActive !== false,
-        };
-      });
+          return {
+            id: f.id || new Types.ObjectId().toString(),
+            name: f.name,
+            url: f.url,
+            type: fileType,
+            size: f.size,
+            description: f.description,
+            order: f.order ?? idx,
+            isActive: f.isActive !== false,
+          };
+        },
+      );
 
       const product = new this.productModel({
         ...createProductDto,
@@ -209,7 +253,7 @@ export class ProductService {
         images: createProductDto.images || [],
         variants: createProductDto.variants || [],
         files: normalizedFiles,
-        features: createProductDto.features || []
+        features: createProductDto.features || [],
       });
 
       const savedProduct = await product.save();
@@ -222,7 +266,10 @@ export class ProductService {
         .exec();
 
       console.log('✅ Product populated');
-      const result = await this.transformToResponseDto(populatedProduct!, community);
+      const result = await this.transformToResponseDto(
+        populatedProduct!,
+        community,
+      );
       console.log('✅ Product transformed to response DTO');
       return result;
     } catch (error) {
@@ -243,7 +290,7 @@ export class ProductService {
     type?: string,
     minPrice?: number,
     maxPrice?: number,
-    search?: string
+    search?: string,
   ): Promise<ProductListResponseDto> {
     const query: any = { isPublished: true };
 
@@ -271,7 +318,7 @@ export class ProductService {
       query.$or = [
         { title: { $regex: search, $options: 'i' } },
         { description: { $regex: search, $options: 'i' } },
-        { category: { $regex: search, $options: 'i' } }
+        { category: { $regex: search, $options: 'i' } },
       ];
     }
 
@@ -285,18 +332,22 @@ export class ProductService {
         .skip(skip)
         .limit(limit)
         .exec(),
-      this.productModel.countDocuments(query)
+      this.productModel.countDocuments(query),
     ]);
 
     // Récupérer les informations des communautés
-    const communityIds = [...new Set(products.map(product => product.communityId))];
-    const communities = await this.communityModel.find({ id: { $in: communityIds } });
+    const communityIds = [
+      ...new Set(products.map((product) => product.communityId)),
+    ];
+    const communities = await this.communityModel.find({
+      id: { $in: communityIds },
+    });
 
     const productsWithCommunities = await Promise.all(
-      products.map(async product => {
-        const community = communities.find(c => c.id === product.communityId);
+      products.map(async (product) => {
+        const community = communities.find((c) => c.id === product.communityId);
         return await this.transformToResponseDto(product, community);
-      })
+      }),
     );
 
     return {
@@ -305,9 +356,42 @@ export class ProductService {
         page,
         limit,
         total,
-        totalPages: Math.ceil(total / limit)
-      }
+        totalPages: Math.ceil(total / limit),
+      },
     };
+  }
+
+  /**
+   * Récupérer les produits d'un créateur
+   */
+  async findByCreator(
+    creatorId: string,
+    page: number = 1,
+    limit: number = 10,
+    type?: string,
+  ): Promise<ProductListResponseDto> {
+    return this.findAll(
+      page,
+      limit,
+      undefined,
+      creatorId,
+      undefined,
+      type,
+      undefined,
+      undefined,
+      undefined,
+    );
+  }
+
+  /**
+   * Récupérer les produits d'une communauté
+   */
+  async findByCommunity(
+    communityId: string,
+    page: number = 1,
+    limit: number = 10,
+  ): Promise<ProductListResponseDto> {
+    return this.findAll(page, limit, communityId);
   }
 
   /**
@@ -330,14 +414,20 @@ export class ProductService {
       throw new NotFoundException('Produit non trouvé');
     }
 
-    const community = await this.communityModel.findOne({ id: product.communityId });
+    const community = await this.communityModel.findOne({
+      id: product.communityId,
+    });
     return await this.transformToResponseDto(product, community || undefined);
   }
 
   /**
    * Mettre à jour un produit
    */
-  async update(id: string, updateProductDto: UpdateProductDto, userId: string): Promise<ProductResponseDto> {
+  async update(
+    id: string,
+    updateProductDto: UpdateProductDto,
+    userId: string,
+  ): Promise<ProductResponseDto> {
     const product = await this.productModel.findOne({ id });
     if (!product) {
       throw new NotFoundException('Produit non trouvé');
@@ -345,7 +435,9 @@ export class ProductService {
 
     // Vérifier que l'utilisateur est le créateur du produit
     if (product.creatorId.toString() !== userId) {
-      throw new ForbiddenException('Vous ne pouvez modifier que vos propres produits');
+      throw new ForbiddenException(
+        'Vous ne pouvez modifier que vos propres produits',
+      );
     }
 
     // Gating: require active subscription to activate/publish product (if fields exist)
@@ -353,7 +445,9 @@ export class ProductService {
     const nextIsPublished = (updateProductDto as any)?.isPublished;
     const nextIsActive = (updateProductDto as any)?.isActive;
     if (!hasSub && (nextIsPublished || nextIsActive)) {
-      throw new ForbiddenException('Un abonnement actif est requis pour publier/activer un produit');
+      throw new ForbiddenException(
+        'Un abonnement actif est requis pour publier/activer un produit',
+      );
     }
 
     // Mettre à jour le produit
@@ -368,8 +462,13 @@ export class ProductService {
       .populate('creatorId', 'name email profile_picture')
       .exec();
 
-    const community = await this.communityModel.findOne({ id: product.communityId });
-    return await this.transformToResponseDto(populatedProduct!, community || undefined);
+    const community = await this.communityModel.findOne({
+      id: product.communityId,
+    });
+    return await this.transformToResponseDto(
+      populatedProduct!,
+      community || undefined,
+    );
   }
 
   /**
@@ -383,7 +482,9 @@ export class ProductService {
 
     // Vérifier que l'utilisateur est le créateur du produit
     if (product.creatorId.toString() !== userId) {
-      throw new ForbiddenException('Vous ne pouvez supprimer que vos propres produits');
+      throw new ForbiddenException(
+        'Vous ne pouvez supprimer que vos propres produits',
+      );
     }
 
     await this.productModel.deleteOne({ _id: product._id });
@@ -393,7 +494,11 @@ export class ProductService {
   /**
    * Ajouter une variante à un produit
    */
-  async addVariant(productId: string, createVariantDto: CreateProductVariantDto, userId: string): Promise<ProductVariantResponseDto> {
+  async addVariant(
+    productId: string,
+    createVariantDto: CreateProductVariantDto,
+    userId: string,
+  ): Promise<ProductVariantResponseDto> {
     const product = await this.productModel.findOne({ id: productId });
     if (!product) {
       throw new NotFoundException('Produit non trouvé');
@@ -401,12 +506,14 @@ export class ProductService {
 
     // Vérifier que l'utilisateur est le créateur du produit
     if (product.creatorId.toString() !== userId) {
-      throw new ForbiddenException('Vous ne pouvez modifier que vos propres produits');
+      throw new ForbiddenException(
+        'Vous ne pouvez modifier que vos propres produits',
+      );
     }
 
     const variant: ProductVariant = {
       id: new Types.ObjectId().toString(),
-      ...createVariantDto
+      ...createVariantDto,
     };
 
     product.addVariant(variant);
@@ -417,14 +524,18 @@ export class ProductService {
       name: variant.name,
       price: variant.price,
       description: variant.description,
-      inventory: variant.inventory
+      inventory: variant.inventory,
     };
   }
 
   /**
    * Supprimer une variante d'un produit
    */
-  async removeVariant(productId: string, variantId: string, userId: string): Promise<{ message: string }> {
+  async removeVariant(
+    productId: string,
+    variantId: string,
+    userId: string,
+  ): Promise<{ message: string }> {
     const product = await this.productModel.findOne({ id: productId });
     if (!product) {
       throw new NotFoundException('Produit non trouvé');
@@ -432,10 +543,12 @@ export class ProductService {
 
     // Vérifier que l'utilisateur est le créateur du produit
     if (product.creatorId.toString() !== userId) {
-      throw new ForbiddenException('Vous ne pouvez modifier que vos propres produits');
+      throw new ForbiddenException(
+        'Vous ne pouvez modifier que vos propres produits',
+      );
     }
 
-    const variant = product.variants?.find(v => v.id === variantId);
+    const variant = product.variants?.find((v) => v.id === variantId);
     if (!variant) {
       throw new NotFoundException('Variante non trouvée');
     }
@@ -449,7 +562,11 @@ export class ProductService {
   /**
    * Ajouter un fichier à un produit
    */
-  async addFile(productId: string, createFileDto: CreateProductFileDto, userId: string): Promise<ProductFileResponseDto> {
+  async addFile(
+    productId: string,
+    createFileDto: CreateProductFileDto,
+    userId: string,
+  ): Promise<ProductFileResponseDto> {
     const product = await this.productModel.findOne({ id: productId });
     if (!product) {
       throw new NotFoundException('Produit non trouvé');
@@ -457,16 +574,19 @@ export class ProductService {
 
     // Vérifier que l'utilisateur est le créateur du produit
     if (product.creatorId.toString() !== userId) {
-      throw new ForbiddenException('Vous ne pouvez modifier que vos propres produits');
+      throw new ForbiddenException(
+        'Vous ne pouvez modifier que vos propres produits',
+      );
     }
 
     const file: ProductFile = {
       id: new Types.ObjectId().toString(),
       order: createFileDto.order || 0,
       downloadCount: 0,
-      isActive: createFileDto.isActive !== undefined ? createFileDto.isActive : true,
+      isActive:
+        createFileDto.isActive !== undefined ? createFileDto.isActive : true,
       uploadedAt: new Date(),
-      ...createFileDto
+      ...createFileDto,
     };
 
     product.addFile(file);
@@ -482,14 +602,18 @@ export class ProductService {
       order: file.order,
       downloadCount: file.downloadCount,
       isActive: file.isActive,
-      uploadedAt: file.uploadedAt.toISOString()
+      uploadedAt: file.uploadedAt.toISOString(),
     };
   }
 
   /**
    * Supprimer un fichier d'un produit
    */
-  async removeFile(productId: string, fileId: string, userId: string): Promise<{ message: string }> {
+  async removeFile(
+    productId: string,
+    fileId: string,
+    userId: string,
+  ): Promise<{ message: string }> {
     const product = await this.productModel.findOne({ id: productId });
     if (!product) {
       throw new NotFoundException('Produit non trouvé');
@@ -497,10 +621,12 @@ export class ProductService {
 
     // Vérifier que l'utilisateur est le créateur du produit
     if (product.creatorId.toString() !== userId) {
-      throw new ForbiddenException('Vous ne pouvez modifier que vos propres produits');
+      throw new ForbiddenException(
+        'Vous ne pouvez modifier que vos propres produits',
+      );
     }
 
-    const file = product.files?.find(f => f.id === fileId);
+    const file = product.files?.find((f) => f.id === fileId);
     if (!file) {
       throw new NotFoundException('Fichier non trouvé');
     }
@@ -514,7 +640,11 @@ export class ProductService {
   /**
    * Mettre à jour l'inventaire d'un produit
    */
-  async updateInventory(productId: string, amount: number, userId: string): Promise<{ message: string; newInventory: number }> {
+  async updateInventory(
+    productId: string,
+    amount: number,
+    userId: string,
+  ): Promise<{ message: string; newInventory: number }> {
     const product = await this.productModel.findOne({ id: productId });
     if (!product) {
       throw new NotFoundException('Produit non trouvé');
@@ -522,11 +652,15 @@ export class ProductService {
 
     // Vérifier que l'utilisateur est le créateur du produit
     if (product.creatorId.toString() !== userId) {
-      throw new ForbiddenException('Vous ne pouvez modifier que vos propres produits');
+      throw new ForbiddenException(
+        'Vous ne pouvez modifier que vos propres produits',
+      );
     }
 
     if (product.type !== 'physical') {
-      throw new BadRequestException('Seuls les produits physiques peuvent avoir un inventaire');
+      throw new BadRequestException(
+        'Seuls les produits physiques peuvent avoir un inventaire',
+      );
     }
 
     const success = product.updateInventory(amount);
@@ -538,7 +672,7 @@ export class ProductService {
 
     return {
       message: 'Inventaire mis à jour avec succès',
-      newInventory: product.inventory || 0
+      newInventory: product.inventory || 0,
     };
   }
 
@@ -558,7 +692,10 @@ export class ProductService {
   /**
    * Basculer le statut de publication d'un produit
    */
-  async togglePublished(productId: string, userId: string): Promise<{ message: string; isPublished: boolean }> {
+  async togglePublished(
+    productId: string,
+    userId: string,
+  ): Promise<{ message: string; isPublished: boolean }> {
     const product = await this.productModel.findOne({ id: productId });
     if (!product) {
       throw new NotFoundException('Produit non trouvé');
@@ -566,7 +703,9 @@ export class ProductService {
 
     // Vérifier que l'utilisateur est le créateur du produit
     if (product.creatorId.toString() !== userId) {
-      throw new ForbiddenException('Vous ne pouvez modifier que vos propres produits');
+      throw new ForbiddenException(
+        'Vous ne pouvez modifier que vos propres produits',
+      );
     }
 
     product.isPublished = !product.isPublished;
@@ -574,7 +713,7 @@ export class ProductService {
 
     return {
       message: `Produit ${product.isPublished ? 'publié' : 'dépublié'} avec succès`,
-      isPublished: product.isPublished
+      isPublished: product.isPublished,
     };
   }
 
@@ -593,93 +732,78 @@ export class ProductService {
       remainingInventory: product.inventory || 0,
       averageRating: product.rating || 0,
       totalVariants: product.getTotalVariants(),
-      totalFiles: product.getTotalFiles()
+      totalFiles: product.getTotalFiles(),
     };
   }
 
   /**
    * Récupérer les produits d'un créateur
-   */
-  async findByCreator(
-    creatorId: string,
-    page: number = 1,
-    limit: number = 10,
-    communityId?: string,
-    type?: string,
-  ): Promise<ProductListResponseDto> {
-    return this.findAll(page, limit, communityId, creatorId, undefined, type);
   }
 
-  /**
-   * Récupérer les produits d'une communauté
-   */
-  async findByCommunity(communityId: string, page: number = 1, limit: number = 10): Promise<ProductListResponseDto> {
-    return this.findAll(page, limit, communityId);
+  if (!file.isActive) {
+    throw new BadRequestException('Ce fichier n\'est plus disponible');
   }
 
-  /**
-   * Télécharger un fichier de produit (incrémente le compteur)
-   */
-  async downloadFile(productId: string, fileId: string, userId: string, promoCode?: string): Promise<{ downloadUrl: string; message: string }> {
-    const product = await this.productModel.findOne({ id: productId });
-    if (!product) {
-      throw new NotFoundException('Produit non trouvé');
-    }
-
-    const file = product.files?.find(f => f.id === fileId);
-    if (!file) {
-      throw new NotFoundException('Fichier non trouvé');
-    }
-
-    if (!file.isActive) {
-      throw new BadRequestException('Ce fichier n\'est plus disponible');
-    }
-
-    // Enregistrer une commande si fichier payant (produit numérique) avec application promo puis incrémenter le compteur
-    const price = product.price || 0;
-    if (product.type === 'digital' && price > 0) {
-      let effective = price;
-      let discountDT = 0;
-      let appliedCode: string | undefined;
-      if (promoCode) {
-        const buyer = await this.userModel.findById(userId).select('email');
-        const promo = await this.promoService.validateAndApply(promoCode, price, TrackableContentType.PRODUCT, product._id.toString(), (buyer as any)?.email);
-        if (promo.valid) {
-          effective = promo.finalAmountDT;
-          discountDT = promo.discountDT;
-          appliedCode = promo.appliedCode;
-        }
-      }
-      const breakdown = await this.feeService.calculateForAmount(effective, product.creatorId.toString());
-      await this.orderModel.create({
-        buyerId: new Types.ObjectId(userId),
-        creatorId: product.creatorId,
-        contentType: TrackableContentType.PRODUCT,
-        contentId: product._id.toString(),
-        amountDT: breakdown.amountDT,
-        platformPercent: breakdown.platformPercent,
-        platformFixedDT: breakdown.platformFixedDT,
-        platformFeeDT: breakdown.platformFeeDT,
-        creatorNetDT: breakdown.creatorNetDT,
-        promoCode: appliedCode,
-        discountDT,
-        status: 'paid'
-      });
-    }
-    // Incrémenter le compteur de téléchargements
+  const FREE_MODE = process.env.FREE_MODE === 'true';
+  if (FREE_MODE) {
     file.downloadCount += 1;
     await product.save();
-
     return {
       downloadUrl: file.url,
       message: 'Fichier prêt pour téléchargement'
     };
   }
 
-  /**
-   * Mettre à jour le statut d'un fichier
-   */
-  async updateFileStatus(productId: string, fileId: string, isActive: boolean, userId: string): Promise<{ message: string }> {
+  // Enregistrer une commande si fichier payant (produit numérique) avec application promo puis incrémenter le compteur
+  const price = product.price || 0;
+  if (product.type === 'digital' && price > 0) {
+    let effective = price;
+    let discountDT = 0;
+    let appliedCode: string | undefined;
+    if (promoCode) {
+      const buyer = await this.userModel.findById(userId).select('email');
+      const promo = await this.promoService.validateAndApply(promoCode, price, TrackableContentType.PRODUCT, product._id.toString(), (buyer as any)?.email);
+      if (promo.valid) {
+        effective = promo.finalAmountDT;
+        discountDT = promo.discountDT;
+        appliedCode = promo.appliedCode;
+      }
+    }
+    const breakdown = await this.feeService.calculateForAmount(effective, product.creatorId.toString());
+    await this.orderModel.create({
+      buyerId: new Types.ObjectId(userId),
+      creatorId: product.creatorId,
+      contentType: TrackableContentType.PRODUCT,
+      contentId: product._id.toString(),
+      amountDT: breakdown.amountDT,
+      platformPercent: breakdown.platformPercent,
+      platformFixedDT: breakdown.platformFixedDT,
+      platformFeeDT: breakdown.platformFeeDT,
+      creatorNetDT: breakdown.creatorNetDT,
+      promoCode: appliedCode,
+      discountDT,
+      status: 'paid'
+    });
+  }
+  // Incrémenter le compteur de téléchargements
+  file.downloadCount += 1;
+  await product.save();
+
+  return {
+    downloadUrl: file.url,
+    message: 'Fichier prêt pour téléchargement'
+  };
+}
+
+/**
+ * Mettre à jour le statut d'un fichier
+ */
+  async updateFileStatus(
+    productId: string,
+    fileId: string,
+    isActive: boolean,
+    userId: string,
+  ): Promise<{ message: string }> {
     const product = await this.productModel.findOne({ id: productId });
     if (!product) {
       throw new NotFoundException('Produit non trouvé');
@@ -687,10 +811,12 @@ export class ProductService {
 
     // Vérifier que l'utilisateur est le créateur du produit
     if (product.creatorId.toString() !== userId) {
-      throw new ForbiddenException('Vous ne pouvez modifier que vos propres produits');
+      throw new ForbiddenException(
+        'Vous ne pouvez modifier que vos propres produits',
+      );
     }
 
-    const file = product.files?.find(f => f.id === fileId);
+    const file = product.files?.find((f) => f.id === fileId);
     if (!file) {
       throw new NotFoundException('Fichier non trouvé');
     }
@@ -699,28 +825,34 @@ export class ProductService {
     await product.save();
 
     return {
-      message: `Fichier ${isActive ? 'activé' : 'désactivé'} avec succès`
+      message: `Fichier ${isActive ? 'activé' : 'désactivé'} avec succès`,
     };
   }
 
   /**
    * Transformer un document Product en DTO de réponse
    */
-  private async transformToResponseDto(product: ProductDocument, community?: CommunityDocument | null): Promise<ProductResponseDto> {
+  private async transformToResponseDto(
+    product: ProductDocument,
+    community?: CommunityDocument | null,
+  ): Promise<ProductResponseDto> {
     // Ensure absolute URLs for images
-    const images = (product.images || []).map(img => this.uploadService.ensureAbsoluteUrl(img));
+    const images = (product.images || []).map((img) =>
+      this.uploadService.ensureAbsoluteUrl(img),
+    );
 
     // Transformer les variantes
-    const variants = product.variants?.map(variant => ({
-      id: variant.id,
-      name: variant.name,
-      price: variant.price,
-      description: variant.description,
-      inventory: variant.inventory
-    })) || [];
+    const variants =
+      product.variants?.map((variant) => ({
+        id: variant.id,
+        name: variant.name,
+        price: variant.price,
+        description: variant.description,
+        inventory: variant.inventory,
+      })) || [];
 
     // Transformer les fichiers
-    const files = (product.files || []).map(file => ({
+    const files = (product.files || []).map((file) => ({
       id: file.id,
       name: file.name,
       url: this.uploadService.ensureAbsoluteUrl(file.url),
@@ -730,11 +862,13 @@ export class ProductService {
       order: file.order,
       downloadCount: file.downloadCount,
       isActive: file.isActive,
-      uploadedAt: file.uploadedAt.toISOString()
+      uploadedAt: file.uploadedAt.toISOString(),
     }));
 
     // Récupérer les informations du créateur
-    const creator = await this.userModel.findById(product.creatorId).select('name email profile_picture photo_profil');
+    const creator = await this.userModel
+      .findById(product.creatorId)
+      .select('name email profile_picture photo_profil');
 
     return {
       id: product.id,
@@ -743,21 +877,25 @@ export class ProductService {
       price: product.price,
       currency: product.currency,
       communityId: product.communityId,
-      community: community ? {
-        id: community.id,
-        name: community.name,
-        slug: community.slug
-      } : {
-        id: product.communityId,
-        name: 'Communauté inconnue',
-        slug: 'unknown'
-      },
+      community: community
+        ? {
+            id: community.id,
+            name: community.name,
+            slug: community.slug,
+          }
+        : {
+            id: product.communityId,
+            name: 'Communauté inconnue',
+            slug: 'unknown',
+          },
       creatorId: product.creatorId.toString(),
       creator: {
         id: product.creatorId.toString(),
         name: creator?.name || 'Créateur inconnu',
         email: creator?.email || '',
-        avatar: this.uploadService.ensureAbsoluteUrl((creator as any)?.profile_picture || (creator as any)?.photo_profil)
+        avatar: this.uploadService.ensureAbsoluteUrl(
+          (creator as any)?.profile_picture || (creator as any)?.photo_profil,
+        ),
       },
       isPublished: product.isPublished,
       inventory: product.inventory,
@@ -775,7 +913,7 @@ export class ProductService {
       recurringInterval: (product as any).recurringInterval,
       features: (product as any).features,
       createdAt: product.createdAt.toISOString(),
-      updatedAt: product.updatedAt.toISOString()
+      updatedAt: product.updatedAt.toISOString(),
     };
   }
 
@@ -785,11 +923,12 @@ export class ProductService {
   async getMyPurchases(userId: string): Promise<any[]> {
     try {
       // Chercher toutes les commandes de l'utilisateur pour des produits
-      const orders = await this.orderModel.find({
-        user: userId,
-        status: 'completed',
-        'items.type': 'product'
-      })
+      const orders = await this.orderModel
+        .find({
+          user: userId,
+          status: 'completed',
+          'items.type': 'product',
+        })
         .populate({
           path: 'items.itemId',
           model: 'Product',
@@ -797,14 +936,14 @@ export class ProductService {
             {
               path: 'communityId',
               model: 'Community',
-              select: 'name slug'
+              select: 'name slug',
             },
             {
               path: 'creatorId',
               model: 'User',
-              select: 'name email'
-            }
-          ]
+              select: 'name email',
+            },
+          ],
         })
         .sort({ createdAt: -1 })
         .exec();
@@ -815,24 +954,32 @@ export class ProductService {
 
       for (const order of orders) {
         for (const item of order.items) {
-          if (item.type === 'product' && item.itemId && !seenProductIds.has(item.itemId._id.toString())) {
+          if (
+            item.type === 'product' &&
+            item.itemId &&
+            !seenProductIds.has(item.itemId._id.toString())
+          ) {
             seenProductIds.add(item.itemId._id.toString());
 
             const product = item.itemId;
 
             // Informations de la communauté
-            const communityInfo = product.communityId ? {
-              _id: product.communityId._id.toString(),
-              name: product.communityId.name,
-              slug: product.communityId.slug
-            } : null;
+            const communityInfo = product.communityId
+              ? {
+                  _id: product.communityId._id.toString(),
+                  name: product.communityId.name,
+                  slug: product.communityId.slug,
+                }
+              : null;
 
             // Informations du créateur
-            const creatorInfo = product.creatorId ? {
-              _id: product.creatorId._id.toString(),
-              name: product.creatorId.name,
-              email: product.creatorId.email
-            } : null;
+            const creatorInfo = product.creatorId
+              ? {
+                  _id: product.creatorId._id.toString(),
+                  name: product.creatorId.name,
+                  email: product.creatorId.email,
+                }
+              : null;
 
             purchasedProducts.push({
               _id: product._id.toString(),
@@ -849,13 +996,19 @@ export class ProductService {
               stock_quantity: product.inventory,
               rating: product.rating || 0,
               reviews_count: product.ratingCount || 0,
-              downloads_count: product.files?.reduce((total, file) => total + (file.downloadCount || 0), 0) || 0,
+              downloads_count:
+                product.files?.reduce(
+                  (total, file) => total + (file.downloadCount || 0),
+                  0,
+                ) || 0,
               purchases_count: product.sales || 0,
               variants: product.variants || [],
               files: product.files || [],
               tags: product.tags || [],
-              created_at: product.createdAt?.toISOString() || new Date().toISOString(),
-              updated_at: product.updatedAt?.toISOString() || new Date().toISOString(),
+              created_at:
+                product.createdAt?.toISOString() || new Date().toISOString(),
+              updated_at:
+                product.updatedAt?.toISOString() || new Date().toISOString(),
               created_by: creatorInfo,
               community_id: communityInfo,
               // Détails de l'achat
@@ -864,8 +1017,8 @@ export class ProductService {
                 purchased_at: order.createdAt.toISOString(),
                 amount_paid: item.price,
                 currency: order.currency || 'TND',
-                quantity: item.quantity || 1
-              }
+                quantity: item.quantity || 1,
+              },
             });
           }
         }
@@ -881,7 +1034,10 @@ export class ProductService {
   /**
    * Check if user has purchased a product
    */
-  async checkUserPurchase(productId: string, userId: string): Promise<{ purchased: boolean; purchase?: any }> {
+  async checkUserPurchase(
+    productId: string,
+    userId: string,
+  ): Promise<{ purchased: boolean; purchase?: any }> {
     try {
       // Find the product first (accept both custom id and Mongo _id)
       let product = await this.productModel.findOne({ id: productId });
@@ -892,42 +1048,74 @@ export class ProductService {
         throw new NotFoundException('Product not found');
       }
 
+      const FREE_MODE = process.env.FREE_MODE === 'true';
+      if (FREE_MODE) {
+        return {
+          purchased: true,
+          purchase: {
+            productId: product.id,
+            purchasedAt: new Date().toISOString(),
+            downloadCount:
+              product.files?.reduce(
+                (sum, file) => sum + (file.downloadCount || 0),
+                0,
+              ) || 0,
+            amountPaid: 0,
+          },
+        };
+      }
+
       // Check for existing order (manual payment flow)
       const order = await this.orderModel.findOne({
         buyerId: new Types.ObjectId(userId),
         contentType: TrackableContentType.PRODUCT,
         contentId: product._id.toString(),
-        status: 'paid'
+        status: 'paid',
       });
 
       if (order) {
         // Calculate total downloads for this product
-        const totalDownloads = product.files?.reduce((sum, file) => sum + (file.downloadCount || 0), 0) || 0;
+        const totalDownloads =
+          product.files?.reduce(
+            (sum, file) => sum + (file.downloadCount || 0),
+            0,
+          ) || 0;
 
         return {
           purchased: true,
           purchase: {
             productId: product.id,
-            purchasedAt: order.createdAt?.toISOString() || new Date().toISOString(),
+            purchasedAt:
+              order.createdAt?.toISOString() || new Date().toISOString(),
             downloadCount: totalDownloads,
             orderId: order._id.toString(),
-            amountPaid: order.amountDT || order.amount || product.price
-          }
+            amountPaid: order.amountDT || order.amount || product.price,
+          },
         };
       }
 
       // Check if user has product in purchasedProducts array (wallet payment flow)
-      const user = await this.userModel.findById(userId).select('purchasedProducts');
-      if (user?.purchasedProducts?.some((p: Types.ObjectId) => p.equals(product._id))) {
-        const totalDownloads = product.files?.reduce((sum, file) => sum + (file.downloadCount || 0), 0) || 0;
+      const user = await this.userModel
+        .findById(userId)
+        .select('purchasedProducts');
+      if (
+        user?.purchasedProducts?.some((p: Types.ObjectId) =>
+          p.equals(product._id),
+        )
+      ) {
+        const totalDownloads =
+          product.files?.reduce(
+            (sum, file) => sum + (file.downloadCount || 0),
+            0,
+          ) || 0;
         return {
           purchased: true,
           purchase: {
             productId: product.id,
             purchasedAt: new Date().toISOString(),
             downloadCount: totalDownloads,
-            amountPaid: product.price
-          }
+            amountPaid: product.price,
+          },
         };
       }
 
@@ -946,5 +1134,81 @@ export class ProductService {
       }
       return { purchased: false };
     }
+  }
+
+  /**
+   * Télécharger un fichier de produit
+   */
+  async downloadFile(
+    productId: string,
+    fileId: string,
+    userId: string,
+    promoCode?: string,
+  ): Promise<{ downloadUrl: string; message: string }> {
+    // Find the product
+    const product = await this.findProductByAnyId(productId);
+    if (!product) {
+      throw new NotFoundException('Product not found');
+    }
+
+    // Find the file
+    const file = product.files?.find((f) => f.id === fileId);
+    if (!file) {
+      throw new NotFoundException('File not found');
+    }
+
+    if (!file.isActive) {
+      throw new BadRequestException('This file is not available for download');
+    }
+
+    // Check if user has purchased the product or if it's free
+    const purchaseCheck = await this.checkUserPurchase(productId, userId);
+
+    // Apply promo code if provided
+    let discountPercent = 0;
+    if (promoCode && !purchaseCheck.purchased) {
+      try {
+        const promoResult = await this.promoService.validateAndApply(
+          promoCode,
+          product.price,
+          TrackableContentType.PRODUCT,
+          product._id.toString(),
+        );
+        if (promoResult.valid) {
+          discountPercent = promoResult.discountDT
+            ? (promoResult.discountDT / product.price) * 100
+            : 0;
+        }
+      } catch (error) {
+        console.log('Invalid promo code:', error);
+      }
+    }
+
+    // Check if purchase is required (product is not free and user hasn't purchased)
+    if (
+      product.price > 0 &&
+      !purchaseCheck.purchased &&
+      discountPercent < 100
+    ) {
+      throw new ForbiddenException(
+        'You must purchase this product before downloading its files',
+      );
+    }
+
+    // Increment download count
+    file.downloadCount = (file.downloadCount || 0) + 1;
+    await product.save();
+
+    // Track the download
+    await this.trackingService.trackDownload(
+      userId,
+      product._id.toString(),
+      TrackableContentType.PRODUCT,
+    );
+
+    return {
+      downloadUrl: this.uploadService.ensureAbsoluteUrl(file.url),
+      message: 'File ready for download',
+    };
   }
 }

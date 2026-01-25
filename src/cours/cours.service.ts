@@ -12,7 +12,7 @@ import { AddChapitreToSectionDto } from '../dto-cours/add-chapitre-to-section.dt
 import { UpdateCoursDto, UpdateSectionDto, UpdateChapitreDto } from '../dto-cours/update-cours.dto';
 import { ContentTrackingService } from '../common/services/content-tracking.service';
 import { PolicyService } from '../common/services/policy.service';
-import { TrackableContentType } from '../schema/content-tracking.schema';
+import { TrackableContentType, ContentProgress, ContentProgressDocument } from '../schema/content-tracking.schema';
 import { FeeService } from '../common/services/fee.service';
 import { PromoService } from '../common/services/promo.service';
 import { NotificationService } from '../notification/notification.service';
@@ -28,6 +28,7 @@ export class CoursService {
     @InjectModel('Community') private communityModel: Model<CommunityDocument>,
     @InjectModel('User') private userModel: Model<UserDocument>,
     @InjectModel('Order') private orderModel: Model<any>,
+    @InjectModel('ContentProgress') private contentProgressModel: Model<ContentProgressDocument>,
     private readonly trackingService: ContentTrackingService,
     private readonly policyService: PolicyService,
     private readonly feeService: FeeService,
@@ -36,6 +37,110 @@ export class CoursService {
     private readonly achievementService: AchievementService,
     private readonly uploadService: UploadService,
   ) { }
+
+  private async attachRatingStatsToCourses(
+    coursDocs: CoursDocument[],
+  ): Promise<void> {
+    if (!coursDocs?.length) return;
+
+    // Use MongoDB _id as the primary key for matching (ContentProgress.contentId stores MongoDB _id as string)
+    const mongoIds = Array.from(
+      new Set(
+        coursDocs
+          .map((c) => c?._id?.toString?.())
+          .filter(Boolean),
+      ),
+    ) as string[];
+
+    if (!mongoIds.length) return;
+
+    console.log(`📊 [attachRatingStatsToCourses] Fetching ratings for ${mongoIds.length} courses`);
+
+    const stats = await this.contentProgressModel
+      .aggregate([
+        {
+          $match: {
+            contentType: TrackableContentType.COURSE,
+            contentId: { $in: mongoIds },
+            rating: { $gt: 0 },
+          },
+        },
+        {
+          $group: {
+            _id: '$contentId',
+            averageRating: { $avg: '$rating' },
+            ratingCount: { $sum: 1 },
+          },
+        },
+      ])
+      .exec();
+
+    console.log(`📊 [attachRatingStatsToCourses] Found ratings for ${stats.length} courses`);
+
+    const map = new Map<string, { averageRating: number; ratingCount: number }>(
+      (stats || []).map((s: any) => {
+        const contentId = String(s._id);
+        return [
+          contentId,
+          {
+            averageRating: Number(s.averageRating || 0),
+            ratingCount: Number(s.ratingCount || 0),
+          },
+        ];
+      }),
+    );
+
+    // Patch docs in-memory for response - always use MongoDB _id for matching
+    for (const c of coursDocs) {
+      const mongoKey = c?._id?.toString?.();
+      if (!mongoKey) continue;
+
+      const stat = map.get(mongoKey);
+      if (stat) {
+        (c as any).averageRating = stat.averageRating;
+        (c as any).ratingCount = stat.ratingCount;
+        console.log(`✅ [attachRatingStatsToCourses] Course ${mongoKey}: rating=${stat.averageRating}, count=${stat.ratingCount}`);
+      } else {
+        // If no ratings found, ensure we use the stored values or default to 0
+        if ((c as any).averageRating === undefined) {
+          (c as any).averageRating = 0;
+        }
+        if ((c as any).ratingCount === undefined) {
+          (c as any).ratingCount = 0;
+        }
+      }
+    }
+
+    // Best-effort persist to DB for fast future lists
+    try {
+      const ops = coursDocs
+        .map((c) => {
+          const key = c?._id?.toString?.();
+          const stat = key ? map.get(key) : undefined;
+          if (!key || !stat) return null;
+          return {
+            updateOne: {
+              filter: { _id: new Types.ObjectId(key) },
+              update: {
+                $set: {
+                  averageRating: stat.averageRating,
+                  ratingCount: stat.ratingCount,
+                },
+              },
+            },
+          };
+        })
+        .filter(Boolean) as any[];
+
+      if (ops.length) {
+        await this.coursModel.bulkWrite(ops, { ordered: false });
+        console.log(`💾 [attachRatingStatsToCourses] Persisted ratings for ${ops.length} courses`);
+      }
+    } catch (e) {
+      // Do not fail the request if bulkWrite fails
+      console.warn('⚠️ [CoursService] bulkWrite rating stats failed:', (e as any)?.message || e);
+    }
+  }
 
   async getCourses(page: number = 1, limit: number = 10, category?: string, niveau?: string, search?: string) {
     const query: any = { isPublished: true };
@@ -69,15 +174,39 @@ export class CoursService {
       this.coursModel.countDocuments(query)
     ]);
 
-    const transformedCourses = courses.map(course => ({
-      id: course._id.toString(),
-      titre: course.titre,
-      description: course.description,
-      prix: course.prix,
-      devise: course.devise,
-      category: course.category,
-      niveau: course.niveau,
-      duree: course.duree,
+    await this.attachRatingStatsToCourses(courses as any);
+
+    // Log rating data after attachment for debugging
+    if (courses.length > 0) {
+      const sampleCourse = courses[0] as any;
+      console.log(`   ⭐ [getCourses] Sample course after attachRatingStats:`, {
+        courseId: sampleCourse._id?.toString(),
+        titre: sampleCourse.titre,
+        averageRating: sampleCourse.averageRating,
+        ratingCount: sampleCourse.ratingCount,
+      });
+    }
+
+    const transformedCourses = courses.map(course => {
+      // Use attached rating values (from ContentProgress aggregation) if available
+      // These are set by attachRatingStatsToCourses and are always fresh
+      const attachedRating = (course as any).averageRating;
+      const attachedCount = (course as any).ratingCount;
+      
+      const finalRating = attachedRating !== undefined ? Number(attachedRating) : Number(course.averageRating || 0);
+      const finalCount = attachedCount !== undefined ? Number(attachedCount) : Number(course.ratingCount || 0);
+      
+      return {
+        id: course._id.toString(),
+        titre: course.titre,
+        description: course.description,
+        prix: course.prix,
+        devise: course.devise,
+        category: course.category,
+        niveau: course.niveau,
+        duree: course.duree,
+        averageRating: finalRating,
+        ratingCount: finalCount,
       creator: {
         name: (course.creatorId as any)?.name || 'Unknown',
         avatar: this.uploadService.ensureAbsoluteUrl((course.creatorId as any)?.profile_picture || (course.creatorId as any)?.photo_profil) || 'https://placehold.co/64x64?text=MM'
@@ -85,7 +214,8 @@ export class CoursService {
       createdAt: course.createdAt,
       image: this.uploadService.ensureAbsoluteUrl(course.thumbnail) || 'https://placehold.co/400x300?text=Course',
       thumbnail: this.uploadService.ensureAbsoluteUrl(course.thumbnail) || 'https://placehold.co/400x300?text=Course'
-    }));
+      };
+    });
 
     return {
       success: true,
@@ -429,6 +559,8 @@ export class CoursService {
 
     console.log(`   📊 Cours trouvés: ${cours.length}/${total}`);
 
+    await this.attachRatingStatsToCourses(cours as any);
+
     return {
       cours: await Promise.all(cours.map(cours => this.transformerEnReponse(cours))),
       total,
@@ -471,6 +603,8 @@ export class CoursService {
     ]);
 
     console.log(`   📊 Cours trouvés: ${cours.length}/${total}`);
+
+    await this.attachRatingStatsToCourses(cours as any);
 
     return {
       cours: await Promise.all(cours.map(cours => this.transformerEnReponse(cours))),
@@ -515,6 +649,8 @@ export class CoursService {
     const cours = inscriptions
       .filter(inscription => inscription.courseId) // Filtrer les inscriptions avec cours valides
       .map(inscription => inscription.courseId as any);
+
+    await this.attachRatingStatsToCourses(cours as any);
 
     return {
       cours: await Promise.all(cours.map(cours => this.transformerEnReponse(cours))),
@@ -890,8 +1026,9 @@ export class CoursService {
         creatorId: cours.creatorId?.toString() || '',
         isPublished: cours.isPublished,
         enrollmentCount: Array.isArray(cours.inscriptions) ? cours.inscriptions.length : 0,
-        averageRating: cours.averageRating || 0,
-        ratingCount: cours.ratingCount || 0,
+        // Use attached rating values if available (from attachRatingStatsToCourses), otherwise use stored values
+        averageRating: (cours as any).averageRating !== undefined ? Number((cours as any).averageRating) : Number(cours.averageRating || 0),
+        ratingCount: (cours as any).ratingCount !== undefined ? Number((cours as any).ratingCount) : Number(cours.ratingCount || 0),
         // Nouveaux champs du schéma - mapping correct des sections
         sections: sections.map(section => {
           const chapitres = Array.isArray(section.chapitres) ? section.chapitres : [];
@@ -1989,7 +2126,8 @@ export class CoursService {
       console.log('   ✅ Standalone enrollment autorisé (pas d\'exigence de membership)');
 
       // 3. Cours payant: nécessite un paiement (Order paid) avant inscription
-      if ((cours.prix || 0) > 0) {
+      const FREE_MODE = process.env.FREE_MODE === 'true';
+      if ((cours.prix || 0) > 0 && !FREE_MODE) {
         const paidOrder = await this.orderModel
           .findOne({
             buyerId: userObjectId,
@@ -2163,21 +2301,146 @@ export class CoursService {
    * Ajouter une note/évaluation d'un cours
    */
   async addCoursRating(coursId: string, userId: string, rating: number, review?: string) {
-    return await this.trackingService.addRating(userId, coursId, TrackableContentType.COURSE, rating, review);
+    // Normalize tracking contentId to MongoDB _id string
+    let cours: CoursDocument | null = null;
+    if (Types.ObjectId.isValid(coursId)) {
+      cours = await this.coursModel.findById(coursId);
+    }
+    if (!cours) {
+      cours = await this.coursModel.findOne({ id: coursId });
+    }
+    if (!cours) {
+      throw new NotFoundException('Cours non trouvé');
+    }
+
+    const contentId = cours._id.toString();
+    const progress = await this.trackingService.addRating(
+      userId,
+      contentId,
+      TrackableContentType.COURSE,
+      rating,
+      review,
+    );
+
+    // Persist rating summary on course document for fast listing/cards
+    const stats = await this.trackingService.getContentStats(
+      contentId,
+      TrackableContentType.COURSE,
+    );
+    cours.averageRating = Number(stats.averageRating || 0);
+    cours.ratingCount = Number(stats.totalRatings || 0);
+    await cours.save();
+
+    return progress;
   }
 
   /**
    * Obtenir la progression d'un utilisateur pour un cours
    */
   async getCoursProgress(coursId: string, userId: string) {
-    return await this.trackingService.getProgress(userId, coursId, TrackableContentType.COURSE);
+    let cours: CoursDocument | null = null;
+    if (Types.ObjectId.isValid(coursId)) {
+      cours = await this.coursModel.findById(coursId);
+    }
+    if (!cours) {
+      cours = await this.coursModel.findOne({ id: coursId });
+    }
+    if (!cours) {
+      throw new NotFoundException('Cours non trouvé');
+    }
+
+    const contentId = cours._id.toString();
+    return await this.trackingService.getProgress(
+      userId,
+      contentId,
+      TrackableContentType.COURSE,
+    );
   }
 
   /**
    * Obtenir les statistiques d'un cours
    */
   async getCoursStats(coursId: string) {
-    return await this.trackingService.getContentStats(coursId, TrackableContentType.COURSE);
+    let cours: CoursDocument | null = null;
+    if (Types.ObjectId.isValid(coursId)) {
+      cours = await this.coursModel.findById(coursId);
+    }
+    if (!cours) {
+      cours = await this.coursModel.findOne({ id: coursId });
+    }
+    if (!cours) {
+      throw new NotFoundException('Cours non trouvé');
+    }
+
+    const contentId = cours._id.toString();
+    return await this.trackingService.getContentStats(
+      contentId,
+      TrackableContentType.COURSE,
+    );
+  }
+
+  /**
+   * Obtenir tous les avis (reviews) d'un cours
+   */
+  async getCoursReviews(coursId: string) {
+    console.log('🔍 [CoursService] Getting reviews for course:', coursId);
+
+    // Find course to get MongoDB _id
+    let course: CoursDocument | null = null;
+    if (Types.ObjectId.isValid(coursId)) {
+      course = await this.coursModel.findById(coursId);
+    }
+    if (!course) {
+      course = await this.coursModel.findOne({ id: coursId });
+    }
+    if (!course) {
+      throw new NotFoundException('Cours non trouvé');
+    }
+
+    const contentId = course._id.toString();
+
+    // Get all reviews (ContentProgress with rating)
+    const docs = await this.contentProgressModel
+      .find({
+        contentType: TrackableContentType.COURSE,
+        contentId,
+        rating: { $gte: 1, $lte: 5 },
+      })
+      .populate('userId', 'name email profile_picture photo_profil avatar')
+      .sort({ updatedAt: -1 })
+      .lean()
+      .exec();
+
+    const reviews = (docs || []).map((d: any) => ({
+      id: d.id || d._id?.toString(),
+      user: {
+        id: d.userId?._id?.toString() || d.userId?.toString(),
+        name: d.userId?.name || 'Anonymous',
+        email: d.userId?.email || '',
+        avatar: this.uploadService.ensureAbsoluteUrl(
+          d.userId?.avatar ||
+          d.userId?.profile_picture ||
+          d.userId?.photo_profil ||
+          ''
+        ),
+      },
+      rating: d.rating || 0,
+      review: d.review || '',
+      createdAt: d.createdAt,
+      updatedAt: d.updatedAt,
+    }));
+
+    // Get rating summary
+    const stats = await this.trackingService.getContentStats(contentId, TrackableContentType.COURSE);
+
+    console.log(`✅ [CoursService] Found ${reviews.length} reviews`);
+
+    return {
+      success: true,
+      reviews,
+      averageRating: stats.averageRating || 0,
+      totalRatings: stats.totalRatings || 0,
+    };
   }
 
   /**
