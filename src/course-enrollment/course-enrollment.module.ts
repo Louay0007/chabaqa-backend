@@ -5,6 +5,7 @@ import { CourseEnrollmentService } from './course-enrollment.service';
 import { CourseEnrollment, CourseEnrollmentSchema } from '../schema/course.schema';
 import { Cours, CoursSchema } from '../schema/course.schema';
 import { User, UserSchema } from '../schema/user.schema';
+import { AchievementModule } from '../achievement/achievement.module';
 
 @Module({
   imports: [
@@ -12,7 +13,8 @@ import { User, UserSchema } from '../schema/user.schema';
       { name: CourseEnrollment.name, schema: CourseEnrollmentSchema },
       { name: Cours.name, schema: CoursSchema },
       { name: User.name, schema: UserSchema }
-    ])
+    ]),
+    AchievementModule
   ],
   controllers: [CourseEnrollmentController],
   providers: [CourseEnrollmentService],
