@@ -17,8 +17,8 @@ export class CreateChallengeResourceDto {
   @MaxLength(200)
   title: string;
 
-  @ApiProperty({ 
-    description: 'Type de ressource', 
+  @ApiProperty({
+    description: 'Type de ressource',
     example: 'video',
     enum: ['video', 'article', 'code', 'tool', 'pdf', 'link']
   })
@@ -30,11 +30,11 @@ export class CreateChallengeResourceDto {
   @IsNotEmpty()
   url: string;
 
-  @ApiProperty({ description: 'Description de la ressource', example: 'Guide complet sur HTML5' })
+  @ApiPropertyOptional({ description: 'Description de la ressource', example: 'Guide complet sur HTML5' })
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
   @MaxLength(1000)
-  description: string;
+  description?: string;
 
   @ApiProperty({ description: 'Ordre d\'affichage', example: 1 })
   @IsNumber()
@@ -57,8 +57,8 @@ export class CreateChallengeTaskResourceDto {
   @MaxLength(200)
   title: string;
 
-  @ApiProperty({ 
-    description: 'Type de ressource', 
+  @ApiProperty({
+    description: 'Type de ressource',
     example: 'video',
     enum: ['video', 'article', 'code', 'tool']
   })
@@ -70,11 +70,11 @@ export class CreateChallengeTaskResourceDto {
   @IsNotEmpty()
   url: string;
 
-  @ApiProperty({ description: 'Description de la ressource', example: 'Tutoriel vidéo sur CSS' })
+  @ApiPropertyOptional({ description: 'Description de la ressource', example: 'Tutoriel vidéo sur CSS' })
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
   @MaxLength(1000)
-  description: string;
+  description?: string;
 }
 
 /**
@@ -199,8 +199,8 @@ export class CreateChallengeDto {
   @MaxLength(100)
   category?: string;
 
-  @ApiPropertyOptional({ 
-    description: 'Difficulté du défi', 
+  @ApiPropertyOptional({
+    description: 'Difficulté du défi',
     example: 'beginner',
     enum: ['beginner', 'intermediate', 'advanced']
   })
@@ -246,8 +246,8 @@ export class CreateChallengeDto {
   @Min(0)
   participationFee?: number;
 
-  @ApiPropertyOptional({ 
-    description: 'Devise du prix', 
+  @ApiPropertyOptional({
+    description: 'Devise du prix',
     example: 'TND',
     enum: ['USD', 'EUR', 'TND']
   })
@@ -265,8 +265,8 @@ export class CreateChallengeDto {
   @IsBoolean()
   isPremium?: boolean;
 
-  @ApiPropertyOptional({ 
-    description: 'Fonctionnalités premium', 
+  @ApiPropertyOptional({
+    description: 'Fonctionnalités premium',
     type: 'object',
     additionalProperties: false,
     properties: {
@@ -288,8 +288,8 @@ export class CreateChallengeDto {
     communityAccess?: boolean;
   };
 
-  @ApiPropertyOptional({ 
-    description: 'Options de paiement', 
+  @ApiPropertyOptional({
+    description: 'Options de paiement',
     type: 'object',
     additionalProperties: false,
     properties: {
