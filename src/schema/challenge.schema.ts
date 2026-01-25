@@ -156,10 +156,11 @@ export class ChallengeTask {
   resources: ChallengeTaskResource[];
 
   @Prop({
-    required: true,
-    trim: true
+    required: false,
+    trim: true,
+    default: ''
   })
-  instructions: string;
+  instructions?: string;
 
   @Prop({
     trim: true
