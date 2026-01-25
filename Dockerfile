@@ -31,23 +31,19 @@ ENV NODE_ENV=production \
 
 WORKDIR /app
 
-# Create non-root user
-RUN addgroup -g 1001 -S nodejs && \
-    adduser -S nestjs -u 1001 -G nodejs
-
 # Copy package files and install production dependencies only
 COPY package*.json ./
 RUN npm install --omit=dev --prefer-offline --no-audit && npm cache clean --force
 
 # Copy built application from builder
-COPY --from=builder --chown=nestjs:nodejs /app/dist ./dist
+COPY --from=builder /app/dist ./dist
 
-# Create upload directories
-RUN mkdir -p uploads/image uploads/video uploads/document uploads/audio public && \
-    chown -R nestjs:nodejs uploads public
+# Copy entrypoint script
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
 
-# Switch to non-root user
-USER nestjs
+# Create upload directories (will be overridden by volume mount, but ensures structure exists)
+RUN mkdir -p uploads/image uploads/video uploads/document uploads/audio public
 
 # Expose port
 EXPOSE 3000
@@ -56,5 +52,5 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
     CMD curl -f http://localhost:3000/api/health || exit 1
 
-# Start application
-CMD ["node", "dist/main.js"]
+# Start application via entrypoint (runs as root to create dirs, then starts node)
+ENTRYPOINT ["/docker-entrypoint.sh"]
