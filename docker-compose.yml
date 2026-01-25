@@ -7,7 +7,7 @@ services:
     container_name: chabaqa-mongodb
     restart: always
     ports:
-      - "127.0.0.1:27017:27017"
+      - "27017:27017"  # Changed from 127.0.0.1:27017 to allow host access
     environment:
       MONGO_INITDB_ROOT_USERNAME: admin
       MONGO_INITDB_ROOT_PASSWORD: admin123
