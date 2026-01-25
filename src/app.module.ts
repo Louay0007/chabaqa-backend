@@ -37,10 +37,6 @@ import { StripePaymentService } from './common/services/stripe-payment.service';
 import { FlouciPaymentService } from './common/services/flouci-payment.service';
 import { PromoService } from './common/services/promo.service';
 import { FeeService } from './common/services/fee.service';
-import { CoursService } from './cours/cours.service';
-import { ChallengeService } from './challenge/challenge.service';
-import { EventService } from './event/event.service';
-import { SubscriptionService } from './subscription/subscription.service';
 import { PromoCode, PromoCodeSchema } from './schema/promo-code.schema';
 import { Subscription, SubscriptionSchema } from './schema/subscription.schema';
 import { CourseEnrollmentSchema, CourseProgressSchema } from './schema/course.schema';
@@ -101,14 +97,14 @@ import { WalletModule } from './wallet/wallet.module';
               const cols = await connection.db.listCollections().toArray();
               console.log(
                 '📊 MongoDB is alive. Collections:',
-                cols.map((c) => c.name),
+                cols.map((c: any) => c.name),
               );
-            } catch (err) {
+            } catch (err: any) {
               console.error('❌ Test query failed:', err);
             }
           });
 
-          connection.on('error', (err) =>
+          connection.on('error', (err: any) =>
             console.error('❌ MongoDB connection error:', err),
           );
 
@@ -180,10 +176,6 @@ import { WalletModule } from './wallet/wallet.module';
     FlouciPaymentService,
     PromoService,
     FeeService,
-    CoursService,
-    ChallengeService,
-    EventService,
-    SubscriptionService,
     ManualPaymentService,
   ],
   exports: [EmailService],
