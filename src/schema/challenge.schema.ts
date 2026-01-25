@@ -158,8 +158,7 @@ export class ChallengeTask {
   @Prop({
     type: String,
     required: false,
-    default: '',
-    trim: true
+    default: ''
   })
   instructions?: string;
 
