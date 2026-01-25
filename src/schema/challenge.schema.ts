@@ -33,7 +33,8 @@ export class ChallengeResource {
   url: string;
 
   @Prop({
-    required: true,
+    required: false,
+    default: '',
     trim: true,
     maxlength: 1000
   })
@@ -81,7 +82,8 @@ export class ChallengeTaskResource {
   url: string;
 
   @Prop({
-    required: true,
+    required: false,
+    default: '',
     trim: true,
     maxlength: 1000
   })
@@ -156,8 +158,10 @@ export class ChallengeTask {
   resources: ChallengeTaskResource[];
 
   @Prop({
+    type: String,
     required: false,
-    default: ''
+    default: '',
+    trim: true
   })
   instructions: string;
 
