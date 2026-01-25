@@ -71,8 +71,8 @@ export class ChallengeTaskResponseDto {
   @ApiProperty({ description: 'Points attribués', example: 100 })
   points: number;
 
-  @ApiProperty({ description: 'Instructions détaillées', example: 'Utilisez les balises sémantiques HTML5...' })
-  instructions: string;
+  @ApiPropertyOptional({ description: 'Instructions détaillées', example: 'Utilisez les balises sémantiques HTML5...' })
+  instructions?: string;
 
   @ApiPropertyOptional({ description: 'Notes supplémentaires' })
   notes?: string;
