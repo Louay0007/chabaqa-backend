@@ -3,6 +3,7 @@ import { ApiBearerAuth, ApiOperation, ApiTags, ApiQuery, ApiParam, ApiBody, ApiR
 import { CoursService } from './cours.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CreateCoursDto } from '../dto-cours/create-cours.dto';
+import { CreateUserNoteDto, UpdateUserNoteDto, UserNoteResponseDto } from '../dto-cours/user-note.dto';
 import { AddSectionDto } from '../dto-cours/add-section.dto';
 import { AddChapitreToSectionDto } from '../dto-cours/add-chapitre-to-section.dto';
 import { UpdateSequentialProgressionDto, ChapterAccessResponseDto, UnlockedChaptersResponseDto } from '../dto-cours/sequential-progression.dto';
@@ -1070,5 +1071,48 @@ export class CoursController {
 	) {
 		const user = req.user as AuthenticatedUser;
 		return await this.coursService.unlockChapterManually(id, chapterId, userId, user._id);
+	}
+
+	// ============ USER NOTES ENDPOINTS ============
+
+	@UseGuards(JwtAuthGuard)
+	@ApiBearerAuth('JWT-auth')
+	@Post(':id/notes')
+	@ApiOperation({ summary: 'Create a user note for a course' })
+	@ApiResponse({ status: 201, description: 'Note created', type: UserNoteResponseDto })
+	async createNote(@Param('id') courseId: string, @Body() createDto: CreateUserNoteDto, @Req() req) {
+		const user = req.user as AuthenticatedUser;
+		return await this.coursService.createUserNote(user._id, courseId, createDto);
+	}
+
+	@UseGuards(JwtAuthGuard)
+	@ApiBearerAuth('JWT-auth')
+	@Get(':id/notes')
+	@ApiOperation({ summary: 'Get user notes for a course' })
+	@ApiResponse({ status: 200, description: 'Notes retrieved', type: [UserNoteResponseDto] })
+	async getNotes(@Param('id') courseId: string, @Req() req) {
+		const user = req.user as AuthenticatedUser;
+		return await this.coursService.getUserNotes(user._id, courseId);
+	}
+
+	@UseGuards(JwtAuthGuard)
+	@ApiBearerAuth('JWT-auth')
+	@Put(':id/notes/:noteId')
+	@ApiOperation({ summary: 'Update a user note' })
+	@ApiResponse({ status: 200, description: 'Note updated', type: UserNoteResponseDto })
+	async updateNote(@Param('id') courseId: string, @Param('noteId') noteId: string, @Body() updateDto: UpdateUserNoteDto, @Req() req) {
+		const user = req.user as AuthenticatedUser;
+		// courseId is not strictly needed for update if noteId is unique, but kept for consistency
+		return await this.coursService.updateUserNote(user._id, noteId, updateDto);
+	}
+
+	@UseGuards(JwtAuthGuard)
+	@ApiBearerAuth('JWT-auth')
+	@Delete(':id/notes/:noteId')
+	@ApiOperation({ summary: 'Delete a user note' })
+	@ApiResponse({ status: 200, description: 'Note deleted' })
+	async deleteNote(@Param('id') courseId: string, @Param('noteId') noteId: string, @Req() req) {
+		const user = req.user as AuthenticatedUser;
+		return await this.coursService.deleteUserNote(user._id, noteId);
 	}
 }

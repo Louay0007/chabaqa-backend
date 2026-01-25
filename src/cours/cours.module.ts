@@ -3,6 +3,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { CoursController } from './cours.controller';
 import { CoursService } from './cours.service';
 import { CoursSchema, CourseEnrollmentSchema, CourseProgressSchema } from '../schema/course.schema';
+import { UserCourseNote, UserCourseNoteSchema } from '../schema/user-course-note.schema';
 import { CommunitySchema } from '../schema/community.schema';
 import { UserSchema } from '../schema/user.schema';
 import { OrderSchema } from '../schema/order.schema';
@@ -20,6 +21,7 @@ import { AchievementModule } from '../achievement/achievement.module';
       { name: 'Cours', schema: CoursSchema },
       { name: 'CourseEnrollment', schema: CourseEnrollmentSchema },
       { name: 'CourseProgress', schema: CourseProgressSchema },
+      { name: UserCourseNote.name, schema: UserCourseNoteSchema },
       { name: 'Community', schema: CommunitySchema },
       { name: 'User', schema: UserSchema },
       { name: 'Order', schema: OrderSchema },

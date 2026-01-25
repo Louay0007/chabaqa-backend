@@ -1022,27 +1022,23 @@ CoursSchema.methods.obtenirChapitrePrecedent = function(chapitreId: string): Cou
     return undefined;
   }
   
-  // Trier les chapitres de la section actuelle pour déterminer la position
-  const chapitresTries = [...sectionActuelle.chapitres].sort((a, b) => a.ordre - b.ordre);
-  const indexChapitreActuel = chapitresTries.findIndex(c => c.id === chapitreId);
-
-  // Si c'est le premier chapitre de la section (index 0)
-  if (indexChapitreActuel === 0) {
+  // Si c'est le premier chapitre de la section
+  if (chapitreActuel.ordre === 1) {
     // Chercher la section précédente
     const sectionsTriees = [...this.sections].sort((a, b) => a.ordre - b.ordre);
     const indexSectionActuelle = sectionsTriees.findIndex(s => s.id === sectionActuelle.id);
     
     if (indexSectionActuelle > 0) {
       const sectionPrecedente = sectionsTriees[indexSectionActuelle - 1];
-      const chapitresPrecedents = [...sectionPrecedente.chapitres].sort((a, b) => a.ordre - b.ordre);
-      if (chapitresPrecedents.length > 0) {
-        return chapitresPrecedents[chapitresPrecedents.length - 1]; // Dernier chapitre de la section précédente
-      }
+      const chapitresTries = [...sectionPrecedente.chapitres].sort((a, b) => a.ordre - b.ordre);
+      return chapitresTries[chapitresTries.length - 1]; // Dernier chapitre de la section précédente
     }
     
-    return undefined; // Premier chapitre du cours ou section précédente vide
+    return undefined; // Premier chapitre du cours
   } else {
     // Chapitre précédent dans la même section
+    const chapitresTries = [...sectionActuelle.chapitres].sort((a, b) => a.ordre - b.ordre);
+    const indexChapitreActuel = chapitresTries.findIndex(c => c.id === chapitreId);
     return chapitresTries[indexChapitreActuel - 1];
   }
 };
@@ -1118,15 +1114,9 @@ CoursSchema.methods.verifierAccesChapitre = function(chapitreId: string, progres
     for (const section of this.sections || []) {
       const ch = (section?.chapitres || []).find((c: any) => c.id === chapitrePrecedent.id);
       if (ch) {
-        const dureeVal = Number((ch as any)?.duree ?? 0);
-        if (Number.isFinite(dureeVal) && dureeVal > 0) {
-          // Handle legacy data: if duree > 1000, it's likely in seconds
-          // Same logic as in course-enrollment.service.ts
-          if (dureeVal > 1000) {
-            previousDurationSeconds = dureeVal;
-          } else {
-            previousDurationSeconds = dureeVal * 60; // duree is in minutes
-          }
+        const dureeMinutes = Number((ch as any)?.duree ?? 0);
+        if (Number.isFinite(dureeMinutes) && dureeMinutes > 0) {
+          previousDurationSeconds = dureeMinutes * 60;
         }
         break;
       }

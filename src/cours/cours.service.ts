@@ -2,9 +2,11 @@ import { Injectable, NotFoundException, ForbiddenException, BadRequestException 
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Cours, CoursDocument, CourseEnrollment, CourseEnrollmentDocument, CourseProgress, CourseProgressDocument } from '../schema/course.schema';
+import { UserCourseNote, UserCourseNoteDocument } from '../schema/user-course-note.schema';
 import { Community, CommunityDocument } from '../schema/community.schema';
 import { User, UserDocument } from '../schema/user.schema';
 import { CreateCoursDto } from '../dto-cours/create-cours.dto';
+import { CreateUserNoteDto, UpdateUserNoteDto } from '../dto-cours/user-note.dto';
 
 import { CoursResponseDto, ChapitreResponseDto } from '../dto-cours/cours-response.dto';
 import { AddSectionDto } from '../dto-cours/add-section.dto';
@@ -25,6 +27,7 @@ export class CoursService {
     @InjectModel('Cours') private coursModel: Model<CoursDocument>,
     @InjectModel('CourseEnrollment') private courseEnrollmentModel: Model<CourseEnrollmentDocument>,
     @InjectModel('CourseProgress') private courseProgressModel: Model<CourseProgressDocument>,
+    @InjectModel(UserCourseNote.name) private userCourseNoteModel: Model<UserCourseNoteDocument>,
     @InjectModel('Community') private communityModel: Model<CommunityDocument>,
     @InjectModel('User') private userModel: Model<UserDocument>,
     @InjectModel('Order') private orderModel: Model<any>,
@@ -2781,5 +2784,92 @@ export class CoursService {
       console.error('❌ Erreur lors du déverrouillage manuel du chapitre:', error);
       throw new BadRequestException('Erreur lors du déverrouillage manuel du chapitre');
     }
+  }
+
+  // ============ USER NOTES METHODS ============
+
+  /**
+   * Créer une note utilisateur
+   */
+  async createUserNote(userId: string, courseId: string, createDto: CreateUserNoteDto) {
+    // Resolve courseId (string or ObjectId) to ObjectId
+    let course: CoursDocument | null = null;
+    if (Types.ObjectId.isValid(courseId)) {
+      course = await this.coursModel.findById(courseId);
+    }
+    if (!course) {
+      course = await this.coursModel.findOne({ id: courseId });
+    }
+    if (!course) {
+      throw new NotFoundException('Cours non trouvé');
+    }
+
+    const newNote = new this.userCourseNoteModel({
+      userId: new Types.ObjectId(userId),
+      courseId: course._id,
+      chapterId: createDto.chapterId,
+      content: createDto.content,
+      timestamp: createDto.timestamp,
+    });
+
+    return await newNote.save();
+  }
+
+  /**
+   * Récupérer les notes d'un utilisateur pour un cours
+   */
+  async getUserNotes(userId: string, courseId: string) {
+    // Resolve courseId
+    let course: CoursDocument | null = null;
+    if (Types.ObjectId.isValid(courseId)) {
+      course = await this.coursModel.findById(courseId);
+    }
+    if (!course) {
+      course = await this.coursModel.findOne({ id: courseId });
+    }
+    if (!course) {
+      throw new NotFoundException('Cours non trouvé');
+    }
+
+    return await this.userCourseNoteModel.find({
+      userId: new Types.ObjectId(userId),
+      courseId: course._id
+    }).sort({ createdAt: -1 });
+  }
+
+  /**
+   * Mettre à jour une note utilisateur
+   */
+  async updateUserNote(userId: string, noteId: string, updateDto: UpdateUserNoteDto) {
+    const note = await this.userCourseNoteModel.findOne({
+      _id: noteId,
+      userId: new Types.ObjectId(userId)
+    });
+
+    if (!note) {
+      throw new NotFoundException('Note non trouvée');
+    }
+
+    if (updateDto.content) note.content = updateDto.content;
+    if (updateDto.timestamp !== undefined) note.timestamp = updateDto.timestamp;
+    
+    note.updatedAt = new Date();
+    return await note.save();
+  }
+
+  /**
+   * Supprimer une note utilisateur
+   */
+  async deleteUserNote(userId: string, noteId: string) {
+    const result = await this.userCourseNoteModel.deleteOne({
+      _id: noteId,
+      userId: new Types.ObjectId(userId)
+    });
+
+    if (result.deletedCount === 0) {
+      throw new NotFoundException('Note non trouvée');
+    }
+
+    return { success: true };
   }
 }
