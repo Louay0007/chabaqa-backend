@@ -400,6 +400,10 @@ export class CoursService {
       const chapitresSection = sectionDto.chapitres.map((chapitreDto, chapitreIndex) => {
         console.log(`   📄 Chapitre ${chapitreIndex + 1}: "${chapitreDto.titre}"`);
 
+        const dureeCalculee = chapitreDto.duree 
+          ? this.convertirDureeEnMinutes(chapitreDto.duree) 
+          : (chapitreDto.videoUrl ? 5 : 0); // Default 5 minutes for videos, 0 for text
+
         return {
           id: new Types.ObjectId().toString(),
           titre: chapitreDto.titre,
@@ -407,7 +411,7 @@ export class CoursService {
           videoUrl: chapitreDto.videoUrl || '',
           isPreview: !chapitreDto.isPaid,
           ordre: chapitreDto.ordre,
-          duree: this.convertirDureeEnMinutes(chapitreDto.duree || ''),
+          duree: dureeCalculee,
           prix: chapitreDto.isPaid ? (chapitreDto.prix || coursEnregistre.prix) : 0,
           isPaidChapter: chapitreDto.isPaid,
           notes: chapitreDto.notes || '',
@@ -1314,7 +1318,7 @@ export class CoursService {
         titre: addChapitreDto.titre,
         contenu: addChapitreDto.description,
         videoUrl: addChapitreDto.videoUrl,
-        duree: addChapitreDto.duree ? this.convertirDureeEnMinutes(addChapitreDto.duree) : undefined,
+        duree: addChapitreDto.duree ? this.convertirDureeEnMinutes(addChapitreDto.duree) : (addChapitreDto.videoUrl ? 5 : 0), // Default 5 minutes for videos, 0 for text
         sectionId: sectionId,
         ordre: addChapitreDto.ordre,
         isPreview: !addChapitreDto.isPaid,

@@ -228,17 +228,19 @@ export class CreateChallengeDto {
   @IsBoolean()
   isActive?: boolean;
 
-  @ApiProperty({ description: 'Ressources du défi', type: [CreateChallengeResourceDto] })
+  @ApiPropertyOptional({ description: 'Ressources du défi', type: [CreateChallengeResourceDto] })
+  @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => CreateChallengeResourceDto)
-  resources: CreateChallengeResourceDto[];
+  resources?: CreateChallengeResourceDto[];
 
-  @ApiProperty({ description: 'Tâches du défi', type: [CreateChallengeTaskDto] })
+  @ApiPropertyOptional({ description: 'Tâches du défi', type: [CreateChallengeTaskDto] })
+  @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => CreateChallengeTaskDto)
-  tasks: CreateChallengeTaskDto[];
+  tasks?: CreateChallengeTaskDto[];
 
   // ============= PRICING FIELDS =============
 
