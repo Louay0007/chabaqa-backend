@@ -34,11 +34,10 @@ export class ChallengeResource {
 
   @Prop({
     required: false,
-    default: '',
     trim: true,
     maxlength: 1000
   })
-  description: string;
+  description?: string;
 
   @Prop({
     required: true,
@@ -83,11 +82,10 @@ export class ChallengeTaskResource {
 
   @Prop({
     required: false,
-    default: '',
     trim: true,
     maxlength: 1000
   })
-  description: string;
+  description?: string;
 }
 
 export const ChallengeTaskResourceSchema = SchemaFactory.createForClass(ChallengeTaskResource);
@@ -158,12 +156,10 @@ export class ChallengeTask {
   resources: ChallengeTaskResource[];
 
   @Prop({
-    type: String,
     required: false,
-    default: '',
     trim: true
   })
-  instructions: string;
+  instructions?: string;
 
   @Prop({
     trim: true

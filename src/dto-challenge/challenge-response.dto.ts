@@ -17,7 +17,7 @@ export class ChallengeResourceResponseDto {
   url: string;
 
   @ApiProperty({ description: 'Description de la ressource', example: 'Guide complet sur HTML5' })
-  description: string;
+  description?: string;
 
   @ApiProperty({ description: 'Ordre d\'affichage', example: 1 })
   order: number;
@@ -40,7 +40,7 @@ export class ChallengeTaskResourceResponseDto {
   url: string;
 
   @ApiProperty({ description: 'Description de la ressource', example: 'Tutoriel vidéo sur CSS' })
-  description: string;
+  description?: string;
 }
 
 /**
