@@ -115,10 +115,10 @@ export class CreateChallengeTaskDto {
   @Min(0)
   points: number;
 
-  @ApiProperty({ description: 'Instructions détaillées', example: 'Utilisez les balises sémantiques HTML5...' })
+  @ApiPropertyOptional({ description: 'Instructions détaillées', example: 'Utilisez les balises sémantiques HTML5...' })
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  instructions: string;
+  instructions?: string;
 
   @ApiPropertyOptional({ description: 'Notes supplémentaires' })
   @IsOptional()

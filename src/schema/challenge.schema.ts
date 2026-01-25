@@ -156,9 +156,9 @@ export class ChallengeTask {
   resources: ChallengeTaskResource[];
 
   @Prop({
+    type: String,
     required: false,
-    trim: true,
-    default: ''
+    trim: true
   })
   instructions?: string;
 
