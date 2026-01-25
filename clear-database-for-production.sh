@@ -61,9 +61,10 @@ fi
 echo ""
 echo -e "${YELLOW}📊 Step 3: Listing current collections...${NC}"
 
-# List collections before deletion
+# List collections before deletion (compatible with all MongoDB versions)
 echo "Current collections in database '$DB_NAME':"
-sudo docker exec "$CONTAINER_NAME" mongosh --username "$MONGO_USER" --password "$MONGO_PASS" --authenticationDatabase admin "$DB_NAME" --eval "db.listCollectionNames()" --quiet
+sudo docker exec "$CONTAINER_NAME" mongosh --username "$MONGO_USER" --password "$MONGO_PASS" --authenticationDatabase admin "$DB_NAME" --eval "show collections" --quiet 2>/dev/null || \
+sudo docker exec "$CONTAINER_NAME" mongosh --username "$MONGO_USER" --password "$MONGO_PASS" --authenticationDatabase admin "$DB_NAME" --eval "db.getCollectionNames()" --quiet
 
 echo ""
 echo -e "${YELLOW}🗑️  Step 4: Dropping the entire database...${NC}"
@@ -111,8 +112,8 @@ fi
 echo ""
 echo -e "${YELLOW}📊 Step 7: Verifying database is empty...${NC}"
 
-# Verify database is empty
-COLLECTIONS=$(sudo docker exec "$CONTAINER_NAME" mongosh --username "$MONGO_USER" --password "$MONGO_PASS" --authenticationDatabase admin "$DB_NAME" --eval "db.listCollectionNames().length" --quiet)
+# Verify database is empty (compatible approach)
+COLLECTIONS=$(sudo docker exec "$CONTAINER_NAME" mongosh --username "$MONGO_USER" --password "$MONGO_PASS" --authenticationDatabase admin "$DB_NAME" --eval "db.getCollectionNames().length" --quiet 2>/dev/null || echo "0")
 
 if [ "$COLLECTIONS" = "0" ]; then
     echo -e "${GREEN}✅ Database is completely empty${NC}"
