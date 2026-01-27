@@ -327,13 +327,15 @@ export class EventResponseDto {
     example: {
       id: 'user_123',
       name: 'John Doe',
-      email: 'john@example.com'
+      email: 'john@example.com',
+      profile_picture: 'https://example.com/avatar.jpg'
     }
   })
   creator: {
     id: string;
     name: string;
     email: string;
+    profile_picture?: string;
   };
 
   @ApiProperty({

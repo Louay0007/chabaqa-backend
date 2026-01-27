@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsOptional, IsDateString, IsEnum, IsBoolean, IsArray, IsNumber, Min, Max, MaxLength, MinLength, IsUrl, ArrayMaxSize } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsDateString, IsEnum, IsBoolean, IsArray, IsNumber, Min, Max, MaxLength, MinLength, IsUrl, ArrayMaxSize, Validate, ValidateIf } from 'class-validator';
+import { IsEndTimeAfterStartTimeConstraint, IsEndDateAfterOrEqualStartDateConstraint, IsLocationRequiredForEventType, IsOnlineUrlRequiredForEventType } from '.././common/validators/date-time.validators';
 
 /**
  * DTO pour créer une session d'événement
@@ -39,6 +40,7 @@ export class CreateEventSessionDto {
   })
   @IsString()
   @IsNotEmpty()
+  @Validate(IsEndTimeAfterStartTimeConstraint, { message: 'endTime must be after startTime' })
   endTime: string;
 
   @ApiProperty({
@@ -237,6 +239,7 @@ export class CreateEventDto {
   })
   @IsDateString({}, { message: 'La date de fin doit être au format ISO' })
   @IsOptional()
+  @Validate(IsEndDateAfterOrEqualStartDateConstraint, { message: 'endDate must be the same or after startDate' })
   endDate?: string;
 
   @ApiProperty({
@@ -265,23 +268,24 @@ export class CreateEventDto {
   @MaxLength(50, { message: 'Le fuseau horaire ne peut pas dépasser 50 caractères' })
   timezone: string;
 
-  @ApiProperty({
-    description: 'Lieu de l\'événement',
+  @ApiPropertyOptional({
+    description: 'Lieu de l\'événement (requis pour In-person et Hybrid)',
     example: 'New York Convention Center',
     maxLength: 200
   })
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
   @MaxLength(200, { message: 'Le lieu ne peut pas dépasser 200 caractères' })
-  location: string;
+  @Validate(IsLocationRequiredForEventType, { message: 'Le lieu est requis pour les événements In-person et Hybrid' })
+  location?: string;
 
   @ApiPropertyOptional({
-    description: 'URL en ligne (pour événements en ligne/hybrides)',
+    description: 'URL en ligne (requis pour Online et Hybrid)',
     example: 'https://example.com/tech-conf-2023'
   })
-  @IsString()
   @IsOptional()
-  @IsUrl({}, { message: 'L\'URL en ligne doit être valide' })
+  @IsString()
+  @Validate(IsOnlineUrlRequiredForEventType, { message: 'L\'URL en ligne est requise pour les événements Online et Hybrid et doit être valide' })
   onlineUrl?: string;
 
   @ApiProperty({

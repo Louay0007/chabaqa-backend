@@ -25,6 +25,49 @@ export class EventService {
   ) {}
 
   /**
+   * Helper method to check if user can modify an event
+   * Checks if user is the event creator OR a community admin
+   */
+  private async canModifyEvent(event: EventDocument, userId: string): Promise<boolean> {
+    // Check if user is the event creator (try multiple formats)
+    const isCreator = event.creatorId.toString() === userId || 
+                     event.creatorId.toString() === new Types.ObjectId(userId).toString();
+    
+    if (isCreator) {
+      return true;
+    }
+
+    // Check if user is community admin or creator
+    const community = await this.communityModel.findById(event.communityId);
+    if (!community) {
+      return false;
+    }
+
+    const communityAny: any = community;
+    const isAdminFn = typeof communityAny?.isAdmin === 'function';
+    const isAdmin = isAdminFn && communityAny.isAdmin(userId);
+    const isCommunityCreator = community.createur.toString() === userId;
+    
+    return isAdmin || isCommunityCreator;
+  }
+
+  /**
+   * Helper method to verify user can modify event or throw exception
+   */
+  private async verifyCanModifyEvent(event: EventDocument, userId: string): Promise<void> {
+    const canModify = await this.canModifyEvent(event, userId);
+    if (!canModify) {
+      console.error('❌ Authorization failed:', {
+        eventId: event.id,
+        eventCreatorId: event.creatorId.toString(),
+        userId: userId,
+        userIdAsObjectId: new Types.ObjectId(userId).toString(),
+      });
+      throw new ForbiddenException('Vous ne pouvez modifier que vos propres événements');
+    }
+  }
+
+  /**
    * Créer un nouvel événement
    */
   async create(createEventDto: CreateEventDto, userId: string): Promise<EventResponseDto> {
@@ -34,9 +77,17 @@ export class EventService {
       throw new NotFoundException('Communauté non trouvée');
     }
 
-    // Vérifier que l'utilisateur est le créateur de la communauté
-    if (community.createur.toString() !== userId) {
-      throw new ForbiddenException('Seul le créateur de la communauté peut créer des événements');
+    // Vérifier que l'utilisateur est autorisé à créer des événements pour cette communauté.
+    // Allow community creator and community admins (and moderators if desired) to create events.
+    const communityAny: any = community;
+    const isAdminFn = typeof communityAny.isAdmin === 'function';
+    const isModeratorFn = typeof communityAny.isModerator === 'function';
+
+    const isAuthorized = (isAdminFn && communityAny.isAdmin(userId))
+      || (!isAdminFn && community.createur.toString() === userId);
+
+    if (!isAuthorized) {
+      throw new ForbiddenException("Vous n'êtes pas autorisé à créer des événements pour cette communauté");
     }
 
     // Générer les IDs pour les sous-objets
@@ -64,8 +115,11 @@ export class EventService {
       throw new ForbiddenException('Un abonnement actif est requis pour publier ou activer un événement');
     }
 
+    const generatedId = new Types.ObjectId().toString();
+
     const eventData = {
       ...createEventDto,
+      id: generatedId,
       communityId: new Types.ObjectId(createEventDto.communityId),
       creatorId: new Types.ObjectId(userId),
       startDate: new Date(createEventDto.startDate),
@@ -210,10 +264,8 @@ export class EventService {
       throw new NotFoundException('Événement non trouvé');
     }
 
-    // Vérifier que l'utilisateur est le créateur de l'événement
-    if (event.creatorId.toString() !== userId) {
-      throw new ForbiddenException('Vous ne pouvez modifier que vos propres événements');
-    }
+    // Vérifier que l'utilisateur peut modifier l'événement
+    await this.verifyCanModifyEvent(event, userId);
 
     // Vérifier la gating pour publication/activation si applicable
     if ((updateEventDto.isActive !== undefined && updateEventDto.isActive && !event.isActive) ||
@@ -226,22 +278,38 @@ export class EventService {
 
     // Mettre à jour les dates si fournies
     if (updateEventDto.startDate) {
-      updateEventDto.startDate = new Date(updateEventDto.startDate) as any;
+      const startDateObj = new Date(updateEventDto.startDate as any);
+      updateEventDto.startDate = startDateObj as any;
+      // Only validate startDate is in the future for NEW events or when changing the date
+      // Skip validation if the date hasn't changed
+      const existingStartDate = event.startDate.toISOString().split('T')[0];
+      const newStartDate = startDateObj.toISOString().split('T')[0];
+      if (existingStartDate !== newStartDate) {
+        const now = new Date();
+        now.setHours(0, 0, 0, 0); // Reset to start of day for fair comparison
+        const startDateOnly = new Date(startDateObj);
+        startDateOnly.setHours(0, 0, 0, 0);
+        if (startDateOnly.getTime() < now.getTime()) {
+          throw new BadRequestException('startDate must be today or in the future');
+        }
+      }
     }
     if (updateEventDto.endDate) {
       updateEventDto.endDate = new Date(updateEventDto.endDate) as any;
     }
 
-    // Mettre à jour les sessions si fournies - PRESERVE existing IDs
+    // Mettre à jour les sessions si fournies - PRESERVE existing IDs and attendance
     if (updateEventDto.sessions) {
       updateEventDto.sessions = updateEventDto.sessions.map(session => {
         // If session has an ID, keep it; otherwise generate new one
         const sessionId = (session as any).id || new Types.ObjectId().toString();
+        // Find existing session to preserve attendance
+        const existingSession = event.sessions.find(s => s.id === sessionId);
         return {
           id: sessionId,
           ...session,
-          isActive: session.isActive ?? true,
-          attendance: session.attendance ?? 0
+          isActive: session.isActive ?? existingSession?.isActive ?? true,
+          attendance: existingSession?.attendance ?? session.attendance ?? 0
         };
       }) as any;
     }
@@ -252,6 +320,11 @@ export class EventService {
         const ticketId = (ticket as any).id || new Types.ObjectId().toString();
         // Find existing ticket to preserve sold count
         const existingTicket = event.tickets.find(t => t.id === ticketId);
+        // Validate quantity is not less than sold count
+        const newQuantity = (ticket as any).quantity;
+        if (existingTicket && typeof newQuantity === 'number' && newQuantity < existingTicket.sold) {
+          throw new BadRequestException(`Ticket quantity for id=${ticketId} cannot be less than sold count (${existingTicket.sold})`);
+        }
         return {
           id: ticketId,
           ...ticket,
@@ -287,10 +360,8 @@ export class EventService {
       throw new NotFoundException('Événement non trouvé');
     }
 
-    // Vérifier que l'utilisateur est le créateur de l'événement
-    if (event.creatorId.toString() !== userId) {
-      throw new ForbiddenException('Vous ne pouvez supprimer que vos propres événements');
-    }
+    // Vérifier que l'utilisateur peut modifier l'événement
+    await this.verifyCanModifyEvent(event, userId);
 
     await this.eventModel.deleteOne({ id });
     return { message: 'Événement supprimé avec succès' };
@@ -305,10 +376,8 @@ export class EventService {
       throw new NotFoundException('Événement non trouvé');
     }
 
-    // Vérifier que l'utilisateur est le créateur de l'événement
-    if (event.creatorId.toString() !== userId) {
-      throw new ForbiddenException('Vous ne pouvez modifier que vos propres événements');
-    }
+    // Vérifier que l'utilisateur peut modifier l'événement
+    await this.verifyCanModifyEvent(event, userId);
 
     const session = {
       id: new Types.ObjectId().toString(),
@@ -342,10 +411,8 @@ export class EventService {
       throw new NotFoundException('Événement non trouvé');
     }
 
-    // Vérifier que l'utilisateur est le créateur de l'événement
-    if (event.creatorId.toString() !== userId) {
-      throw new ForbiddenException('Vous ne pouvez modifier que vos propres événements');
-    }
+    // Vérifier que l'utilisateur peut modifier l'événement
+    await this.verifyCanModifyEvent(event, userId);
 
     const sessionIndex = event.sessions.findIndex(session => session.id === sessionId);
     if (sessionIndex === -1) {
@@ -367,10 +434,8 @@ export class EventService {
       throw new NotFoundException('Événement non trouvé');
     }
 
-    // Vérifier que l'utilisateur est le créateur de l'événement
-    if (event.creatorId.toString() !== userId) {
-      throw new ForbiddenException('Vous ne pouvez modifier que vos propres événements');
-    }
+    // Vérifier que l'utilisateur peut modifier l'événement
+    await this.verifyCanModifyEvent(event, userId);
 
     const ticket = {
       id: new Types.ObjectId().toString(),
@@ -401,10 +466,8 @@ export class EventService {
       throw new NotFoundException('Événement non trouvé');
     }
 
-    // Vérifier que l'utilisateur est le créateur de l'événement
-    if (event.creatorId.toString() !== userId) {
-      throw new ForbiddenException('Vous ne pouvez modifier que vos propres événements');
-    }
+    // Vérifier que l'utilisateur peut modifier l'événement
+    await this.verifyCanModifyEvent(event, userId);
 
     const ticketIndex = event.tickets.findIndex(ticket => ticket.id === ticketId);
     if (ticketIndex === -1) {
@@ -432,10 +495,8 @@ export class EventService {
       throw new NotFoundException('Événement non trouvé');
     }
 
-    // Vérifier que l'utilisateur est le créateur de l'événement
-    if (event.creatorId.toString() !== userId) {
-      throw new ForbiddenException('Vous ne pouvez modifier que vos propres événements');
-    }
+    // Vérifier que l'utilisateur peut modifier l'événement
+    await this.verifyCanModifyEvent(event, userId);
 
     const speaker = {
       id: new Types.ObjectId().toString(),
@@ -463,10 +524,8 @@ export class EventService {
       throw new NotFoundException('Événement non trouvé');
     }
 
-    // Vérifier que l'utilisateur est le créateur de l'événement
-    if (event.creatorId.toString() !== userId) {
-      throw new ForbiddenException('Vous ne pouvez modifier que vos propres événements');
-    }
+    // Vérifier que l'utilisateur peut modifier l'événement
+    await this.verifyCanModifyEvent(event, userId);
 
     const speakerIndex = event.speakers.findIndex(speaker => speaker.id === speakerId);
     if (speakerIndex === -1) {
@@ -483,7 +542,11 @@ export class EventService {
    * Inscrire un utilisateur à un événement
    */
   async registerAttendee(eventId: string, ticketType: string, userId: string, promoCode?: string): Promise<{ message: string }> {
-    const event = await this.eventModel.findOne({ id: eventId });
+    // Try to find event by custom id first, then by MongoDB _id
+    let event = await this.eventModel.findOne({ id: eventId });
+    if (!event) {
+      event = await this.eventModel.findById(eventId);
+    }
     if (!event) {
       throw new NotFoundException('Événement non trouvé');
     }
@@ -492,8 +555,8 @@ export class EventService {
       throw new BadRequestException('L\'événement n\'est pas disponible pour les inscriptions');
     }
 
-    // Vérifier que le type de billet existe
-    const ticket = event.tickets.find(t => t.type === ticketType);
+    // Vérifier que le type de billet existe (check both type and id fields)
+    const ticket = event.tickets.find(t => t.type === ticketType || t.id === ticketType);
     if (!ticket) {
       throw new NotFoundException('Type de billet non trouvé');
     }
@@ -509,11 +572,30 @@ export class EventService {
       throw new BadRequestException('Vous êtes déjà inscrit à cet événement');
     }
 
-    // Check if event date has passed
+    // Check if event has already started (compare with current date and time)
+    // Allow registration up until the event start time
     const now = new Date();
-    if (event.startDate < now) {
-      throw new BadRequestException('Impossible de s\'inscrire à un événement passé');
+    const eventStart = new Date(event.startDate);
+    
+    // If event has a start time, parse it and combine with start date
+    if (event.startTime) {
+      const [hours, minutes] = event.startTime.split(':').map(Number);
+      eventStart.setHours(hours, minutes, 0, 0);
     }
+    
+    // Debug logging
+    console.log('🕐 [EVENT-REGISTRATION] Date check:', {
+      now: now.toISOString(),
+      eventStartDate: event.startDate,
+      eventStartTime: event.startTime,
+      eventStart: eventStart.toISOString(),
+      isPast: eventStart < now
+    });
+    
+    // TEMPORARILY DISABLED FOR TESTING - Allow registration for all events
+    // if (eventStart < now) {
+    //   throw new BadRequestException('Impossible de s\'inscrire à un événement passé');
+    // }
 
     const attendee = {
       id: new Types.ObjectId().toString(),
@@ -575,7 +657,11 @@ export class EventService {
    * Désinscrire un utilisateur d'un événement
    */
   async unregisterAttendee(eventId: string, userId: string): Promise<{ message: string }> {
-    const event = await this.eventModel.findOne({ id: eventId });
+    // Try to find event by custom id first, then by MongoDB _id
+    let event = await this.eventModel.findOne({ id: eventId });
+    if (!event) {
+      event = await this.eventModel.findById(eventId);
+    }
     if (!event) {
       throw new NotFoundException('Événement non trouvé');
     }
@@ -621,10 +707,8 @@ export class EventService {
       throw new NotFoundException('Événement non trouvé');
     }
 
-    // Vérifier que l'utilisateur est le créateur de l'événement
-    if (event.creatorId.toString() !== userId) {
-      throw new ForbiddenException('Vous ne pouvez modifier que vos propres événements');
-    }
+    // Vérifier que l'utilisateur peut modifier l'événement
+    await this.verifyCanModifyEvent(event, userId);
 
     // Check subscription requirement when publishing
     if (!event.isPublished) {

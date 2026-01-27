@@ -41,6 +41,12 @@ export class PolicyService {
   }
 
   async hasActiveSubscription(creatorId: Types.ObjectId | string): Promise<boolean> {
+    // Check if FREE_MODE is enabled
+    const FREE_MODE = process.env.FREE_MODE === 'true';
+    if (FREE_MODE) {
+      return true; // Always return true in FREE_MODE
+    }
+
     const now = new Date();
     const sub = await this.subModel.findOne({ creatorId: new Types.ObjectId(creatorId as any) }).lean();
     if (!sub) return false;

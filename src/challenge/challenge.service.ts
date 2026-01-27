@@ -52,18 +52,42 @@ export class ChallengeService {
    * Helper method to find a challenge by ID (supports both MongoDB _id and custom id field)
    */
   private async findChallengeById(id: string): Promise<ChallengeDocument | null> {
-    let challenge = null;
-    
+    let challenge: ChallengeDocument | null = null;
+
     // Try to find by MongoDB _id first
     if (Types.ObjectId.isValid(id)) {
       challenge = await this.challengeModel.findById(id);
     }
-    
+
     // If not found, try by custom id field
     if (!challenge) {
       challenge = await this.challengeModel.findOne({ id });
     }
-    
+
+    // Self-healing: Ensure all tasks have an ID
+    // This fixes issues where tasks created or migrated might lack IDs, causing issues on mobile
+    if (challenge && challenge.tasks) {
+      let hasChanges = false;
+      challenge.tasks.forEach(task => {
+        if (!task.id) {
+          task.id = new Types.ObjectId().toString();
+          hasChanges = true;
+          console.log(`🔧 [CHALLENGE-SERVICE] Self-healing: generated ID for task in challenge ${challenge.id}`);
+        }
+      });
+
+      if (hasChanges) {
+        try {
+          // Use updateOne to avoid validation issues on other fields if any, or just save
+          // save() triggers validation hooks which is safer
+          await challenge.save();
+          console.log(`✅ [CHALLENGE-SERVICE] Saved repaired challenge ${challenge.id}`);
+        } catch (err) {
+          console.error(`❌ [CHALLENGE-SERVICE] Failed to save repaired challenge:`, err);
+        }
+      }
+    }
+
     return challenge;
   }
 
@@ -502,14 +526,14 @@ export class ChallengeService {
   async findOne(id: string): Promise<ChallengeResponseDto> {
     // Try to find by MongoDB _id first, then by custom id field
     let challenge: ChallengeDocument | null = null;
-    
+
     if (Types.ObjectId.isValid(id)) {
       challenge = await this.challengeModel
         .findById(id)
         .populate('creatorId', 'name email avatar')
         .exec();
     }
-    
+
     if (!challenge) {
       challenge = await this.challengeModel
         .findOne({ id })
@@ -577,15 +601,15 @@ export class ChallengeService {
   ): Promise<ChallengeResponseDto> {
     // Try to find by MongoDB _id first, then by custom id field
     let challenge: ChallengeDocument | null = null;
-    
+
     if (Types.ObjectId.isValid(id)) {
       challenge = await this.challengeModel.findById(id);
     }
-    
+
     if (!challenge) {
       challenge = await this.challengeModel.findOne({ id });
     }
-    
+
     if (!challenge) {
       throw new NotFoundException('Défi non trouvé');
     }
@@ -594,18 +618,18 @@ export class ChallengeService {
     // Handle both ObjectId and string comparison
     const creatorIdStr = challenge.creatorId?.toString() || '';
     const userIdStr = userId?.toString() || '';
-    
+
     console.log('🔧 DEBUG - Challenge Update Authorization');
     console.log(`   Challenge ID: ${id}`);
     console.log(`   Creator ID (from challenge): ${creatorIdStr}`);
     console.log(`   User ID (from request): ${userIdStr}`);
     console.log(`   Match: ${creatorIdStr === userIdStr}`);
-    
+
     if (creatorIdStr !== userIdStr) {
       // Also try comparing with _id in case userId is the MongoDB _id
       const challengeMongoId = challenge._id?.toString() || '';
       console.log(`   Challenge MongoDB _id: ${challengeMongoId}`);
-      
+
       throw new ForbiddenException('Seul le créateur du défi peut le modifier');
     }
 
@@ -666,15 +690,15 @@ export class ChallengeService {
   async remove(id: string, userId: string): Promise<void> {
     // Try to find by MongoDB _id first, then by custom id field
     let challenge: ChallengeDocument | null = null;
-    
+
     if (Types.ObjectId.isValid(id)) {
       challenge = await this.challengeModel.findById(id);
     }
-    
+
     if (!challenge) {
       challenge = await this.challengeModel.findOne({ id });
     }
-    
+
     if (!challenge) {
       throw new NotFoundException('Défi non trouvé');
     }
@@ -682,7 +706,7 @@ export class ChallengeService {
     // Vérifier que l'utilisateur est le créateur du défi
     const creatorIdStr = challenge.creatorId?.toString() || '';
     const userIdStr = userId?.toString() || '';
-    
+
     if (creatorIdStr !== userIdStr) {
       throw new ForbiddenException(
         'Seul le créateur du défi peut le supprimer',
@@ -702,15 +726,15 @@ export class ChallengeService {
     // Try to find by MongoDB _id first, then by custom id field
     let challenge: ChallengeDocument | null = null;
     const challengeId = joinChallengeDto.challengeId;
-    
+
     if (Types.ObjectId.isValid(challengeId)) {
       challenge = await this.challengeModel.findById(challengeId);
     }
-    
+
     if (!challenge) {
       challenge = await this.challengeModel.findOne({ id: challengeId });
     }
-    
+
     if (!challenge) {
       throw new NotFoundException('Défi non trouvé');
     }
@@ -816,71 +840,130 @@ export class ChallengeService {
     updateProgressDto: UpdateProgressDto,
     userId: string,
   ): Promise<ChallengeResponseDto> {
-    const challenge = await this.findChallengeById(updateProgressDto.challengeId);
-    if (!challenge) {
-      throw new NotFoundException('Défi non trouvé');
-    }
+    console.log('🔄 [DEBUG-BACKEND] updateProgress called', {
+      dto: updateProgressDto,
+      userId,
+      userIdType: typeof userId
+    });
 
-    // Vérifier que l'utilisateur est participant
-    if (!challenge.isParticipant(new Types.ObjectId(userId))) {
-      throw new BadRequestException("Vous n'êtes pas participant à ce défi");
-    }
-
-    // Trouver la tâche
-    const task = challenge.tasks?.find(
-      (t) => t.id === updateProgressDto.taskId,
-    );
-    if (!task) {
-      throw new NotFoundException('Tâche non trouvée');
-    }
-
-    // Mettre à jour le statut de la tâche
-    if (updateProgressDto.status === 'completed') {
-      task.isCompleted = true;
-    } else if (updateProgressDto.status === 'in_progress') {
-      task.isCompleted = false;
-    } else {
-      task.isCompleted = false;
-    }
-
-    // Mettre à jour le progrès du participant
-    const participant = challenge.participants.find(
-      (p) => p.userId.toString() === userId,
-    );
-    if (participant) {
-      if (
-        updateProgressDto.status === 'completed' &&
-        !participant.completedTasks.includes(updateProgressDto.taskId)
-      ) {
-        participant.completedTasks.push(updateProgressDto.taskId);
-        participant.totalPoints += task.points;
-      } else if (
-        updateProgressDto.status !== 'completed' &&
-        participant.completedTasks.includes(updateProgressDto.taskId)
-      ) {
-        participant.completedTasks = participant.completedTasks.filter(
-          (id) => id !== updateProgressDto.taskId,
-        );
-        participant.totalPoints = Math.max(
-          0,
-          participant.totalPoints - task.points,
-        );
+    try {
+      const challenge = await this.findChallengeById(updateProgressDto.challengeId);
+      if (!challenge) {
+        console.warn(`⚠️ [DEBUG-BACKEND] Challenge not found: ${updateProgressDto.challengeId}`);
+        throw new NotFoundException('Défi non trouvé');
       }
 
-      // Calculer le progrès en pourcentage
-      participant.progress = Math.round(
-        (participant.completedTasks.length / (challenge.tasks?.length || 1)) *
-        100,
+      console.log('✅ [DEBUG-BACKEND] Challenge found:', challenge.id);
+
+      // Verify userId is valid for ObjectId
+      let userObjectId: Types.ObjectId;
+      try {
+        userObjectId = new Types.ObjectId(userId);
+      } catch (e) {
+        console.error(`❌ [DEBUG-BACKEND] Invalid User ID format: ${userId}`);
+        throw new BadRequestException('ID utilisateur invalide');
+      }
+
+      // Check participation
+      // Safe check: ensure method exists
+      if (typeof challenge.isParticipant !== 'function') {
+        console.error('❌ [DEBUG-BACKEND] challenge.isParticipant is not a function. Check Schema compilation.');
+        // Fallback manual check
+        const isPart = challenge.participants && challenge.participants.some(p => p.userId.toString() === userId);
+        if (!isPart) {
+          throw new BadRequestException("Vous n'êtes pas participant à ce défi (fallback check)");
+        }
+      } else {
+        if (!challenge.isParticipant(userObjectId)) {
+          console.warn(`⚠️ [DEBUG-BACKEND] User ${userId} is not participant in ${challenge.id}`);
+          throw new BadRequestException("Vous n'êtes pas participant à ce défi");
+        }
+      }
+
+      // Find task
+      const task = challenge.tasks?.find(
+        (t) => t.id === updateProgressDto.taskId,
       );
-      participant.lastActivityAt = new Date();
+
+      if (!task) {
+        console.warn(`⚠️ [DEBUG-BACKEND] Task not found: ${updateProgressDto.taskId}`);
+        console.log('📋 [DEBUG-BACKEND] Available task IDs:', challenge.tasks?.map(t => t.id));
+        throw new NotFoundException('Tâche non trouvée');
+      }
+
+      console.log(`✅ [DEBUG-BACKEND] Updating task ${task.id} to ${updateProgressDto.status}`);
+
+      // Update task status (Note: this updates the DEFINITION of the task, not just user progress?
+      // WAIT: challenge.tasks[i].isCompleted is a global property?
+      // Looking at Schema: ChallengeTask has isCompleted Boolean.
+      // If this is set to true, it's completed for EVERYONE?
+      // NO, this seems to be a schema flaw or specific design.
+      // Usually task completion is tracked in participant.completedTasks array.
+      // Modifying challenge.tasks global array might be wrong if it's per-user.)
+
+      // Based on schema, 'completedTasks' in participant is the source of truth for user.
+      // 'task.isCompleted' in ChallengeTask schema likely means "task is effectively done/closed for edit" or legacy?
+      // Only modifying participant progress below is safe.
+
+      // Update member's progress in participant list
+      const participant = challenge.participants.find(
+        (p) => p.userId.toString() === userId,
+      );
+
+      if (participant) {
+        if (
+          updateProgressDto.status === 'completed' &&
+          !participant.completedTasks.includes(updateProgressDto.taskId)
+        ) {
+          participant.completedTasks.push(updateProgressDto.taskId);
+          participant.totalPoints = (participant.totalPoints || 0) + (task.points || 0);
+        } else if (
+          updateProgressDto.status !== 'completed' &&
+          participant.completedTasks.includes(updateProgressDto.taskId)
+        ) {
+          participant.completedTasks = participant.completedTasks.filter(
+            (id) => id !== updateProgressDto.taskId,
+          );
+          participant.totalPoints = Math.max(
+            0,
+            (participant.totalPoints || 0) - (task.points || 0),
+          );
+        }
+
+        // Calculate progress percentage
+        const totalTasksCount = challenge.tasks?.length || 1;
+        participant.progress = Math.round(
+          (participant.completedTasks.length / totalTasksCount) * 100
+        );
+        participant.lastActivityAt = new Date();
+
+        console.log(`✅ [DEBUG-BACKEND] Updated participant progress: ${participant.progress}%`);
+      } else {
+        console.error(`❌ [DEBUG-BACKEND] Participant object not found for user ${userId}`);
+        throw new BadRequestException('Participant introuvable');
+      }
+
+      // Save using Mongoose
+      try {
+        await challenge.save();
+        console.log('✅ [DEBUG-BACKEND] Challenge saved successfully');
+      } catch (saveError) {
+        console.error('❌ [DEBUG-BACKEND] Error saving challenge:', saveError);
+        throw new BadRequestException('Erreur lors de la sauvegarde du progrès: ' + saveError.message);
+      }
+
+      const community = await this.communityModel.findOne({
+        id: challenge.communityId,
+      });
+      return this.transformToResponseDto(challenge, community || undefined);
+
+    } catch (error) {
+      console.error('💥 [DEBUG-BACKEND] Exception in updateProgress:', error);
+      if (error instanceof NotFoundException || error instanceof BadRequestException || error instanceof ForbiddenException) {
+        throw error;
+      }
+      throw new BadRequestException('Erreur interne lors de la mise à jour: ' + (error.message || error));
     }
-
-    await challenge.save();
-
-    const community = await this.communityModel.findOne({
-      id: challenge.communityId,
-    });
-    return this.transformToResponseDto(challenge, community || undefined);
   }
 
   /**
@@ -2106,7 +2189,7 @@ export class ChallengeService {
     try {
       // 1. Récupérer le défi
       const challenge = await this.findChallengeById(challengeId);
-      
+
       if (!challenge) {
         console.error(`   ❌ Challenge not found with ID: ${challengeId}`);
         console.error(`   🔍 Tried MongoDB _id lookup: ${Types.ObjectId.isValid(challengeId)}`);
@@ -2163,12 +2246,12 @@ export class ChallengeService {
       // 5. Construire le classement
       const leaderboard = sortedParticipants.map((participant, index) => {
         const user = users.find(u => u._id.toString() === participant.userId.toString());
-        
+
         return {
           rank: index + 1,
           userId: participant.userId.toString(),
           userName: user?.name || 'Utilisateur inconnu',
-          userAvatar: user?.profile_picture || user?.photo_profil  || null,
+          userAvatar: user?.profile_picture || user?.photo_profil || null,
           totalPoints: participant.totalPoints || 0,
           completedTasks: participant.completedTasks?.length || 0,
           progress: participant.progress || 0,
@@ -2235,11 +2318,11 @@ export class ChallengeService {
       // Handle both ObjectId and string comparison
       const creatorIdStr = challenge.creatorId?.toString() || '';
       const userIdStr = userId?.toString() || '';
-      
+
       console.log(`   🔍 Creator ID (from challenge): ${creatorIdStr}`);
       console.log(`   🔍 User ID (from request): ${userIdStr}`);
       console.log(`   🔍 Match: ${creatorIdStr === userIdStr}`);
-      
+
       if (creatorIdStr !== userIdStr) {
         throw new ForbiddenException(
           'Seul le créateur du défi peut accéder aux analytics',
@@ -2254,16 +2337,16 @@ export class ChallengeService {
       const totalParticipants = participants.length;
       const activeParticipants = participants.filter(p => p.isActive).length;
       const completedParticipants = participants.filter(p => p.progress === 100).length;
-      const completionRate = totalParticipants > 0 
-        ? Math.round((completedParticipants / totalParticipants) * 100) 
+      const completionRate = totalParticipants > 0
+        ? Math.round((completedParticipants / totalParticipants) * 100)
         : 0;
       const averageProgress = totalParticipants > 0
         ? Math.round(participants.reduce((acc, p) => acc + (p.progress || 0), 0) / totalParticipants)
         : 0;
-      
+
       // Calculate total completed tasks across all participants
       const completedTasksTotal = participants.reduce(
-        (acc, p) => acc + (p.completedTasks?.length || 0), 
+        (acc, p) => acc + (p.completedTasks?.length || 0),
         0
       );
 
@@ -2395,8 +2478,8 @@ export class ChallengeService {
         totalRevenue,
         participationFees: participationFee * totalParticipants,
         deposits: depositAmount * totalParticipants,
-        averageRevenuePerParticipant: totalParticipants > 0 
-          ? Math.round(totalRevenue / totalParticipants) 
+        averageRevenuePerParticipant: totalParticipants > 0
+          ? Math.round(totalRevenue / totalParticipants)
           : 0,
         currency: challenge.pricing?.currency || 'TND',
         isPremium: challenge.pricing?.isPremium || false,
@@ -2420,7 +2503,7 @@ export class ChallengeService {
         shares: 0,
         bookmarks: 0,
       };
-      
+
       try {
         const stats = await this.trackingService.getContentStats(
           challengeId,

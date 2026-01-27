@@ -37,7 +37,7 @@ export class EventController {
     @Body() createEventDto: CreateEventDto,
     @Request() req
   ): Promise<{ success: boolean; data: EventResponseDto }> {
-    const userId = req.user._id || req.user.userId;
+    const userId = req.user._id || req.user.userId || req.user.id;
     const event = await this.eventService.create(createEventDto, userId);
     return { success: true, data: event };
   }
@@ -85,7 +85,8 @@ export class EventController {
   async getMyRegistrations(
     @Request() req
   ): Promise<{ success: boolean; events: any[] }> {
-    const events = await this.eventService.getMyRegistrations(req.user.userId);
+    const userId = req.user._id || req.user.userId || req.user.id;
+    const events = await this.eventService.getMyRegistrations(userId);
     return { success: true, events };
   }
 
@@ -132,7 +133,7 @@ export class EventController {
   async findByCreator(
     @Param('creatorId') creatorId: string,
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
-    @Query('limit', new DefaultValuePipe(10), ParseIntPipe) limit: number,
+    @Query('limit', new DefaultValuePipe(50), ParseIntPipe) limit: number,
     @Query('communityId') communityId?: string
   ): Promise<{ success: boolean; data: EventListResponseDto }> {
     const events = await this.eventService.findByCreator(creatorId, page, limit, communityId);
@@ -154,7 +155,8 @@ export class EventController {
     @Query('promoCode') promoCode: string | undefined,
     @Request() req
   ): Promise<{ success: boolean; message: string }> {
-    const result = await this.eventService.registerAttendee(eventId, ticketType, req.user.userId, promoCode);
+    const userId = req.user._id || req.user.userId || req.user.id;
+    const result = await this.eventService.registerAttendee(eventId, ticketType, userId, promoCode);
     return { success: true, ...result };
   }
 
@@ -169,7 +171,8 @@ export class EventController {
     @Param('id') eventId: string,
     @Request() req
   ): Promise<{ success: boolean; message: string }> {
-    const result = await this.eventService.unregisterAttendee(eventId, req.user.userId);
+    const userId = req.user._id || req.user.userId || req.user.id;
+    const result = await this.eventService.unregisterAttendee(eventId, userId);
     return { success: true, ...result };
   }
 
@@ -187,7 +190,18 @@ export class EventController {
     @Body() updateEventDto: UpdateEventDto,
     @Request() req
   ): Promise<{ success: boolean; data: EventResponseDto }> {
-    const event = await this.eventService.update(id, updateEventDto, req.user.userId);
+    const userId = req.user._id || req.user.userId || req.user.id;
+    console.log('🔐 [EVENT UPDATE] User attempting to update event:', {
+      eventId: id,
+      userId: userId,
+      userObject: req.user,
+      updateData: {
+        title: updateEventDto.title,
+        isActive: updateEventDto.isActive,
+        isPublished: updateEventDto.isPublished
+      }
+    });
+    const event = await this.eventService.update(id, updateEventDto, userId);
     return { success: true, data: event };
   }
 
@@ -203,7 +217,8 @@ export class EventController {
     @Param('id') id: string,
     @Request() req
   ): Promise<{ success: boolean; message: string }> {
-    const result = await this.eventService.remove(id, req.user.userId);
+    const userId = req.user._id || req.user.userId || req.user.id;
+    const result = await this.eventService.remove(id, userId);
     return { success: true, ...result };
   }
 
@@ -221,7 +236,8 @@ export class EventController {
     @Body() createSessionDto: CreateEventSessionDto,
     @Request() req
   ): Promise<{ success: boolean; data: any }> {
-    const session = await this.eventService.addSession(eventId, createSessionDto, req.user.userId);
+    const userId = req.user._id || req.user.userId || req.user.id;
+    const session = await this.eventService.addSession(eventId, createSessionDto, userId);
     return { success: true, data: session };
   }
 
@@ -238,7 +254,8 @@ export class EventController {
     @Param('sessionId') sessionId: string,
     @Request() req
   ): Promise<{ success: boolean; message: string }> {
-    const result = await this.eventService.removeSession(eventId, sessionId, req.user.userId);
+    const userId = req.user._id || req.user.userId || req.user.id;
+    const result = await this.eventService.removeSession(eventId, sessionId, userId);
     return { success: true, ...result };
   }
 
@@ -256,7 +273,8 @@ export class EventController {
     @Body() createTicketDto: CreateEventTicketDto,
     @Request() req
   ): Promise<{ success: boolean; data: any }> {
-    const ticket = await this.eventService.addTicket(eventId, createTicketDto, req.user.userId);
+    const userId = req.user._id || req.user.userId || req.user.id;
+    const ticket = await this.eventService.addTicket(eventId, createTicketDto, userId);
     return { success: true, data: ticket };
   }
 
@@ -273,7 +291,8 @@ export class EventController {
     @Param('ticketId') ticketId: string,
     @Request() req
   ): Promise<{ success: boolean; message: string }> {
-    const result = await this.eventService.removeTicket(eventId, ticketId, req.user.userId);
+    const userId = req.user._id || req.user.userId || req.user.id;
+    const result = await this.eventService.removeTicket(eventId, ticketId, userId);
     return { success: true, ...result };
   }
 
@@ -291,7 +310,8 @@ export class EventController {
     @Body() createSpeakerDto: CreateEventSpeakerDto,
     @Request() req
   ): Promise<{ success: boolean; data: any }> {
-    const speaker = await this.eventService.addSpeaker(eventId, createSpeakerDto, req.user.userId);
+    const userId = req.user._id || req.user.userId || req.user.id;
+    const speaker = await this.eventService.addSpeaker(eventId, createSpeakerDto, userId);
     return { success: true, data: speaker };
   }
 
@@ -308,7 +328,8 @@ export class EventController {
     @Param('speakerId') speakerId: string,
     @Request() req
   ): Promise<{ success: boolean; message: string }> {
-    const result = await this.eventService.removeSpeaker(eventId, speakerId, req.user.userId);
+    const userId = req.user._id || req.user.userId || req.user.id;
+    const result = await this.eventService.removeSpeaker(eventId, speakerId, userId);
     return { success: true, ...result };
   }
 
@@ -324,7 +345,8 @@ export class EventController {
     @Param('id') eventId: string,
     @Request() req
   ): Promise<{ success: boolean; message: string; isPublished: boolean }> {
-    const result = await this.eventService.togglePublished(eventId, req.user.userId);
+    const userId = req.user._id || req.user.userId || req.user.id;
+    const result = await this.eventService.togglePublished(eventId, userId);
     return { success: true, ...result };
   }
 }

@@ -265,7 +265,6 @@ export class Event {
   timezone: string;
 
   @Prop({
-    required: true,
     trim: true,
     maxlength: 200
   })
