@@ -37,7 +37,7 @@ export class EventController {
     @Body() createEventDto: CreateEventDto,
     @Request() req
   ): Promise<{ success: boolean; data: EventResponseDto }> {
-    const userId = req.user._id || req.user.userId || req.user.id;
+    const userId = req.user._id || req.user.userId || req.user.sub || req.user.id;
     const event = await this.eventService.create(createEventDto, userId);
     return { success: true, data: event };
   }
