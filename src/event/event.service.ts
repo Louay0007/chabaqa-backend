@@ -809,12 +809,12 @@ export class EventService {
     };
 
     // Récupérer les informations du créateur
-    const creator = await this.userModel.findById(event.creatorId).select('name email profile_picture');
+    const creator = await this.userModel.findById(event.creatorId).select('name email profile_picture photo_profil');
     const creatorInfo = creator ? {
       id: creator._id.toString(),
       name: creator.name,
       email: creator.email,
-      profile_picture: creator.profile_picture
+      profile_picture: creator.profile_picture || (creator as any).photo_profil
     } : {
       id: event.creatorId?.toString() || 'unknown',
       name: 'Unknown Creator',

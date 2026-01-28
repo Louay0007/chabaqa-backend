@@ -545,6 +545,30 @@ export class ChallengeService {
       throw new NotFoundException('Défi non trouvé');
     }
 
+    if (challenge.tasks?.length) {
+      let hasChanges = false;
+      challenge.tasks.forEach((task) => {
+        if (!task.id) {
+          task.id = new Types.ObjectId().toString();
+          hasChanges = true;
+        }
+      });
+
+      if (hasChanges) {
+        try {
+          await challenge.save();
+          console.log(
+            `✅ [CHALLENGE-SERVICE] Saved repaired challenge ${challenge.id}`,
+          );
+        } catch (err) {
+          console.error(
+            `❌ [CHALLENGE-SERVICE] Failed to save repaired challenge ${challenge.id}`,
+            err,
+          );
+        }
+      }
+    }
+
     // Look up community by _id (convert string to ObjectId if needed)
     let community;
     try {
@@ -1163,10 +1187,24 @@ export class ChallengeService {
       thumbnail: challenge.thumbnail,
       notes: challenge.notes,
       resources: challenge.resources || [],
-      tasks: (challenge.tasks || []).map((task) => ({
-        ...task,
-        createdAt: task.createdAt.toISOString(),
-      })),
+      tasks: (challenge.tasks || []).map((task) => {
+        const taskIdRaw = (task as any).id || (task as any)._id;
+        const taskId = taskIdRaw ? String(taskIdRaw) : new Types.ObjectId().toString();
+        return {
+          id: taskId,
+          day: task.day,
+          title: task.title,
+          description: task.description,
+          deliverable: task.deliverable,
+          isCompleted: task.isCompleted,
+          isActive: task.isActive,
+          points: task.points,
+          instructions: task.instructions,
+          notes: task.notes,
+          resources: task.resources || [],
+          createdAt: task.createdAt?.toISOString?.() || new Date(task.createdAt).toISOString(),
+        };
+      }),
       participantCount: challenge.participants.length,
       isOngoing: isOngoing,
       isCompleted: isCompleted,

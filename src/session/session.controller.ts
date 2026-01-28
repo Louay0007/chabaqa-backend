@@ -138,7 +138,8 @@ export class SessionController {
     @Query('promoCode') promoCode: string | undefined,
     @Request() req: any
   ): Promise<SessionResponseDto> {
-    return this.sessionService.bookSession(sessionId, bookSessionDto, req.user.userId, promoCode);
+    const userId = req.user._id || req.user.userId || req.user.sub || req.user.id;
+    return this.sessionService.bookSession(sessionId, bookSessionDto, userId, promoCode);
   }
 
   @Patch('bookings/:bookingId/confirm')
@@ -418,7 +419,8 @@ export class SessionController {
     @Body() bookSlotDto: BookSlotDto,
     @Request() req: any
   ): Promise<SessionResponseDto> {
-    return this.sessionService.bookSlot(sessionId, bookSlotDto, req.user.userId);
+    const userId = req.user._id || req.user.userId || req.user.sub || req.user.id;
+    return this.sessionService.bookSlot(sessionId, bookSlotDto, userId);
   }
 
   @Patch(':id/cancel-slot/:slotId')
