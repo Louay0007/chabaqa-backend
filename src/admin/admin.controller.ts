@@ -1,14 +1,14 @@
 import { Controller, Post, Body, HttpStatus, Res, ConflictException, HttpCode, Response as ExpressResponse, Req, UseGuards, Delete } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBody, ApiExtraModels } from '@nestjs/swagger';
 import { AdminService } from './admin.service';
-import { CreateAdminDto } from 'src/dto-admin/create-admin.dto';
-import { AdminLoginDto } from 'src/dto-admin/login.dto';
-import { AdminLoginResponseDto } from 'src/dto-admin/login-response.dto';
-import { CookieUtil } from 'src/common/utils/cookie.util';
-import { AdminVerify2FADto } from 'src/dto-admin/verify-2fa.dto';
-import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
-import { AdminForgotPasswordDto } from 'src/dto-admin/forgot-password.dto';
-import { AdminResetPasswordDto } from 'src/dto-admin/reset-password.dto';
+import { CreateAdminDto } from '../dto-admin/create-admin.dto';
+import { AdminLoginDto } from '../dto-admin/login.dto';
+import { AdminLoginResponseDto } from '../dto-admin/login-response.dto';
+import { CookieUtil } from '../common/utils/cookie.util';
+import { AdminVerify2FADto } from '../dto-admin/verify-2fa.dto';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { AdminForgotPasswordDto } from '../dto-admin/forgot-password.dto';
+import { AdminResetPasswordDto } from '../dto-admin/reset-password.dto';
 
 @ApiTags('Admin')
 @ApiExtraModels(AdminLoginDto, AdminVerify2FADto, AdminForgotPasswordDto, AdminResetPasswordDto, AdminLoginResponseDto)

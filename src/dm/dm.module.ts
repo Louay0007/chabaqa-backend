@@ -29,7 +29,7 @@ import { Admin, AdminSchema } from '../schema/admin.schema';
   ],
   controllers: [DmController],
   providers: [DmService, DmGateway],
-  exports: [DmService],
+  exports: [DmService, DmGateway],
 })
 export class DmModule {}
 

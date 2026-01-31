@@ -749,6 +749,53 @@ export class Community {
    * Date de mise à jour
    */
   updatedAt: Date;
+
+  // ============ Admin-specific fields for enhanced admin module ============
+
+  /**
+   * Approval status for admin workflow
+   */
+  @Prop({
+    enum: ['pending', 'approved', 'rejected'],
+    default: 'pending'
+  })
+  approvalStatus?: string;
+
+  /**
+   * Admin who approved/rejected the community
+   */
+  @Prop({
+    type: Types.ObjectId,
+    ref: 'AdminUser'
+  })
+  approvedBy?: Types.ObjectId;
+
+  /**
+   * Date when the community was approved/rejected
+   */
+  @Prop()
+  approvedAt?: Date;
+
+  /**
+   * Reason for rejection (if rejected)
+   */
+  @Prop()
+  rejectionReason?: string;
+
+  /**
+   * Admin notes for internal use
+   */
+  @Prop()
+  adminNotes?: string;
+
+  /**
+   * Whether the community is suspended by admin
+   */
+  @Prop({
+    type: Boolean,
+    default: false
+  })
+  isSuspended?: boolean;
 }
 
 /**

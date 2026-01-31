@@ -53,6 +53,8 @@ import { SessionSchema } from './schema/session.schema';
 import { FlouciModule } from './common/modules/flouci.module';
 import { DmModule } from './dm/dm.module';
 import { AnalyticsModule } from './analytics/analytics.module';
+import { EmailModule } from './email/email.module';
+import { PaymentModule } from './common/modules/payment.module';
 import { FeedbackModule } from './feedback/feedback.module';
 import { NotificationModule } from './notification/notification.module';
 import { CommunitiesModule } from './communities/communities.module';
@@ -68,6 +70,11 @@ import { Achievement, AchievementSchema } from './schema/achievement.schema';
 import { UserAchievement, UserAchievementSchema } from './schema/user-achievement.schema';
 import { ManualPaymentService } from './common/services/manual-payment.service';
 import { WalletModule } from './wallet/wallet.module';
+
+// Import new admin schemas
+import { AdminUser, AdminUserSchema } from './admin/schemas/admin-user.schema';
+import { AuditLog, AuditLogSchema } from './admin/schemas/audit-log.schema';
+import { ContentModerationQueue, ContentModerationQueueSchema } from './admin/schemas/content-moderation-queue.schema';
 
 @Module({
   imports: [
@@ -132,10 +139,16 @@ import { WalletModule } from './wallet/wallet.module';
       { name: Subscription.name, schema: SubscriptionSchema },
       { name: 'CourseEnrollment', schema: CourseEnrollmentSchema },
       { name: 'CourseProgress', schema: CourseProgressSchema },
+      // New admin schemas
+      { name: AdminUser.name, schema: AdminUserSchema },
+      { name: AuditLog.name, schema: AuditLogSchema },
+      { name: ContentModerationQueue.name, schema: ContentModerationQueueSchema },
     ]),
     AuthModule,
     CommunityAffCreaJoinModule,
     ResourceModule,
+    EmailModule,
+    PaymentModule,
     AdminModule,
     CoursModule,
     UploadModule,

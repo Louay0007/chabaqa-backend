@@ -1,26 +1,31 @@
 import { Injectable, ConflictException, UnauthorizedException, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
-import { Model, Connection } from 'mongoose';
+import { Model, Connection, Types } from 'mongoose';
 import { InjectConnection } from '@nestjs/mongoose';
-import { Admin, AdminDocument } from 'src/schema/admin.schema';
+import { Admin, AdminDocument } from '../schema/admin.schema';
 import { InjectModel } from '@nestjs/mongoose';
-import { CreateAdminDto } from 'src/dto-admin/create-admin.dto';
+import { CreateAdminDto } from '../dto-admin/create-admin.dto';
 import * as bcrypt from 'bcryptjs';
-import { AdminLoginDto } from 'src/dto-admin/login.dto';
+import { AdminLoginDto } from '../dto-admin/login.dto';
 
-import { AdminLoginResponseDto } from 'src/dto-admin/login-response.dto';
-import { VerificationCodeDocument, VerificationCodeSchema } from 'src/schema/verification-code.schema';
-import { EmailService } from 'src/common/services/email.service';
-import { AdminVerify2FADto } from 'src/dto-admin/verify-2fa.dto';
-import { TokenBlacklistService } from 'src/common/services/token-blacklist.service';
-import { AdminForgotPasswordDto } from 'src/dto-admin/forgot-password.dto';
-import { AdminResetPasswordDto } from 'src/dto-admin/reset-password.dto';
+import { AdminLoginResponseDto } from '../dto-admin/login-response.dto';
+import { VerificationCodeDocument, VerificationCodeSchema } from '../schema/verification-code.schema';
+import { EmailService } from '../common/services/email.service';
+import { AdminVerify2FADto } from '../dto-admin/verify-2fa.dto';
+import { TokenBlacklistService } from '../common/services/token-blacklist.service';
+import { AdminForgotPasswordDto } from '../dto-admin/forgot-password.dto';
+import { AdminResetPasswordDto } from '../dto-admin/reset-password.dto';
+
+// Import new admin-specific schemas and interfaces
+import { AdminUser, AdminUserDocument, AdminRole, AdminPermission } from './schemas/admin-user.schema';
+import { AdminUserInfo } from './common/interfaces/admin-interfaces';
 
 @Injectable()
 export class AdminService {
   constructor(
     @InjectModel(Admin.name) private adminModel: Model<AdminDocument>,
+    @InjectModel(AdminUser.name) private adminUserModel: Model<AdminUserDocument>,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly emailService: EmailService,
@@ -138,14 +143,36 @@ export class AdminService {
       rememberMe: loginAdminDto.remember_me || false,
     });
 
-    // Envoyer le code par email
-    await this.emailService.send2FACode(admin.email, verificationCode, '2fa');
+    // In development mode, log the 2FA code to console
+    const isDevelopment = process.env.NODE_ENV === 'development';
+    if (isDevelopment) {
+      console.log('\n=================================');
+      console.log('🔐 ADMIN 2FA CODE (Development Only)');
+      console.log('=================================');
+      console.log(`Email: ${admin.email}`);
+      console.log(`Code: ${verificationCode}`);
+      console.log(`Expires: ${expiresAt.toISOString()}`);
+      console.log('=================================\n');
+    }
+
+    // Envoyer le code par email (skip in development if email fails)
+    try {
+      await this.emailService.send2FACode(admin.email, verificationCode, '2fa');
+    } catch (error) {
+      if (isDevelopment) {
+        console.warn('[Admin] Email sending failed in development mode, but 2FA code is logged above');
+      } else {
+        throw error;
+      }
+    }
 
     return {
       access_token: "",
       refresh_token: "",
       requires2FA: true,
-      message: 'Code de vérification envoyé par email. Utilisez /auth/verify-2fa pour compléter la connexion.',
+      message: isDevelopment 
+        ? `Code de vérification: ${verificationCode} (Development Mode - Check console)` 
+        : 'Code de vérification envoyé par email. Utilisez /auth/verify-2fa pour compléter la connexion.',
     };
   }
 
@@ -367,6 +394,266 @@ export class AdminService {
       return { deletedCollections };
     } catch (error) {
       throw new BadRequestException(`Failed to cleanup database: ${error.message}`);
+    }
+  }
+
+  // ===== ENHANCED ADMIN USER MANAGEMENT =====
+
+  /**
+   * Check if a user has admin privileges
+   * @param userId - User ID to check
+   */
+  async isAdminUser(userId: string): Promise<boolean> {
+    try {
+      const adminUser = await this.adminUserModel.findOne({ 
+        userId: new Types.ObjectId(userId),
+        isActive: true 
+      });
+      return !!adminUser;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  /**
+   * Get admin user details by user ID
+   * @param userId - User ID
+   */
+  async getAdminUser(userId: string): Promise<AdminUserInfo | null> {
+    try {
+      const adminUser = await this.adminUserModel
+        .findOne({ 
+          userId: new Types.ObjectId(userId),
+          isActive: true 
+        })
+        .populate('userId', 'name email role')
+        .exec();
+
+      if (!adminUser) {
+        return null;
+      }
+
+      return {
+        _id: adminUser._id,
+        userId: adminUser.userId,
+        roles: adminUser.roles,
+        permissions: adminUser.permissions,
+        isActive: adminUser.isActive,
+        lastLoginAt: adminUser.lastLoginAt,
+        lastActivityAt: adminUser.lastActivityAt,
+        user: adminUser.userId as any, // Populated user data
+      };
+    } catch (error) {
+      console.error('Error getting admin user:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Create a new admin user
+   * @param userId - User ID to grant admin privileges
+   * @param roles - Admin roles to assign
+   * @param permissions - Additional permissions to assign
+   * @param createdBy - Admin user who is creating this admin user
+   */
+  async createAdminUser(
+    userId: string,
+    roles: AdminRole[],
+    permissions: AdminPermission[] = [],
+    createdBy: string,
+  ): Promise<AdminUser> {
+    try {
+      // Check if admin user already exists
+      const existingAdminUser = await this.adminUserModel.findOne({ 
+        userId: new Types.ObjectId(userId) 
+      });
+
+      if (existingAdminUser) {
+        throw new ConflictException('User already has admin privileges');
+      }
+
+      const adminUser = new this.adminUserModel({
+        userId: new Types.ObjectId(userId),
+        roles,
+        permissions,
+        isActive: true,
+        createdBy: new Types.ObjectId(createdBy),
+      });
+
+      return await adminUser.save();
+    } catch (error) {
+      if (error instanceof ConflictException) {
+        throw error;
+      }
+      throw new BadRequestException(`Failed to create admin user: ${error.message}`);
+    }
+  }
+
+  /**
+   * Update admin user roles and permissions
+   * @param adminUserId - Admin user ID
+   * @param roles - New roles
+   * @param permissions - New permissions
+   */
+  async updateAdminUser(
+    adminUserId: string,
+    roles?: AdminRole[],
+    permissions?: AdminPermission[],
+  ): Promise<AdminUser> {
+    try {
+      const updateData: any = {};
+      
+      if (roles) {
+        updateData.roles = roles;
+      }
+      
+      if (permissions) {
+        updateData.permissions = permissions;
+      }
+
+      const updatedAdminUser = await this.adminUserModel
+        .findByIdAndUpdate(
+          adminUserId,
+          updateData,
+          { new: true }
+        )
+        .populate('userId', 'name email role')
+        .exec();
+
+      if (!updatedAdminUser) {
+        throw new BadRequestException('Admin user not found');
+      }
+
+      return updatedAdminUser;
+    } catch (error) {
+      throw new BadRequestException(`Failed to update admin user: ${error.message}`);
+    }
+  }
+
+  /**
+   * Deactivate an admin user
+   * @param adminUserId - Admin user ID
+   */
+  async deactivateAdminUser(adminUserId: string): Promise<void> {
+    try {
+      const result = await this.adminUserModel.findByIdAndUpdate(
+        adminUserId,
+        { isActive: false },
+        { new: true }
+      );
+
+      if (!result) {
+        throw new BadRequestException('Admin user not found');
+      }
+    } catch (error) {
+      throw new BadRequestException(`Failed to deactivate admin user: ${error.message}`);
+    }
+  }
+
+  /**
+   * Update last activity timestamp for an admin user
+   * @param adminUserId - Admin user ID
+   */
+  async updateLastActivity(adminUserId: string): Promise<void> {
+    try {
+      await this.adminUserModel.findByIdAndUpdate(
+        adminUserId,
+        { lastActivityAt: new Date() }
+      );
+    } catch (error) {
+      // Don't throw errors for activity updates to avoid breaking main operations
+      console.error('Failed to update admin user activity:', error);
+    }
+  }
+
+  /**
+   * Update last login timestamp for an admin user
+   * @param userId - User ID
+   */
+  async updateLastLogin(userId: string): Promise<void> {
+    try {
+      await this.adminUserModel.findOneAndUpdate(
+        { userId: new Types.ObjectId(userId) },
+        { lastLoginAt: new Date() }
+      );
+    } catch (error) {
+      // Don't throw errors for login updates to avoid breaking main operations
+      console.error('Failed to update admin user login:', error);
+    }
+  }
+
+  /**
+   * Get all admin users with pagination
+   * @param page - Page number
+   * @param limit - Items per page
+   */
+  async getAdminUsers(page: number = 1, limit: number = 20): Promise<{
+    data: AdminUser[];
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  }> {
+    try {
+      const skip = (page - 1) * limit;
+
+      const [data, total] = await Promise.all([
+        this.adminUserModel
+          .find()
+          .populate('userId', 'name email role')
+          .populate('createdBy', 'userId')
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(limit)
+          .exec(),
+        this.adminUserModel.countDocuments(),
+      ]);
+
+      return {
+        data,
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      };
+    } catch (error) {
+      throw new BadRequestException(`Failed to get admin users: ${error.message}`);
+    }
+  }
+
+  /**
+   * Check if admin user has specific role
+   * @param userId - User ID
+   * @param role - Role to check
+   */
+  async hasAdminRole(userId: string, role: AdminRole): Promise<boolean> {
+    try {
+      const adminUser = await this.adminUserModel.findOne({
+        userId: new Types.ObjectId(userId),
+        isActive: true,
+        roles: role,
+      });
+      return !!adminUser;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  /**
+   * Check if admin user has specific permission
+   * @param userId - User ID
+   * @param permission - Permission to check
+   */
+  async hasAdminPermission(userId: string, permission: AdminPermission): Promise<boolean> {
+    try {
+      const adminUser = await this.adminUserModel.findOne({
+        userId: new Types.ObjectId(userId),
+        isActive: true,
+        permissions: permission,
+      });
+      return !!adminUser;
+    } catch (error) {
+      return false;
     }
   }
 }

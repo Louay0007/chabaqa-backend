@@ -252,6 +252,93 @@ export class EmailService {
   }
 
   /**
+   * Envoie un email de suspension de compte par un administrateur
+   */
+  async sendAccountSuspensionEmail(email: string, userName: string, reason: string, suspensionEndDate?: Date): Promise<void> {
+    const mailOptions = {
+      from: process.env.EMAIL_FROM || process.env.EMAIL_USER || 'noreply@chabaqa.org',
+      to: email,
+      subject: 'Suspension de votre compte - Chabaqa',
+      html: this.generateAccountSuspensionEmailTemplate(userName, reason, suspensionEndDate),
+    };
+
+    try {
+      if (!this.transporter) {
+        this.transporter = await this.createTransporterForSend();
+      }
+
+      this.logger.log(`📧 Tentative d'envoi d'email de suspension à: ${email}`);
+      const result = await this.transporter.sendMail(mailOptions);
+      this.logger.log('✅ Email de suspension envoyé avec succès');
+      
+      if (result.messageId && result.messageId.includes('ethereal')) {
+        this.logger.log(`🔗 Prévisualisation: https://ethereal.email/message/${result.messageId}`);
+      }
+    } catch (error: any) {
+      this.logger.error('❌ Erreur lors de l\'envoi d\'email de suspension:', error.message);
+      throw new Error(`Erreur lors de l'envoi de l'email de suspension: ${error.message}`);
+    }
+  }
+
+  /**
+   * Envoie un email d'activation de compte par un administrateur
+   */
+  async sendAccountActivationEmail(email: string, userName: string, reason?: string): Promise<void> {
+    const mailOptions = {
+      from: process.env.EMAIL_FROM || process.env.EMAIL_USER || 'noreply@chabaqa.org',
+      to: email,
+      subject: 'Réactivation de votre compte - Chabaqa',
+      html: this.generateAccountActivationEmailTemplate(userName, reason),
+    };
+
+    try {
+      if (!this.transporter) {
+        this.transporter = await this.createTransporterForSend();
+      }
+
+      this.logger.log(`📧 Tentative d'envoi d'email d'activation à: ${email}`);
+      const result = await this.transporter.sendMail(mailOptions);
+      this.logger.log('✅ Email d\'activation envoyé avec succès');
+      
+      if (result.messageId && result.messageId.includes('ethereal')) {
+        this.logger.log(`🔗 Prévisualisation: https://ethereal.email/message/${result.messageId}`);
+      }
+    } catch (error: any) {
+      this.logger.error('❌ Erreur lors de l\'envoi d\'email d\'activation:', error.message);
+      throw new Error(`Erreur lors de l'envoi de l'email d'activation: ${error.message}`);
+    }
+  }
+
+  /**
+   * Envoie un email de réinitialisation de mot de passe par un administrateur
+   */
+  async sendPasswordResetByAdminEmail(email: string, userName: string, temporaryPassword: string): Promise<void> {
+    const mailOptions = {
+      from: process.env.EMAIL_FROM || process.env.EMAIL_USER || 'noreply@chabaqa.org',
+      to: email,
+      subject: 'Réinitialisation de mot de passe par un administrateur - Chabaqa',
+      html: this.generatePasswordResetByAdminEmailTemplate(userName, temporaryPassword),
+    };
+
+    try {
+      if (!this.transporter) {
+        this.transporter = await this.createTransporterForSend();
+      }
+
+      this.logger.log(`📧 Tentative d'envoi d'email de réinitialisation admin à: ${email}`);
+      const result = await this.transporter.sendMail(mailOptions);
+      this.logger.log('✅ Email de réinitialisation admin envoyé avec succès');
+      
+      if (result.messageId && result.messageId.includes('ethereal')) {
+        this.logger.log(`🔗 Prévisualisation: https://ethereal.email/message/${result.messageId}`);
+      }
+    } catch (error: any) {
+      this.logger.error('❌ Erreur lors de l\'envoi d\'email de réinitialisation admin:', error.message);
+      throw new Error(`Erreur lors de l'envoi de l'email de réinitialisation admin: ${error.message}`);
+    }
+  }
+
+  /**
    * Génère le template HTML pour l'email de réinitialisation
    */
   private generatePasswordResetEmailTemplate(code: string, userName: string): string {
@@ -569,6 +656,146 @@ export class EmailService {
     </div>
   </body>
 </html>
+    `;
+  }
+
+  /**
+   * Génère le template HTML pour l'email de suspension de compte
+   */
+  private generateAccountSuspensionEmailTemplate(userName: string, reason: string, suspensionEndDate?: Date): string {
+    const endDateText = suspensionEndDate 
+      ? `Cette suspension prendra fin le ${suspensionEndDate.toLocaleDateString('fr-FR', { 
+          year: 'numeric', 
+          month: 'long', 
+          day: 'numeric' 
+        })}.`
+      : 'Cette suspension est indéfinie.';
+
+    return `
+      <!DOCTYPE html>
+      <html lang="fr">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Suspension de compte - Chabaqa</title>
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+          .header { background: #8e78fb; color: white; padding: 20px; text-align: center; }
+          .content { padding: 20px; background: #f9f9f9; }
+          .warning { background: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; margin: 20px 0; border-radius: 5px; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>Suspension de votre compte Chabaqa</h1>
+          </div>
+          <div class="content">
+            <p>Bonjour ${userName},</p>
+            <p>Nous vous informons que votre compte Chabaqa a été temporairement suspendu.</p>
+            <div class="warning">
+              <strong>Raison de la suspension :</strong><br>
+              ${reason}
+            </div>
+            <p>${endDateText}</p>
+            <p>Si vous pensez que cette suspension est une erreur ou si vous souhaitez faire appel de cette décision, veuillez contacter notre équipe de support.</p>
+            <p>Cordialement,<br>L'équipe Chabaqa</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+  }
+
+  /**
+   * Génère le template HTML pour l'email d'activation de compte
+   */
+  private generateAccountActivationEmailTemplate(userName: string, reason?: string): string {
+    const reasonText = reason ? `<p><strong>Raison :</strong> ${reason}</p>` : '';
+
+    return `
+      <!DOCTYPE html>
+      <html lang="fr">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Réactivation de compte - Chabaqa</title>
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+          .header { background: #28a745; color: white; padding: 20px; text-align: center; }
+          .content { padding: 20px; background: #f9f9f9; }
+          .success { background: #d4edda; border: 1px solid #c3e6cb; padding: 15px; margin: 20px 0; border-radius: 5px; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>Réactivation de votre compte Chabaqa</h1>
+          </div>
+          <div class="content">
+            <p>Bonjour ${userName},</p>
+            <div class="success">
+              <strong>Bonne nouvelle !</strong> Votre compte Chabaqa a été réactivé avec succès.
+            </div>
+            ${reasonText}
+            <p>Vous pouvez maintenant vous connecter normalement à votre compte et utiliser tous les services de la plateforme.</p>
+            <p>Merci de votre patience et bienvenue de retour sur Chabaqa !</p>
+            <p>Cordialement,<br>L'équipe Chabaqa</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+  }
+
+  /**
+   * Génère le template HTML pour l'email de réinitialisation de mot de passe par admin
+   */
+  private generatePasswordResetByAdminEmailTemplate(userName: string, temporaryPassword: string): string {
+    return `
+      <!DOCTYPE html>
+      <html lang="fr">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Réinitialisation de mot de passe - Chabaqa</title>
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+          .header { background: #8e78fb; color: white; padding: 20px; text-align: center; }
+          .content { padding: 20px; background: #f9f9f9; }
+          .password-box { background: white; border: 2px solid #8e78fb; padding: 20px; text-align: center; margin: 20px 0; border-radius: 5px; }
+          .password { font-family: monospace; font-size: 24px; font-weight: bold; color: #8e78fb; letter-spacing: 2px; }
+          .warning { background: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; margin: 20px 0; border-radius: 5px; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>Réinitialisation de mot de passe</h1>
+          </div>
+          <div class="content">
+            <p>Bonjour ${userName},</p>
+            <p>Un administrateur a réinitialisé votre mot de passe Chabaqa. Voici votre nouveau mot de passe temporaire :</p>
+            <div class="password-box">
+              <div class="password">${temporaryPassword}</div>
+            </div>
+            <div class="warning">
+              <strong>Important :</strong>
+              <ul>
+                <li>Ce mot de passe est temporaire</li>
+                <li>Nous vous recommandons fortement de le changer dès votre prochaine connexion</li>
+                <li>Ne partagez jamais ce mot de passe avec qui que ce soit</li>
+              </ul>
+            </div>
+            <p>Pour changer votre mot de passe, connectez-vous à votre compte et accédez aux paramètres de sécurité.</p>
+            <p>Cordialement,<br>L'équipe Chabaqa</p>
+          </div>
+        </div>
+      </body>
+      </html>
     `;
   }
 }

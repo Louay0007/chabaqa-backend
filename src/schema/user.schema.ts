@@ -45,6 +45,13 @@ export interface UserDocument extends Document {
     token_type: string;
     expiry_date: number;
   };
+  // Admin-specific fields
+  isSuspended: boolean;
+  suspensionReason?: string;
+  suspensionEndDate?: Date;
+  suspendedBy?: Types.ObjectId;
+  adminNotes?: string;
+  accountStatus: string;
 }
 
 /**
@@ -299,6 +306,47 @@ export class User {
     min: 0
   })
   walletBalance: number;
+
+  // Admin-specific fields
+  /**
+   * Whether the user account is suspended
+   */
+  @Prop({ default: false })
+  isSuspended: boolean;
+
+  /**
+   * Reason for account suspension
+   */
+  @Prop()
+  suspensionReason?: string;
+
+  /**
+   * Date when suspension ends (if applicable)
+   */
+  @Prop()
+  suspensionEndDate?: Date;
+
+  /**
+   * Admin user who suspended this account
+   */
+  @Prop({ type: Types.ObjectId, ref: 'AdminUser' })
+  suspendedBy?: Types.ObjectId;
+
+  /**
+   * Admin notes about this user
+   */
+  @Prop()
+  adminNotes?: string;
+
+  /**
+   * User account status for admin management
+   */
+  @Prop({ 
+    type: String,
+    enum: ['active', 'inactive', 'suspended', 'pending'],
+    default: 'active'
+  })
+  accountStatus: string;
 }
 
 /**
