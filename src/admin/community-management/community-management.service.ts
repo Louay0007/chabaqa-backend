@@ -3,6 +3,10 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Community, CommunityDocument } from '../../schema/community.schema';
 import { User, UserDocument } from '../../schema/user.schema';
+import { Post, PostDocument } from '../../schema/post.schema';
+import { Cours, CoursDocument } from '../../schema/course.schema';
+import { Event, EventDocument } from '../../schema/event.schema';
+import { Product, ProductDocument } from '../../schema/product.schema';
 import { AuditLogService } from '../common/services/audit-log.service';
 import { AdminAction } from '../schemas/audit-log.schema';
 import { 
@@ -43,6 +47,10 @@ export class CommunityManagementService {
   constructor(
     @InjectModel(Community.name) private communityModel: Model<CommunityDocument>,
     @InjectModel(User.name) private userModel: Model<UserDocument>,
+    @InjectModel(Post.name) private postModel: Model<PostDocument>,
+    @InjectModel(Cours.name) private courseModel: Model<CoursDocument>,
+    @InjectModel(Event.name) private eventModel: Model<EventDocument>,
+    @InjectModel(Product.name) private productModel: Model<ProductDocument>,
     private readonly auditLogService: AuditLogService,
   ) {}
 
@@ -193,8 +201,55 @@ export class CommunityManagementService {
         this.communityModel.countDocuments(query)
       ]);
 
+      // Calculate content counts
+      const communityIds = communities.map(c => c._id.toString());
+      const communityObjectIds = communities.map(c => c._id);
+
+      const [postCounts, eventCounts, productCounts] = await Promise.all([
+        this.postModel.aggregate([
+          { $match: { communityId: { $in: communityIds } } },
+          { $group: { _id: '$communityId', count: { $sum: 1 } } }
+        ]),
+        this.eventModel.aggregate([
+          { $match: { communityId: { $in: communityObjectIds } } },
+          { $group: { _id: '$communityId', count: { $sum: 1 } } }
+        ]),
+        this.productModel.aggregate([
+          { $match: { communityId: { $in: communityIds } } },
+          { $group: { _id: '$communityId', count: { $sum: 1 } } }
+        ])
+      ]);
+
+      const contentCountsMap = new Map<string, number>();
+      
+      // Initialize with 0
+      communityIds.forEach(id => contentCountsMap.set(id, 0));
+
+      // Add posts
+      postCounts.forEach((item: any) => {
+        const current = contentCountsMap.get(item._id) || 0;
+        contentCountsMap.set(item._id, current + item.count);
+      });
+
+      // Add events
+      eventCounts.forEach((item: any) => {
+        const id = item._id.toString();
+        const current = contentCountsMap.get(id) || 0;
+        contentCountsMap.set(id, current + item.count);
+      });
+
+      // Add products
+      productCounts.forEach((item: any) => {
+        const current = contentCountsMap.get(item._id) || 0;
+        contentCountsMap.set(item._id, current + item.count);
+      });
+
       // Transform communities to response DTOs
-      const transformedCommunities = communities.map(community => this.transformCommunityToDto(community));
+      const transformedCommunities = communities.map(community => {
+        const courseCount = community.cours ? community.cours.length : 0;
+        const otherContentCount = contentCountsMap.get(community._id.toString()) || 0;
+        return this.transformCommunityToDto(community, courseCount + otherContentCount);
+      });
 
       // Log admin action
       await this.auditLogService.logAction({
@@ -220,10 +275,123 @@ export class CommunityManagementService {
         hasNextPage: page < Math.ceil(total / limit),
         hasPrevPage: page > 1
       };
-
     } catch (error) {
       console.error('Error fetching communities:', error);
       throw new InternalServerErrorException('Failed to fetch communities');
+    }
+  }
+
+  async getCommunityDetails(
+    communityId: string,
+    adminUserId: string,
+    ipAddress: string,
+    userAgent: string
+  ): Promise<CommunityResponseDto> {
+    try {
+      const community = await this.communityModel
+        .findById(communityId)
+        .populate('createur', 'name email profile_picture photo_profil avatar verified')
+        .populate('members', 'name username email profile_picture photo_profil avatar createdAt')
+        .exec();
+
+      if (!community) {
+        throw new NotFoundException('Community not found');
+      }
+
+      const communityIdStr = community._id.toString();
+      const communityObjectId = community._id;
+
+      // Get content counts and recent items
+      const [
+        postCount,
+        eventCount,
+        productCount,
+        posts,
+        events,
+        products,
+        courses
+      ] = await Promise.all([
+        this.postModel.countDocuments({ communityId: communityIdStr }),
+        this.eventModel.countDocuments({ communityId: communityObjectId }),
+        this.productModel.countDocuments({ communityId: communityIdStr }),
+        this.postModel.find({ communityId: communityIdStr }).sort({ createdAt: -1 }).limit(10).exec(),
+        this.eventModel.find({ communityId: communityObjectId }).sort({ createdAt: -1 }).limit(10).exec(),
+        this.productModel.find({ communityId: communityIdStr }).sort({ createdAt: -1 }).limit(10).exec(),
+        this.courseModel.find({ communityId: communityIdStr }).sort({ createdAt: -1 }).limit(10).exec()
+      ]);
+
+      const courseCount = community.cours ? community.cours.length : 0;
+      const totalContentCount = postCount + eventCount + productCount + courseCount;
+
+      // Format content list
+      const contentList = [
+        ...posts.map(p => ({ 
+          _id: p._id,
+          title: p.content?.substring(0, 50) + (p.content?.length > 50 ? '...' : '') || 'Untitled Post', 
+          type: 'post', 
+          createdAt: p.createdAt 
+        })),
+        ...events.map(e => ({ 
+          _id: e._id,
+          title: e.title, 
+          type: 'event', 
+          createdAt: e.startDate 
+        })),
+        ...products.map(p => ({ 
+          _id: p._id,
+          title: p.title, 
+          type: 'product', 
+          createdAt: p.createdAt 
+        })),
+        ...courses.map(c => ({ 
+          _id: c._id,
+          title: c.titre, 
+          type: 'course', 
+          createdAt: c.createdAt 
+        }))
+      ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 20);
+
+      const dto = this.transformCommunityToDto(community, totalContentCount);
+      
+      // Add extra details
+      if (community.members && Array.isArray(community.members)) {
+        dto.members = (community.members as any[]).map(m => ({
+          _id: m._id,
+          username: m.username || m.name,
+          name: m.name,
+          email: m.email,
+          avatar: m.profile_picture || m.photo_profil || m.avatar,
+          joinedAt: m.createdAt
+        }));
+      } else {
+        dto.members = [];
+      }
+      
+      dto.content = contentList;
+      
+      dto.analytics = {
+        totalRevenue: community.stats?.totalRevenue || 0,
+        activeMembers: community.membersCount || 0,
+        contentPublished: totalContentCount,
+        engagementRate: community.stats?.engagementRate || 0
+      };
+
+      // Log action
+      await this.auditLogService.logAction({
+        adminUserId: new Types.ObjectId(adminUserId),
+        action: AdminAction.COMMUNITY_VIEW,
+        entityType: 'Community',
+        entityId: community._id,
+        ipAddress,
+        userAgent,
+        metadata: { communityName: community.name }
+      });
+
+      return dto;
+    } catch (error) {
+      if (error instanceof NotFoundException) throw error;
+      console.error('Error fetching community details:', error);
+      throw new InternalServerErrorException('Failed to fetch community details');
     }
   }
 
@@ -831,9 +999,17 @@ export class CommunityManagementService {
    * Transform community document to response DTO
    * Private helper method for data transformation
    */
-  private transformCommunityToDto(community: CommunityDocument): CommunityResponseDto {
+  private transformCommunityToDto(community: CommunityDocument, contentCount?: number): CommunityResponseDto {
     const creator = community.createur as any;
+    const communityAny = community as any;
     
+    // Determine status based on isActive and approvalStatus
+    let status = 'active';
+    if (communityAny.isSuspended) status = 'suspended';
+    else if (communityAny.approvalStatus === 'pending') status = 'pending';
+    else if (communityAny.approvalStatus === 'rejected') status = 'rejected';
+    else if (!community.isActive) status = 'inactive';
+
     return {
       _id: community._id.toString(),
       name: community.name,
@@ -843,13 +1019,16 @@ export class CommunityManagementService {
       logo: community.logo,
       coverImage: community.photo_de_couverture || community.coverImage || '',
       creator: {
-        id: creator._id?.toString() || creator.toString(),
-        name: creator.name || 'Unknown Creator',
-        email: creator.email || '',
-        avatar: creator.profile_picture || creator.photo_profil || creator.avatar || '',
-        verified: creator.verified || false
+        id: creator?._id?.toString() || creator?.toString() || 'unknown',
+        name: creator?.name || 'Unknown Creator',
+        username: creator?.name || 'Unknown User',
+        email: creator?.email || '',
+        avatar: creator?.profile_picture || creator?.photo_profil || creator?.avatar || '',
+        verified: creator?.verified || false
       },
-      membersCount: community.membersCount,
+      status: status as any, // This ensures status is always populated for frontend
+      membersCount: community.membersCount || community.members?.length || 0,
+      contentCount: contentCount || 0,
       isActive: community.isActive,
       isPrivate: community.isPrivate,
       isVerified: community.isVerified,
@@ -1369,6 +1548,7 @@ export class CommunityManagementService {
       creator: {
         id: creator._id?.toString() || creator.toString(),
         name: creator.name || 'Unknown Creator',
+        username: creator.name || 'Unknown User',
         email: creator.email || '',
         avatar: creator.profile_picture || creator.photo_profil || creator.avatar || '',
         verified: creator.verified || false

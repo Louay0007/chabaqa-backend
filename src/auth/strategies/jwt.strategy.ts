@@ -20,11 +20,12 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: any) {
-    // Check if it's an admin
-    if (payload.role === 'admin') {
+    // Check if it's an admin (support both 'admin' and 'super_admin' roles, or any future admin roles)
+    if (payload.role === 'admin' || payload.role === 'super_admin' || payload.role === 'moderator') {
       const admin = await this.adminModel.findById(payload.sub);
 
       if (!admin) {
+        // If not found in admin collection, strictly throw unauthorized
         throw new UnauthorizedException('Administrateur non trouvé');
       }
 
@@ -32,7 +33,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         _id: admin._id,
         email: admin.email,
         name: admin.name,
-        role: 'admin',
+        role: admin.role, // Use the actual role from DB
         isAdmin: true,
       };
     } else {

@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Put,
+  Delete,
   Param,
   Body,
   Query,
@@ -26,6 +27,8 @@ import { UserManagementService, UserDetails, UserAnalytics } from './user-manage
 // Import DTOs
 import { UserFiltersDto } from './dto/user-filters.dto';
 import { SuspendUserDto, ActivateUserDto, ResetUserPasswordDto, UpdateAdminNotesDto } from './dto/user-actions.dto';
+import { CreateUserDto } from '../../dto-user/create-user.dto';
+import { UpdateUserDto } from '../../dto-user/update-user.dto';
 
 // Import guards and decorators
 import { AdminAuthGuard } from '../common/guards/admin-auth.guard';
@@ -149,6 +152,7 @@ export class UserManagementController {
       if (error.status === 404) {
         throw error;
       }
+      console.error('Error in getUserDetails:', error);
       throw new HttpException(
         {
           success: false,
@@ -161,10 +165,64 @@ export class UserManagementController {
   }
 
   /**
+   * Create a new user
+   */
+  @Post()
+  @RequireAdminPermissions(AdminPermission.USER_CREATE)
+  @AuditContext({ action: AdminAction.USER_CREATE, entityType: 'User' })
+  @ApiOperation({ summary: 'Create a new user' })
+  @ApiResponse({ status: 201, description: 'User created successfully' })
+  async createUser(@Body() createUserDto: CreateUserDto, @Request() req: any) {
+    const user = await this.userManagementService.createUser(createUserDto, req.user.id);
+    return {
+      success: true,
+      message: 'User created successfully',
+      data: user
+    };
+  }
+
+  /**
+   * Update a user
+   */
+  @Put(':id')
+  @RequireAdminPermissions(AdminPermission.USER_UPDATE)
+  @AuditContext({ action: AdminAction.USER_UPDATE, entityType: 'User' })
+  @ApiOperation({ summary: 'Update user profile' })
+  @ApiResponse({ status: 200, description: 'User updated successfully' })
+  async updateUser(
+    @Param('id') userId: string,
+    @Body() updateUserDto: UpdateUserDto,
+    @Request() req: any
+  ) {
+    const user = await this.userManagementService.updateUser(userId, updateUserDto, req.user.id);
+    return {
+      success: true,
+      message: 'User updated successfully',
+      data: user
+    };
+  }
+
+  /**
+   * Delete a user (Hard Delete)
+   */
+  @Delete(':id')
+  @RequireAdminPermissions(AdminPermission.USER_DELETE)
+  @AuditContext({ action: AdminAction.USER_DELETE, entityType: 'User' })
+  @ApiOperation({ summary: 'Delete a user permanently' })
+  @ApiResponse({ status: 200, description: 'User deleted successfully' })
+  async deleteUser(@Param('id') userId: string, @Request() req: any) {
+    await this.userManagementService.deleteUser(userId, req.user.id);
+    return {
+      success: true,
+      message: 'User deleted successfully'
+    };
+  }
+
+  /**
    * Suspend a user account
    * Requirement 1.4
    */
-  @Post(':id/suspend')
+  @Put(':id/suspend')
   @RequireAdminPermissions(AdminPermission.USER_SUSPEND)
   @AuditContext({ action: AdminAction.USER_SUSPEND, entityType: 'User' })
   @ApiOperation({ 
@@ -219,7 +277,7 @@ export class UserManagementController {
    * Activate a suspended user account
    * Requirement 1.5
    */
-  @Post(':id/activate')
+  @Put(':id/activate')
   @RequireAdminPermissions(AdminPermission.USER_ACTIVATE)
   @AuditContext({ action: AdminAction.USER_ACTIVATE, entityType: 'User' })
   @ApiOperation({ 
@@ -256,6 +314,7 @@ export class UserManagementController {
         message: 'User activated successfully'
       };
     } catch (error) {
+      console.error('Error activating user:', error);
       if (error.status === 404 || error.status === 400) {
         throw error;
       }

@@ -3,6 +3,9 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import * as bcrypt from 'bcryptjs';
 
+import { CreateUserDto } from '../../dto-user/create-user.dto';
+import { UpdateUserDto } from '../../dto-user/update-user.dto';
+
 // Import schemas and interfaces
 import { User, UserDocument, UserRole } from '../../schema/user.schema';
 import { AdminUser, AdminUserDocument } from '../schemas/admin-user.schema';
@@ -315,11 +318,15 @@ export class UserManagementService {
 
     // Update user activation status
     await this.userModel.findByIdAndUpdate(userId, {
-      isSuspended: false,
-      suspensionReason: undefined,
-      suspensionEndDate: undefined,
-      suspendedBy: undefined,
-      accountStatus: 'active'
+      $set: {
+        isSuspended: false,
+        accountStatus: 'active'
+      },
+      $unset: {
+        suspensionReason: 1,
+        suspensionEndDate: 1,
+        suspendedBy: 1
+      }
     });
 
     // Log the action
@@ -539,6 +546,123 @@ export class UserManagementService {
       averageLifetimeValue: 0, // Placeholder - would calculate from actual revenue data
       engagementMetrics
     };
+  }
+
+  /**
+   * Create a new user
+   * Requirement: Admin CRUD
+   */
+  async createUser(createUserDto: CreateUserDto, adminId: string): Promise<UserDocument> {
+    // Check if email already exists
+    const existingUser = await this.userModel.findOne({ email: createUserDto.email });
+    if (existingUser) {
+      throw new BadRequestException('User with this email already exists');
+    }
+
+    // Hash password
+    const hashedPassword = await bcrypt.hash(createUserDto.password, 12);
+
+    // Create user
+    const newUser = new this.userModel({
+      ...createUserDto,
+      password: hashedPassword,
+      isVerified: true, // Admin created users are auto-verified
+      accountStatus: 'active'
+    });
+
+    await newUser.save();
+
+    // Log action
+    await this.auditLogService.logAction({
+      adminUserId: new Types.ObjectId(adminId),
+      action: AdminAction.USER_CREATE, // Ensure this enum exists or use USER_UPDATE as fallback
+      entityType: 'User',
+      entityId: newUser._id,
+      newData: { email: newUser.email, role: newUser.role },
+      ipAddress: '',
+      userAgent: '',
+      metadata: { userId: newUser._id.toString() }
+    });
+
+    return newUser;
+  }
+
+  /**
+   * Update user profile
+   * Requirement: Admin CRUD
+   */
+  async updateUser(userId: string, updateUserDto: UpdateUserDto, adminId: string): Promise<UserDocument> {
+    if (!Types.ObjectId.isValid(userId)) {
+      throw new BadRequestException('Invalid user ID format');
+    }
+
+    const user = await this.userModel.findById(userId);
+    if (!user) {
+      throw new NotFoundException(`User with ID ${userId} not found`);
+    }
+
+    const updateData: any = { ...updateUserDto };
+
+    // If password is provided, hash it
+    if (updateUserDto.password) {
+      updateData.password = await bcrypt.hash(updateUserDto.password, 12);
+    }
+
+    // Perform update
+    const updatedUser = await this.userModel.findByIdAndUpdate(
+      userId,
+      updateData,
+      { new: true } // Return updated document
+    ).select('-password');
+
+    if (!updatedUser) {
+      throw new NotFoundException(`User with ID ${userId} not found`);
+    }
+
+    // Log action
+    await this.auditLogService.logAction({
+      adminUserId: new Types.ObjectId(adminId),
+      action: AdminAction.USER_UPDATE,
+      entityType: 'User',
+      entityId: new Types.ObjectId(userId),
+      previousData: { email: user.email, role: user.role },
+      newData: updateData,
+      ipAddress: '',
+      userAgent: '',
+      metadata: { userId }
+    });
+
+    return updatedUser;
+  }
+
+  /**
+   * Delete user (Hard Delete)
+   * Requirement: Admin CRUD
+   */
+  async deleteUser(userId: string, adminId: string): Promise<void> {
+    if (!Types.ObjectId.isValid(userId)) {
+      throw new BadRequestException('Invalid user ID format');
+    }
+
+    const user = await this.userModel.findById(userId);
+    if (!user) {
+      throw new NotFoundException(`User with ID ${userId} not found`);
+    }
+
+    // Delete user
+    await this.userModel.findByIdAndDelete(userId);
+
+    // Log action
+    await this.auditLogService.logAction({
+      adminUserId: new Types.ObjectId(adminId),
+      action: AdminAction.USER_DELETE, // Ensure enum exists
+      entityType: 'User',
+      entityId: new Types.ObjectId(userId),
+      previousData: { email: user.email, name: user.name },
+      ipAddress: '',
+      userAgent: '',
+      metadata: { userId }
+    });
   }
 
   /**

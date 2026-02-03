@@ -369,6 +369,7 @@ export class AuditLogMiddleware implements NestMiddleware {
    */
   private generateDescription(action: AdminAction, method: string, path: string): string {
     const actionDescriptions: Record<AdminAction, string> = {
+      [AdminAction.USER_CREATE]: 'Created new user',
       [AdminAction.USER_SUSPEND]: 'Suspended user account',
       [AdminAction.USER_ACTIVATE]: 'Activated user account',
       [AdminAction.USER_PASSWORD_RESET]: 'Reset user password',
@@ -377,6 +378,7 @@ export class AuditLogMiddleware implements NestMiddleware {
       [AdminAction.USER_LIST]: 'Listed users',
       [AdminAction.USER_VIEW]: 'Viewed user',
       [AdminAction.USER_UPDATE]: 'Updated user',
+      [AdminAction.USER_DELETE]: 'Deleted user',
       [AdminAction.COMMUNITY_APPROVE]: 'Approved community',
       [AdminAction.COMMUNITY_REJECT]: 'Rejected community',
       [AdminAction.COMMUNITY_VIEW]: 'Viewed community details',

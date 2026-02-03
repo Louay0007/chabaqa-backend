@@ -19,11 +19,13 @@ export enum AdminRole {
  */
 export enum AdminPermission {
   // User management permissions
+  USER_CREATE = 'user_create',
   USER_READ = 'user_read',
   USER_SUSPEND = 'user_suspend',
   USER_ACTIVATE = 'user_activate',
   USER_PASSWORD_RESET = 'user_password_reset',
   USER_UPDATE = 'user_update',
+  USER_DELETE = 'user_delete',
   VIEW_USERS = 'view_users',
   SUSPEND_USERS = 'suspend_users',
   ACTIVATE_USERS = 'activate_users',

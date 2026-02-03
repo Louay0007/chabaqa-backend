@@ -42,9 +42,15 @@ export class AdminRolesGuard implements CanActivate {
         requiredPermissions.some(permission => adminUser.permissions.includes(permission));
 
       // Super admin has access to everything
-      const isSuperAdmin = adminUser.roles.includes(AdminRole.SUPER_ADMIN);
+      // Also check for 'admin' role which we mapped in the AdminAuthGuard for backward compatibility
+      const isSuperAdmin = adminUser.roles.includes(AdminRole.SUPER_ADMIN) || 
+                           adminUser.roles.includes('admin') || 
+                           adminUser.roles.includes('super_admin');
 
-      if (isSuperAdmin || (hasRequiredRole && hasRequiredPermission)) {
+      // Check if user has ALL permissions (wildcard)
+      const hasWildcardPermission = adminUser.permissions.includes('*');
+
+      if (isSuperAdmin || hasWildcardPermission || (hasRequiredRole && hasRequiredPermission)) {
         return true;
       }
 

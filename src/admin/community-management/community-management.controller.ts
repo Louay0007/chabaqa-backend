@@ -444,30 +444,17 @@ export class CommunityManagementController {
     @Param('id') communityId: string,
     @Req() req: ExpressRequest & AdminRequest
   ) {
-    // Use the existing service method with single community filter
-    const filters = new CommunityFiltersDto();
-    const result = await this.communityManagementService.getCommunities(
-      filters,
+    const result = await this.communityManagementService.getCommunityDetails(
+      communityId,
       req.user.id,
       req.ip || req.socket?.remoteAddress || 'unknown',
       req.get('user-agent') || 'unknown'
     );
 
-    // Find the specific community from results
-    const community = result.data.find(c => c._id === communityId);
-    
-    if (!community) {
-      return {
-        success: false,
-        message: 'Community not found',
-        data: null
-      };
-    }
-
     return {
       success: true,
       message: 'Community details retrieved successfully',
-      data: community
+      data: result
     };
   }
 

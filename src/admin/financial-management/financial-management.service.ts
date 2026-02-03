@@ -706,13 +706,23 @@ export class FinancialManagementService {
       query.endDate,
     );
 
-    const transactions = await this.walletTransactionModel
-      .find({
-        type: WalletTransactionType.PURCHASE,
-        createdAt: { $gte: startDate, $lte: endDate },
-      })
-      .lean()
-      .exec();
+    const pipeline: any[] = [
+      {
+        $match: {
+          type: WalletTransactionType.PURCHASE,
+          createdAt: { $gte: startDate, $lte: endDate },
+          contentType: { $exists: true, $ne: null },
+        },
+      },
+      {
+        $group: {
+          _id: '$contentType',
+          totalRevenue: { $sum: { $abs: '$amount' } },
+        },
+      },
+    ];
+
+    const results = await this.walletTransactionModel.aggregate(pipeline).exec();
 
     const revenueByType: RevenueByContentTypeDto = {
       community: 0,
@@ -723,9 +733,9 @@ export class FinancialManagementService {
       challenge: 0,
     };
 
-    transactions.forEach((tx) => {
-      if (tx.contentType && revenueByType.hasOwnProperty(tx.contentType)) {
-        revenueByType[tx.contentType] += Math.abs(tx.amount);
+    results.forEach((item) => {
+      if (revenueByType.hasOwnProperty(item._id)) {
+        revenueByType[item._id] = item.totalRevenue;
       }
     });
 
@@ -745,85 +755,142 @@ export class FinancialManagementService {
       query.endDate,
     );
 
-    // Get all communities with their creators
+    const transactionsByCommunity: Array<{
+      _id: string;
+      revenue: number;
+      transactionCount: number;
+    }> = await this.walletTransactionModel
+      .aggregate([
+        {
+          $match: {
+            type: WalletTransactionType.PURCHASE,
+            contentType: 'community',
+            createdAt: { $gte: startDate, $lte: endDate },
+            contentId: { $type: 'string' },
+          },
+        },
+        {
+          $group: {
+            _id: '$contentId',
+            revenue: {
+              $sum: {
+                $abs: {
+                  $convert: {
+                    input: '$amount',
+                    to: 'double',
+                    onError: 0,
+                    onNull: 0,
+                  },
+                },
+              },
+            },
+            transactionCount: { $sum: 1 },
+          },
+        },
+        { $sort: { revenue: -1 } },
+        { $limit: Math.max(limit * 25, 250) },
+      ] as any[])
+      .exec();
+
+    const validCommunityIds = transactionsByCommunity
+      .map((item) => item._id)
+      .filter((id) => Types.ObjectId.isValid(id));
+
+    if (validCommunityIds.length === 0) {
+      return [];
+    }
+
     const communities = await this.communityModel
-      .find()
-      .select('_id createur name')
+      .find({ _id: { $in: validCommunityIds.map((id) => new Types.ObjectId(id)) } })
+      .select('_id createur')
       .lean()
       .exec();
 
-    // Calculate revenue per creator
-    const creatorRevenueMap = new Map<string, {
-      revenue: number;
-      transactionCount: number;
-      creatorData: any;
-    }>();
+    const communityToCreator = new Map<string, string>();
+    communities.forEach((community) => {
+      communityToCreator.set(community._id.toString(), community.createur?.toString());
+    });
 
-    for (const community of communities) {
-      const creatorId = community.createur.toString();
+    const creatorAgg = new Map<
+      string,
+      { totalRevenue: number; transactionCount: number }
+    >();
 
-      // Get transactions for this community
-      const transactions = await this.walletTransactionModel
-        .find({
-          type: WalletTransactionType.PURCHASE,
-          contentType: 'community',
-          contentId: community._id.toString(),
-          createdAt: { $gte: startDate, $lte: endDate },
-        })
-        .lean()
-        .exec();
-
-      const revenue = transactions.reduce((sum, tx) => sum + Math.abs(tx.amount), 0);
-
-      if (revenue > 0) {
-        const existing = creatorRevenueMap.get(creatorId);
-        if (existing) {
-          existing.revenue += revenue;
-          existing.transactionCount += transactions.length;
-        } else {
-          creatorRevenueMap.set(creatorId, {
-            revenue,
-            transactionCount: transactions.length,
-            creatorData: community.createur,
-          });
-        }
+    transactionsByCommunity.forEach((entry) => {
+      const creatorId = communityToCreator.get(entry._id);
+      if (!creatorId) return;
+      const existing = creatorAgg.get(creatorId);
+      if (existing) {
+        existing.totalRevenue += entry.revenue || 0;
+        existing.transactionCount += entry.transactionCount || 0;
+      } else {
+        creatorAgg.set(creatorId, {
+          totalRevenue: entry.revenue || 0,
+          transactionCount: entry.transactionCount || 0,
+        });
       }
-    }
+    });
 
-    // Get creator details and calculate payouts
-    const topCreators: TopCreatorsDto[] = [];
-
-    for (const [creatorId, data] of creatorRevenueMap.entries()) {
-      const creator = await this.userModel.findById(creatorId).lean().exec();
-      if (!creator) continue;
-
-      const payouts = await this.payoutModel
-        .find({
-          creatorId: new Types.ObjectId(creatorId),
-          status: PayoutStatus.COMPLETED,
-          processedAt: { $gte: startDate, $lte: endDate },
-        })
-        .lean()
-        .exec();
-
-      const totalPayouts = payouts.reduce((sum, p) => sum + p.amount, 0);
-
-      topCreators.push({
+    const topCreatorRows = Array.from(creatorAgg.entries())
+      .map(([creatorId, data]) => ({
         creatorId,
-        creatorName: creator.name || 'Unknown',
-        creatorEmail: creator.email || '',
-        totalRevenue: data.revenue,
+        totalRevenue: data.totalRevenue,
         transactionCount: data.transactionCount,
-        averageTransactionValue:
-          data.transactionCount > 0 ? data.revenue / data.transactionCount : 0,
-        totalPayouts,
-      });
-    }
-
-    // Sort by revenue and return top N
-    return topCreators
+      }))
       .sort((a, b) => b.totalRevenue - a.totalRevenue)
       .slice(0, limit);
+
+    const creatorObjectIds = topCreatorRows.map((row) => new Types.ObjectId(row.creatorId));
+
+    const creators = await this.userModel
+      .find({ _id: { $in: creatorObjectIds } })
+      .select('_id name email')
+      .lean()
+      .exec();
+
+    const creatorInfo = new Map<string, { name?: string; email?: string }>();
+    creators.forEach((creator) => {
+      creatorInfo.set(creator._id.toString(), { name: creator.name, email: creator.email });
+    });
+
+    const payoutTotals = await this.payoutModel
+      .aggregate([
+        {
+          $match: {
+            creatorId: { $in: creatorObjectIds },
+            status: PayoutStatus.COMPLETED,
+            processedAt: { $gte: startDate, $lte: endDate },
+          },
+        },
+        {
+          $group: {
+            _id: '$creatorId',
+            totalPayouts: { $sum: '$amount' },
+          },
+        },
+      ] as any[])
+      .exec();
+
+    const payoutByCreator = new Map<string, number>();
+    payoutTotals.forEach((row) => {
+      payoutByCreator.set(row._id.toString(), row.totalPayouts || 0);
+    });
+
+    return topCreatorRows.map((row) => {
+      const info = creatorInfo.get(row.creatorId);
+      const averageTransactionValue =
+        row.transactionCount > 0 ? row.totalRevenue / row.transactionCount : 0;
+
+      return {
+        creatorId: row.creatorId,
+        creatorName: info?.name || 'Unknown',
+        creatorEmail: info?.email || '',
+        totalRevenue: row.totalRevenue,
+        transactionCount: row.transactionCount,
+        averageTransactionValue,
+        totalPayouts: payoutByCreator.get(row.creatorId) || 0,
+      };
+    });
   }
 
   /**
@@ -843,33 +910,43 @@ export class FinancialManagementService {
     const previousStartDate = new Date(startDate.getTime() - periodDuration);
     const previousEndDate = new Date(startDate.getTime());
 
-    // Get current period revenue
-    const currentTransactions = await this.walletTransactionModel
-      .find({
-        type: WalletTransactionType.PURCHASE,
-        createdAt: { $gte: startDate, $lte: endDate },
-      })
-      .lean()
-      .exec();
+    // Get current period revenue using aggregation
+    const currentPipeline: any[] = [
+      {
+        $match: {
+          type: WalletTransactionType.PURCHASE,
+          createdAt: { $gte: startDate, $lte: endDate },
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          totalRevenue: { $sum: { $abs: '$amount' } },
+        },
+      },
+    ];
 
-    const currentPeriodRevenue = currentTransactions.reduce(
-      (sum, tx) => sum + Math.abs(tx.amount),
-      0,
-    );
+    const currentResult = await this.walletTransactionModel.aggregate(currentPipeline).exec();
+    const currentPeriodRevenue = currentResult.length > 0 ? currentResult[0].totalRevenue : 0;
 
-    // Get previous period revenue
-    const previousTransactions = await this.walletTransactionModel
-      .find({
-        type: WalletTransactionType.PURCHASE,
-        createdAt: { $gte: previousStartDate, $lt: previousEndDate },
-      })
-      .lean()
-      .exec();
+    // Get previous period revenue using aggregation
+    const previousPipeline: any[] = [
+      {
+        $match: {
+          type: WalletTransactionType.PURCHASE,
+          createdAt: { $gte: previousStartDate, $lt: previousEndDate },
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          totalRevenue: { $sum: { $abs: '$amount' } },
+        },
+      },
+    ];
 
-    const previousPeriodRevenue = previousTransactions.reduce(
-      (sum, tx) => sum + Math.abs(tx.amount),
-      0,
-    );
+    const previousResult = await this.walletTransactionModel.aggregate(previousPipeline).exec();
+    const previousPeriodRevenue = previousResult.length > 0 ? previousResult[0].totalRevenue : 0;
 
     // Calculate growth
     const growthAmount = currentPeriodRevenue - previousPeriodRevenue;
@@ -1246,48 +1323,51 @@ export class FinancialManagementService {
     startDate: Date,
     endDate: Date,
   ): Promise<Omit<RevenueMetricsDto, 'growthRate' | 'period' | 'startDate' | 'endDate'>> {
-    // Get all transactions in the period
-    const transactions = await this.walletTransactionModel
-      .find({
-        createdAt: { $gte: startDate, $lte: endDate },
-      })
-      .lean()
-      .exec();
+    // 1. Calculate revenue metrics using aggregation
+    const revenuePipeline = [
+      {
+        $match: {
+          type: WalletTransactionType.PURCHASE,
+          createdAt: { $gte: startDate, $lte: endDate },
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          totalRevenue: { $sum: { $abs: '$amount' } },
+          transactionCount: { $sum: 1 },
+        },
+      },
+    ];
 
-    // Get all payouts in the period
-    const payouts = await this.payoutModel
-      .find({
-        processedAt: { $gte: startDate, $lte: endDate },
-        status: PayoutStatus.COMPLETED,
-      })
-      .lean()
-      .exec();
+    const revenueResult = await this.walletTransactionModel.aggregate(revenuePipeline).exec();
+    const totalRevenue = revenueResult.length > 0 ? revenueResult[0].totalRevenue : 0;
+    const transactionCount = revenueResult.length > 0 ? revenueResult[0].transactionCount : 0;
 
-    // Calculate revenue from purchases
-    const purchaseTransactions = transactions.filter(
-      (tx) => tx.type === WalletTransactionType.PURCHASE,
-    );
-    const totalRevenue = purchaseTransactions.reduce(
-      (sum, tx) => sum + Math.abs(tx.amount),
-      0,
-    );
+    // 2. Calculate payout metrics using aggregation
+    const payoutPipeline = [
+      {
+        $match: {
+          status: PayoutStatus.COMPLETED,
+          processedAt: { $gte: startDate, $lte: endDate },
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          totalPayouts: { $sum: '$amount' },
+        },
+      },
+    ];
 
-    // Calculate subscription revenue (recurring)
+    const payoutResult = await this.payoutModel.aggregate(payoutPipeline).exec();
+    const creatorPayouts = payoutResult.length > 0 ? payoutResult[0].totalPayouts : 0;
+
+    // Calculate derived metrics
     const subscriptionRevenue = 0; // TODO: Implement subscription revenue calculation
-
-    // One-time revenue is everything else
     const oneTimeRevenue = totalRevenue - subscriptionRevenue;
-
-    // Calculate platform fees (10% of total revenue)
     const platformFees = totalRevenue * 0.1;
-
-    // Calculate creator payouts
-    const creatorPayouts = payouts.reduce((sum, payout) => sum + payout.amount, 0);
-
-    // Calculate transaction count and average
-    const transactionCount = purchaseTransactions.length;
-    const averageTransactionValue =
-      transactionCount > 0 ? totalRevenue / transactionCount : 0;
+    const averageTransactionValue = transactionCount > 0 ? totalRevenue / transactionCount : 0;
 
     return {
       totalRevenue,

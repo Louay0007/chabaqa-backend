@@ -159,15 +159,22 @@ export class AdminController {
   })
   @ApiResponse({
     status: 200,
-    description: '2FA code sent successfully',
+    description: 'Login successful',
     type: AdminLoginResponseDto,
     content: {
       'application/json': {
         example: {
-          access_token: "",
-          refresh_token: "",
-          requires2FA: true,
-          message: "Code de vérification envoyé par email. Utilisez /admin/verify-2fa pour compléter la connexion."
+          access_token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+          refresh_token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+          requires2FA: false,
+          admin: {
+            _id: "64a1b2c3d4e5f6789abcdef0",
+            name: "Admin User",
+            email: "admin@shabaka.com",
+            role: "admin",
+            createdAt: "2023-07-01T10:00:00.000Z"
+          },
+          message: "Connexion réussie"
         }
       }
     }

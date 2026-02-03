@@ -565,11 +565,10 @@ export class FinancialManagementController {
   })
   async getTopCreators(
     @Query() query: FinancialAnalyticsQueryDto,
-    @Query('limit') limit?: number,
   ): Promise<TopCreatorsDto[]> {
     return await this.financialManagementService.getTopCreators(
       query,
-      limit || 10,
+      query.limit || 10,
     );
   }
 

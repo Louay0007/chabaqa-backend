@@ -9,6 +9,9 @@ export class CommunityCreatorDto {
   name: string;
 
   @ApiProperty()
+  username: string;
+
+  @ApiProperty()
   email: string;
 
   @ApiProperty()
@@ -57,8 +60,14 @@ export class CommunityResponseDto {
   @ApiProperty({ type: CommunityCreatorDto })
   creator: CommunityCreatorDto;
 
-  @ApiProperty()
+  @ApiProperty({ example: 'active' })
+  status?: 'pending' | 'approved' | 'rejected' | 'active' | 'inactive' | 'suspended';
+
+  @ApiProperty({ example: 150 })
   membersCount: number;
+
+  @ApiProperty({ example: 45 })
+  contentCount: number;
 
   @ApiProperty()
   isActive: boolean;
@@ -113,6 +122,20 @@ export class CommunityResponseDto {
 
   @ApiProperty()
   rejectionReason?: string;
+
+  @ApiProperty({ required: false })
+  members?: any[];
+
+  @ApiProperty({ required: false })
+  content?: any[];
+
+  @ApiProperty({ required: false })
+  analytics?: {
+    totalRevenue: number;
+    activeMembers: number;
+    contentPublished: number;
+    engagementRate: number;
+  };
 }
 
 export class CommunityApprovalRequestDto {

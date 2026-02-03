@@ -70,6 +70,7 @@ import { Achievement, AchievementSchema } from './schema/achievement.schema';
 import { UserAchievement, UserAchievementSchema } from './schema/user-achievement.schema';
 import { ManualPaymentService } from './common/services/manual-payment.service';
 import { WalletModule } from './wallet/wallet.module';
+import { AiModule } from './ai/ai.module';
 
 // Import new admin schemas
 import { AdminUser, AdminUserSchema } from './admin/schemas/admin-user.schema';
@@ -179,6 +180,7 @@ import { ContentModerationQueue, ContentModerationQueueSchema } from './admin/sc
     ProgressionModule,
     PayoutModule,
     WalletModule,
+    AiModule,
   ],
   controllers: [AppController, UserController, TrackingController, PaymentController],
   providers: [

@@ -13,6 +13,12 @@ import { User, UserSchema } from '../schema/user.schema';
 import { VerificationCode, VerificationCodeSchema } from '../schema/verification-code.schema';
 import { RevokedToken, RevokedTokenSchema } from '../schema/revoked-token.schema';
 
+// Import schemas for AnalyticsService
+import { Community, CommunitySchema } from '../schema/community.schema';
+import { Order, OrderSchema } from '../schema/order.schema';
+import { Subscription, SubscriptionSchema } from '../schema/subscription.schema';
+import { Cours, CoursSchema } from '../schema/course.schema';
+
 // Import new admin-specific schemas
 import { AdminUser, AdminUserSchema } from './schemas/admin-user.schema';
 import { AuditLog, AuditLogSchema } from './schemas/audit-log.schema';
@@ -71,16 +77,17 @@ import { AnalyticsController } from './common/controllers/analytics.controller';
       { name: VerificationCode.name, schema: VerificationCodeSchema },
       { name: RevokedToken.name, schema: RevokedTokenSchema },
       
+      // Additional schemas for AnalyticsService
+      { name: Community.name, schema: CommunitySchema },
+      { name: Order.name, schema: OrderSchema },
+      { name: Subscription.name, schema: SubscriptionSchema },
+      { name: Cours.name, schema: CoursSchema },
+
       // New admin-specific schemas
       { name: AdminUser.name, schema: AdminUserSchema },
       { name: AuditLog.name, schema: AuditLogSchema },
       { name: ContentModerationQueue.name, schema: ContentModerationQueueSchema },
     ]),
-    JwtModule.register({
-      global: true,
-      secret: process.env.JWT_SECRET || 'default-secret',
-      signOptions: { expiresIn: '1h' },
-    }),
     ConfigModule,
     
     // Import required modules for integration (these are now global)

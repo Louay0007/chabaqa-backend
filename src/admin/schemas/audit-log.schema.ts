@@ -6,6 +6,7 @@ import { Document, Types } from 'mongoose';
  */
 export enum AdminAction {
   // User management actions
+  USER_CREATE = 'user_create',
   USER_SUSPEND = 'user_suspend',
   USER_ACTIVATE = 'user_activate',
   USER_PASSWORD_RESET = 'user_password_reset',
@@ -14,6 +15,7 @@ export enum AdminAction {
   USER_LIST = 'user_list',
   USER_VIEW = 'user_view',
   USER_UPDATE = 'user_update',
+  USER_DELETE = 'user_delete',
   
   // Community management actions
   COMMUNITY_APPROVE = 'community_approve',

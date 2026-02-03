@@ -124,55 +124,23 @@ export class AdminService {
   // login admin
   async loginAdmin(loginAdminDto: AdminLoginDto): Promise<AdminLoginResponseDto> {
     const admin = await this.validateAdmin(loginAdminDto.email, loginAdminDto.password);
-    // Générer et envoyer automatiquement le code 2FA
-    const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
     
-    // Sauvegarder le code dans la base de données (avec expiration)
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
-    
-    // Supprimer les anciens codes pour cet utilisateur
-    await this.verificationCodeModel.deleteMany({ adminId: admin._id, type: '2fa' });
-    
-    // Sauvegarder le nouveau code avec l'information "Remember Me"
-    await this.verificationCodeModel.create({
-      adminId: admin._id,
-      code: verificationCode,
-      type: '2fa',
-      expiresAt,
-      // Stocker temporairement l'option "Remember Me" dans le code
-      rememberMe: loginAdminDto.remember_me || false,
-    });
-
-    // In development mode, log the 2FA code to console
-    const isDevelopment = process.env.NODE_ENV === 'development';
-    if (isDevelopment) {
-      console.log('\n=================================');
-      console.log('🔐 ADMIN 2FA CODE (Development Only)');
-      console.log('=================================');
-      console.log(`Email: ${admin.email}`);
-      console.log(`Code: ${verificationCode}`);
-      console.log(`Expires: ${expiresAt.toISOString()}`);
-      console.log('=================================\n');
-    }
-
-    // Envoyer le code par email (skip in development if email fails)
-    try {
-      await this.emailService.send2FACode(admin.email, verificationCode, '2fa');
-    } catch (error) {
-      if (isDevelopment) {
-        console.warn('[Admin] Email sending failed in development mode, but 2FA code is logged above');
-      } else {
-        throw error;
-      }
-    }
+    // Bypass 2FA - Generate tokens directly
+    const { accessToken, refreshToken, rememberMe } = this.generateTokens(admin, loginAdminDto.remember_me);
 
     return {
-      access_token: "",
-      refresh_token: "",
-      requires2FA: true,
-      message: isDevelopment 
-        ? `Code de vérification: ${verificationCode} (Development Mode - Check console)` 
-        : 'Code de vérification envoyé par email. Utilisez /auth/verify-2fa pour compléter la connexion.',
+      access_token: accessToken,
+      refresh_token: refreshToken,
+      requires2FA: false,
+      admin: {
+        _id: admin._id.toString(),
+        name: admin.name,
+        email: admin.email,
+        role: admin.role,
+        createdAt: admin.createdAt,
+      },
+      rememberMe,
+      message: 'Connexion réussie',
     };
   }
 

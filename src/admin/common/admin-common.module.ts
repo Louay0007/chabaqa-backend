@@ -6,6 +6,10 @@ import { AuditLog, AuditLogSchema } from '../schemas/audit-log.schema';
 import { AdminUser, AdminUserSchema } from '../schemas/admin-user.schema';
 import { User, UserSchema } from '../../schema/user.schema';
 import { Admin, AdminSchema } from '../../schema/admin.schema';
+import { Community, CommunitySchema } from '../../schema/community.schema';
+import { Order, OrderSchema } from '../../schema/order.schema';
+import { Subscription, SubscriptionSchema } from '../../schema/subscription.schema';
+import { Cours, CoursSchema } from '../../schema/course.schema';
 
 // Import common services (only those without external dependencies)
 import { AuditLogService } from './services/audit-log.service';
@@ -32,6 +36,10 @@ import { AdminRolesGuard } from './guards/admin-roles.guard';
       { name: AdminUser.name, schema: AdminUserSchema },
       { name: User.name, schema: UserSchema },
       { name: Admin.name, schema: AdminSchema },
+      { name: Community.name, schema: CommunitySchema },
+      { name: Order.name, schema: OrderSchema },
+      { name: Subscription.name, schema: SubscriptionSchema },
+      { name: Cours.name, schema: CoursSchema },
     ]),
   ],
   providers: [

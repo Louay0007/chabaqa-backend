@@ -204,6 +204,13 @@ export class CommunityAffCreaJoinService {
       // Générer automatiquement un inviteCode unique pour éviter les conflits
       community.inviteCode = community.generateInviteCode();
 
+      // Si la communauté est privée, générer un lien d'invitation par défaut
+      if (community.isPrivate) {
+        // Use a default base URL if not available, will be updated when generated properly via API
+        const baseUrl = process.env.FRONTEND_URL || 'https://chabaqa.com';
+        community.inviteLink = `${baseUrl}/invite/${community.inviteCode}`;
+      }
+
       const savedCommunity = await community.save();
 
       // Log de confirmation si le logo a été intégré
@@ -213,17 +220,24 @@ export class CommunityAffCreaJoinService {
 
       // Mettre à jour l'utilisateur avec la nouvelle communauté et changer son rôle en creator
       console.log('🔄 Mise à jour du rôle utilisateur vers CREATOR...');
+
+      const updateData: any = {
+        $push: {
+          createdCommunities: savedCommunity._id,
+          joinedCommunities: savedCommunity._id,
+          adminCommunities: savedCommunity._id,
+        }
+      };
+
+      // Only upgrade role to CREATOR if the user is currently a regular USER
+      // This prevents overwriting other roles or downgrading special roles
+      if (user.role === UserRole.USER) {
+        updateData.role = UserRole.CREATOR;
+      }
+
       const updatedUser = await this.userModel.findByIdAndUpdate(
         userId,
-        {
-          $push: {
-            createdCommunities: savedCommunity._id,
-            joinedCommunities: savedCommunity._id,
-            adminCommunities: savedCommunity._id,
-          },
-          // Changer le rôle de l'utilisateur en creator s'il était user
-          role: UserRole.CREATOR,
-        },
+        updateData,
         { new: true }
       );
 
@@ -599,10 +613,14 @@ export class CommunityAffCreaJoinService {
   /**
    * Checkout pour adhésion à une communauté payante
    */
-  async checkoutCommunityMembership(communityId: string, userId: string, promoCode?: string): Promise<{ message: string }> {
+  async checkoutCommunityMembership(communityId: string, userId: string, promoCode?: string, isInviteValidated: boolean = false): Promise<{ message: string }> {
     const community = await this.communityModel.findById(communityId);
     if (!community) {
       throw new NotFoundException('Communauté non trouvée');
+    }
+
+    if (community.isPrivate && !isInviteValidated) {
+      throw new ForbiddenException('Cette communauté est privée. Veuillez utiliser le lien d\'invitation pour rejoindre.');
     }
 
     if (community.members.includes(new Types.ObjectId(userId))) {
@@ -1066,6 +1084,81 @@ export class CommunityAffCreaJoinService {
       console.error('Erreur lors de la génération du lien d\'invitation:', error);
       throw new InternalServerErrorException('Erreur lors de la génération du lien d\'invitation');
     }
+  }
+
+
+  /**
+   * Validate an invitation code and return preview info
+   * @param inviteCode - The invitation code to validate
+   * @returns Community preview info
+   */
+  async validateInviteCode(inviteCode: string): Promise<any> {
+    try {
+      const community = await this.communityModel.findOne({ inviteCode })
+        .populate('createur', 'name profile_picture photo_profil')
+        .select('name description short_description coverImage photo_de_couverture logo fees_of_join price priceType currency membersCount isPrivate isActive')
+        .exec();
+
+      if (!community) {
+        throw new NotFoundException('Code d\'invitation invalide');
+      }
+
+      if (!community.isActive) {
+        throw new ForbiddenException('Cette communauté n\'est plus active');
+      }
+
+      // Transform for frontend preview
+      const preview = {
+        _id: community._id,
+        name: community.name,
+        description: community.short_description,
+        logo: this.uploadService.ensureAbsoluteUrl(community.logo),
+        coverImage: this.uploadService.ensureAbsoluteUrl(
+          community.photo_de_couverture || community.coverImage || ''
+        ),
+        creator: {
+          name: (community.createur as any)?.name || 'Créateur',
+          avatar: this.uploadService.ensureAbsoluteUrl(
+            (community.createur as any)?.profile_picture || (community.createur as any)?.photo_profil || ''
+          )
+        },
+        membersCount: community.membersCount,
+        price: community.fees_of_join || community.price || 0,
+        currency: community.currency,
+        isPrivate: community.isPrivate,
+        priceType: community.priceType
+      };
+
+      return preview;
+    } catch (error) {
+      if (error instanceof NotFoundException || error instanceof ForbiddenException) {
+        throw error;
+      }
+      console.error('Error validating invite code:', error);
+      throw new InternalServerErrorException('Erreur lors de la validation du code');
+    }
+  }
+
+  /**
+   * Checkout for private community via invite
+   */
+  async checkoutPrivateCommunity(inviteCode: string, userId: string, promoCode?: string): Promise<{ message: string }> {
+    const community = await this.communityModel.findOne({ inviteCode });
+    if (!community) {
+      throw new NotFoundException('Code d\'invitation invalide');
+    }
+
+    if (!community.isActive) {
+      throw new ForbiddenException('Communauté inactive');
+    }
+
+    // Check if already member
+    if (community.members.includes(new Types.ObjectId(userId))) {
+      return { message: 'Déjà membre de cette communauté' };
+    }
+
+    // Reuse existing checkout logic logic but bypassed privacy check because we have valid invite code
+    return this.checkoutCommunityMembership(community._id.toString(), userId, promoCode, true);
   }
 
   /**

@@ -723,6 +723,57 @@ export class CommunityAffCreaJoinController {
   }
 
   /**
+   * Validate invitation code and get preview
+   * Route: GET /community-aff-crea-join/validate-invite/:inviteCode
+   */
+  @Get('validate-invite/:inviteCode')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ 
+    summary: 'Validate invitation code and get community preview',
+    description: 'Validates an invitation code and returns a preview of the private community (name, description, price, etc.) without revealing sensitive content.'
+  })
+  @ApiParam({
+    name: 'inviteCode',
+    description: 'The unique invitation code to validate',
+    example: 'abc123DEF456'
+  })
+  @ApiResponse({ 
+    status: HttpStatus.OK, 
+    description: 'Invitation code is valid',
+    schema: {
+      example: {
+        success: true,
+        data: {
+          _id: '507f1f77bcf86cd799439011',
+          name: 'Private Alpha Group',
+          description: 'Exclusive group for early adopters',
+          logo: 'https://example.com/logo.png',
+          membersCount: 42,
+          price: 99,
+          currency: 'USD',
+          isPrivate: true,
+          priceType: 'one-time'
+        }
+      }
+    }
+  })
+  @ApiResponse({ 
+    status: HttpStatus.NOT_FOUND, 
+    description: 'Invitation code is invalid or expired' 
+  })
+  @ApiResponse({ 
+    status: HttpStatus.FORBIDDEN, 
+    description: 'Community is inactive' 
+  })
+  async validateInvite(@Param('inviteCode') inviteCode: string) {
+    const preview = await this.communityService.validateInviteCode(inviteCode);
+    return {
+      success: true,
+      data: preview
+    };
+  }
+
+  /**
    * Quitter une communauté
    * Route: POST /community-aff-crea-join/leave/:communityId
    * Authentification: JWT obligatoire
@@ -892,6 +943,54 @@ export class CommunityAffCreaJoinController {
     @Request() req: any
   ) {
     const result = await this.communityService.checkoutCommunityMembership(communityId, req.user._id, promoCode);
+    return { success: true, ...result };
+  }
+
+  /**
+   * Checkout for private community via invite
+   * Route: POST /community-aff-crea-join/checkout-private/:inviteCode
+   */
+  @Post('checkout-private/:inviteCode')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ 
+    summary: 'Checkout for private community using invite code',
+    description: 'Allows a user to join/pay for a private community using a valid invitation code, bypassing standard private community restrictions.'
+  })
+  @ApiParam({
+    name: 'inviteCode',
+    description: 'The valid invitation code for the private community',
+    example: 'abc123DEF456'
+  })
+  @ApiQuery({ 
+    name: 'promoCode', 
+    required: false, 
+    type: String,
+    description: 'Optional promotional code for discounts'
+  })
+  @ApiResponse({ 
+    status: HttpStatus.OK, 
+    description: 'Successfully joined or payment initiated',
+    schema: {
+      example: {
+        success: true,
+        message: 'Adhésion achetée avec succès'
+      }
+    }
+  })
+  @ApiResponse({ 
+    status: HttpStatus.NOT_FOUND, 
+    description: 'Invitation code invalid' 
+  })
+  @ApiResponse({ 
+    status: HttpStatus.FORBIDDEN, 
+    description: 'Community inactive or user already a member' 
+  })
+  async checkoutPrivateCommunity(
+    @Param('inviteCode') inviteCode: string,
+    @Query('promoCode') promoCode: string | undefined,
+    @Request() req: any
+  ) {
+    const result = await this.communityService.checkoutPrivateCommunity(inviteCode, req.user._id, promoCode);
     return { success: true, ...result };
   }
 
