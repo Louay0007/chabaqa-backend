@@ -543,11 +543,11 @@ export class EventService {
   /**
    * Inscrire un utilisateur à un événement
    */
-  async registerAttendee(eventId: string, ticketType: string, userId: string, promoCode?: string, session: any = null, skipOrderCreation: boolean = false): Promise<{ message: string }> {
+  async registerAttendee(eventId: string, ticketType: string, userId: string, promoCode?: string): Promise<{ message: string }> {
     // Try to find event by custom id first, then by MongoDB _id
-    let event = await this.eventModel.findOne({ id: eventId }).session(session);
+    let event = await this.eventModel.findOne({ id: eventId });
     if (!event) {
-      event = await this.eventModel.findById(eventId).session(session);
+      event = await this.eventModel.findById(eventId);
     }
     if (!event) {
       throw new NotFoundException('Événement non trouvé');
@@ -612,7 +612,7 @@ export class EventService {
     
     // Si billet payant, appliquer promo et créer une commande avec calcul des frais
     const FREE_MODE = process.env.FREE_MODE === 'true';
-    if (ticket.price && ticket.price > 0 && !FREE_MODE && !skipOrderCreation) {
+    if (ticket.price && ticket.price > 0 && !FREE_MODE) {
       let effective = ticket.price;
       let discountDT = 0;
       let appliedCode: string | undefined;
@@ -634,7 +634,7 @@ export class EventService {
       }
       
       const breakdown = await this.feeService.calculateForAmount(effective, event.creatorId.toString());
-      await this.orderModel.create([{
+      await this.orderModel.create({
         buyerId: new Types.ObjectId(userId),
         creatorId: event.creatorId,
         contentType: TrackableContentType.EVENT,
@@ -647,10 +647,10 @@ export class EventService {
         promoCode: appliedCode,
         discountDT,
         status: 'paid'
-      }], { session });
+      });
     }
     
-    await event.save({ session });
+    await event.save();
 
     return { message: 'Inscription réussie' };
   }

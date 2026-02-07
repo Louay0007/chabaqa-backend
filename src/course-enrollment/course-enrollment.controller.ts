@@ -46,9 +46,8 @@ export class CourseEnrollmentController {
   async getMyEnrollments(
     @Request() req: { user: AuthenticatedUser }
   ) {
-    console.log(`📚 [CourseEnrollmentController] Récupération des inscriptions pour l'utilisateur ${req.user._id}`);
-
-    return await this.courseEnrollmentService.getUserEnrollments(req.user._id);
+    const userId = req.user._id != null ? String(req.user._id) : '';
+    return await this.courseEnrollmentService.getUserEnrollments(userId);
   }
 
   /**

@@ -1253,7 +1253,7 @@ export class PaymentController {
       case TrackableContentType.EVENT:
         // Use metadata ticketType if available
         const ticketType = order.metadata?.ticketType || 'standard';
-        await this.eventService.registerAttendee(order.contentId, ticketType, order.buyerId.toString(), order.promoCode, session, true);
+        await this.eventService.registerAttendee(order.contentId, ticketType, order.buyerId.toString(), order.promoCode);
         break;
 
       case TrackableContentType.SESSION:

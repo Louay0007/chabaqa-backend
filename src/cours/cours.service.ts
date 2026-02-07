@@ -525,6 +525,9 @@ export class CoursService {
       console.log('   ✅ Utilisateur autorisé');
     }
 
+    // Attach rating stats
+    await this.attachRatingStatsToCourses([cours]);
+
     return await this.transformerEnReponse(cours);
   }
 
@@ -1067,6 +1070,7 @@ export class CoursService {
               description: chapitre.contenu,
               videoUrl: this.uploadService.ensureAbsoluteUrl(chapitre.videoUrl),
               isPaid: !chapitre.isPreview,
+              isPreview: Boolean(chapitre.isPreview),
               ordre: chapitre.ordre,
               duree: chapitre.duree?.toString(),
               courseId: section.courseId,
