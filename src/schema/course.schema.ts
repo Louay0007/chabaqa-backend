@@ -1110,15 +1110,19 @@ CoursSchema.methods.verifierAccesChapitre = function(chapitreId: string, progres
     const watchTimeSeconds = Number((progressionPrecedente as any)?.watchTime ?? 0);
 
     let previousDurationSeconds = 0;
-    // Find previous chapter duration from the course content
-    for (const section of this.sections || []) {
-      const ch = (section?.chapitres || []).find((c: any) => c.id === chapitrePrecedent.id);
-      if (ch) {
-        const dureeMinutes = Number((ch as any)?.duree ?? 0);
-        if (Number.isFinite(dureeMinutes) && dureeMinutes > 0) {
-          previousDurationSeconds = dureeMinutes * 60;
+    const durationFromProgress = Number((progressionPrecedente as any)?.videoDuration ?? 0);
+    if (Number.isFinite(durationFromProgress) && durationFromProgress > 0) {
+      previousDurationSeconds = durationFromProgress;
+    } else {
+      for (const section of this.sections || []) {
+        const ch = (section?.chapitres || []).find((c: any) => c.id === chapitrePrecedent.id);
+        if (ch) {
+          const duree = Number((ch as any)?.duree ?? 0);
+          if (Number.isFinite(duree) && duree > 0) {
+            previousDurationSeconds = duree > 1000 ? duree : duree * 60;
+          }
+          break;
         }
-        break;
       }
     }
 

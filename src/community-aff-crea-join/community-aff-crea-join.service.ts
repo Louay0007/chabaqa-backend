@@ -5,7 +5,7 @@ import { Community, CommunityDocument } from '../schema/community.schema';
 import { User, UserDocument, UserRole } from '../schema/user.schema';
 import { CreateCommunityDto } from '../dto-community/create-community.dto';
 import { JoinCommunityDto, JoinByInviteDto, GenerateInviteDto } from '../dto-community/join-community.dto';
-import { UploadService } from 'src/upload/upload.service';
+import { UploadService } from '../upload/upload.service';
 import { PolicyService } from '../common/services/policy.service';
 import { PromoService } from '../common/services/promo.service';
 import { FeeService } from '../common/services/fee.service';

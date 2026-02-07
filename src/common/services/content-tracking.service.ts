@@ -184,6 +184,58 @@ export class ContentTrackingService {
   }
 
   /**
+   * Mettre à jour la progression (pourcentage)
+   */
+  async updateProgress(
+    userId: string,
+    contentId: string,
+    contentType: TrackableContentType,
+    progressPercent: number,
+    metadata: Record<string, any> = {},
+  ): Promise<ContentProgressDocument> {
+    if (progressPercent < 0 || progressPercent > 100) {
+      throw new BadRequestException('Progress must be between 0 and 100');
+    }
+
+    const progress = await this.getOrCreateProgress(
+      userId,
+      contentId,
+      contentType,
+    );
+    
+    // Update progress metadata
+    if (!progress.metadata) progress.metadata = {};
+    progress.metadata['progressPercent'] = progressPercent;
+    
+    // Auto-complete if 100%
+    if (progressPercent === 100 && !progress.isCompleted) {
+      progress.marquerComplete();
+    } else {
+      progress.mettreAJourDernierAcces();
+    }
+
+    // Merge additional metadata
+    if (Object.keys(metadata).length > 0) {
+      progress.metadata = { ...progress.metadata, ...metadata };
+    }
+
+    await progress.save();
+
+    // Log action if significant progress
+    if (progressPercent > 0) {
+      await this.trackAction(
+        userId,
+        contentId,
+        contentType,
+        TrackingActionType.START, // Reusing START/UPDATE semantics
+        { progressPercent, ...metadata }
+      );
+    }
+
+    return progress;
+  }
+
+  /**
    * Ajouter un like
    */
   async trackLike(

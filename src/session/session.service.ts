@@ -446,19 +446,19 @@ export class SessionService {
   /**
    * Réserver une session
    */
-  async bookSession(sessionId: string, bookSessionDto: BookSessionDto, userId: string, promoCode?: string): Promise<SessionResponseDto> {
-    const session = await this.sessionModel.findOne({ id: sessionId });
-    if (!session) {
+  async bookSession(sessionId: string, bookSessionDto: BookSessionDto, userId: string, promoCode?: string, session: any = null, initialStatus: 'pending' | 'confirmed' = 'pending'): Promise<SessionResponseDto> {
+    const sessionDoc = await this.sessionModel.findOne({ id: sessionId }).session(session);
+    if (!sessionDoc) {
       throw new NotFoundException('Session non trouvée');
     }
 
     // Vérifier que la session est active
-    if (!session.isActive) {
+    if (!sessionDoc.isActive) {
       throw new BadRequestException('Cette session n\'est plus active');
     }
 
     // Vérifier que l'utilisateur n'est pas le créateur
-    if (session.creatorId.toString() === userId) {
+    if (sessionDoc.creatorId.toString() === userId) {
       throw new BadRequestException('Vous ne pouvez pas réserver votre propre session');
     }
 
@@ -470,12 +470,12 @@ export class SessionService {
     }
 
     // Vérifier la disponibilité
-    if (!session.isTimeSlotAvailable(scheduledAt)) {
+    if (!sessionDoc.isTimeSlotAvailable(scheduledAt)) {
       throw new BadRequestException('Ce créneau horaire n\'est pas disponible');
     }
 
     // Vérifier la limite hebdomadaire
-    if (!session.canBookMore()) {
+    if (!sessionDoc.canBookMore()) {
       throw new BadRequestException('Limite de réservations hebdomadaires atteinte');
     }
 
@@ -484,43 +484,78 @@ export class SessionService {
       id: new Types.ObjectId().toString(),
       userId: new Types.ObjectId(userId),
       scheduledAt: scheduledAt,
-      status: 'pending' as const,
+      status: initialStatus,
       notes: bookSessionDto.notes,
       createdAt: new Date(),
-      updatedAt: new Date()
+      updatedAt: new Date(),
+      meetingUrl: undefined as string | undefined,
+      googleEventId: undefined as string | undefined
     };
 
-    session.addBooking(booking);
+    // If confirmed (e.g. paid), try to create Google Meet link
+    if (initialStatus === 'confirmed') {
+      try {
+        const creatorId = sessionDoc.creatorId.toString();
+        const hasGoogleAccess = await this.googleCalendarService.hasValidAccess(creatorId);
+        
+        if (hasGoogleAccess) {
+          const participant = await this.userModel.findById(userId).select('email name');
+          if (participant?.email) {
+            const endTime = new Date(scheduledAt.getTime() + (sessionDoc.duration || 60) * 60 * 1000);
+            
+            this.logger.log(`[bookSession] Creating Google Meet for confirmed booking`);
+            const result = await this.googleCalendarService.createCalendarEventWithMeet(
+              creatorId,
+              sessionDoc.id,
+              participant.email,
+              scheduledAt,
+              endTime,
+              sessionDoc.title,
+              sessionDoc.description
+            );
+            
+            booking.meetingUrl = result.meetLink;
+            booking.googleEventId = result.eventId;
+            this.logger.log(`[bookSession] Google Meet created: ${result.meetLink}`);
+          }
+        }
+      } catch (error: any) {
+        this.logger.warn(`[bookSession] Failed to create Google Meet: ${error.message}`);
+        // Continue without Meet link
+      }
+    }
+
+    sessionDoc.addBooking(booking as any);
     // Si la session est payante, appliquer promo puis créer une commande avec calcul des frais
     const FREE_MODE = process.env.FREE_MODE === 'true';
-    if (session.price && session.price > 0 && !FREE_MODE) {
+    if (sessionDoc.price && sessionDoc.price > 0 && !FREE_MODE) {
       // Check for existing paid order first
       const existingOrder = await this.orderModel.findOne({
         buyerId: new Types.ObjectId(userId),
         contentType: TrackableContentType.SESSION,
-        contentId: session._id.toString(),
+        contentId: sessionDoc._id.toString(),
         status: 'paid'
-      });
+      }).session(session);
 
       if (!existingOrder) {
-        let effective = session.price;
+        let effective = sessionDoc.price;
         let discountDT = 0;
         let appliedCode: string | undefined;
         if (promoCode) {
-          const buyer = await this.userModel.findById(userId).select('email');
-          const promo = await this.promoService.validateAndApply(promoCode, session.price, TrackableContentType.SESSION, session._id.toString(), (buyer as any)?.email);
+          const buyer = await this.userModel.findById(userId).select('email').session(session);
+          const promo = await this.promoService.validateAndApply(promoCode, sessionDoc.price, TrackableContentType.SESSION, sessionDoc._id.toString(), (buyer as any)?.email);
           if (promo.valid) {
             effective = promo.finalAmountDT;
             discountDT = promo.discountDT;
             appliedCode = promo.appliedCode;
           }
         }
-        const breakdown = await this.feeService.calculateForAmount(effective, session.creatorId.toString());
-        await this.orderModel.create({
+        const breakdown = await this.feeService.calculateForAmount(effective, sessionDoc.creatorId.toString());
+        await this.orderModel.create([{
           buyerId: new Types.ObjectId(userId),
-          creatorId: session.creatorId,
+          creatorId: sessionDoc.creatorId,
           contentType: TrackableContentType.SESSION,
-          contentId: session._id.toString(),
+          contentId: sessionDoc._id.toString(),
           amountDT: breakdown.amountDT,
           platformPercent: breakdown.platformPercent,
           platformFixedDT: breakdown.platformFixedDT,
@@ -529,13 +564,41 @@ export class SessionService {
           promoCode: appliedCode,
           discountDT,
           status: 'paid'
-        });
+        }], { session });
       }
     }
-    await session.save();
+    await sessionDoc.save({ session });
 
-    const community = await this.communityModel.findOne({ id: session.communityId });
-    return this.transformToResponseDto(session, community || undefined, userId);
+    // Send email notifications if confirmed
+    if (initialStatus === 'confirmed') {
+      try {
+        const participant = await this.userModel.findById(userId).select('email name');
+        const creator = await this.userModel.findById(sessionDoc.creatorId).select('email name');
+        if (participant?.email && creator?.email) {
+          const emailData: SessionBookingEmailData = {
+            sessionTitle: sessionDoc.title,
+            sessionDescription: sessionDoc.description,
+            creatorName: creator.name || 'Creator',
+            creatorEmail: creator.email,
+            participantName: participant.name || 'Participant',
+            participantEmail: participant.email,
+            scheduledAt: booking.scheduledAt,
+            duration: sessionDoc.duration || 60,
+            meetingUrl: booking.meetingUrl,
+            bookingId: booking.id,
+            sessionId: sessionDoc.id,
+          };
+
+          await this.emailService.sendBookingConfirmation(emailData);
+          await this.emailService.sendBookingNotificationToCreator(emailData);
+        }
+      } catch (emailError: any) {
+        this.logger.warn(`[bookSession] Failed to send confirmation email: ${emailError.message}`);
+      }
+    }
+
+    const community = await this.communityModel.findOne({ id: sessionDoc.communityId }).session(session);
+    return this.transformToResponseDto(sessionDoc, community || undefined, userId);
   }
 
   /**

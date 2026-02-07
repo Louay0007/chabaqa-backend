@@ -1,14 +1,14 @@
 import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
-import { IUser } from 'src/interface/user.interface';
+import { IUser } from '../interface/user.interface';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import * as bcrypt from 'bcryptjs';
-import { CreateUserDto } from 'src/dto-user/create-user.dto';
-import { UpdateUserDto } from 'src/dto-user/update-user.dto';
-import { ForgotPasswordDto } from 'src/dto-user/forgot-password.dto';
-import { ResetPasswordDto } from 'src/dto-user/reset-password.dto';
-import { EmailService } from 'src/common/services/email.service';
-import { VerificationCode, VerificationCodeDocument } from 'src/schema/verification-code.schema';
+import { CreateUserDto } from '../dto-user/create-user.dto';
+import { UpdateUserDto } from '../dto-user/update-user.dto';
+import { ForgotPasswordDto } from '../dto-user/forgot-password.dto';
+import { ResetPasswordDto } from '../dto-user/reset-password.dto';
+import { EmailService } from '../common/services/email.service';
+import { VerificationCode, VerificationCodeDocument } from '../schema/verification-code.schema';
 import { UploadService, FileType } from '../upload/upload.service';
 
 @Injectable()

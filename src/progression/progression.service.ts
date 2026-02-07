@@ -632,12 +632,36 @@ export class ProgressionService {
   }
 
   private resolveProgressPercent(progress: ContentProgressRecord): number | undefined {
+    // 1. Check for explicit metadata percentage first (highest precedence)
     if (progress.metadata && typeof progress.metadata['progressPercent'] === 'number') {
       return progress.metadata['progressPercent'];
     }
 
+    // 2. If completed, return 100%
     if (progress.isCompleted) {
       return 100;
+    }
+
+    // 3. Smart calculation based on content type specific metadata
+    if (progress.contentType === TrackableContentType.COURSE) {
+       if (progress.metadata && progress.metadata.completedChapters && progress.metadata.totalChapters) {
+         return Math.round((progress.metadata.completedChapters / progress.metadata.totalChapters) * 100);
+       }
+    }
+
+    if (progress.contentType === TrackableContentType.CHALLENGE) {
+       if (progress.metadata && progress.metadata.completedTasks && progress.metadata.totalTasks) {
+         return Math.round((progress.metadata.completedTasks / progress.metadata.totalTasks) * 100);
+       }
+    }
+    
+    // 4. Fallback based on watch time if available
+    if ((progress.watchTime ?? 0) > 0) {
+      // Heuristic: if duration is known in metadata
+      if (progress.metadata && progress.metadata.duration) {
+         return Math.min(Math.round((progress.watchTime! / progress.metadata.duration) * 100), 99);
+      }
+      return undefined; // Can't calculate % without duration
     }
 
     return undefined;

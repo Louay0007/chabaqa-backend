@@ -138,6 +138,12 @@ export class PostResponseDto {
   likes: number;
 
   @ApiProperty({
+    description: 'Nombre de commentaires du post',
+    example: 10
+  })
+  commentsCount: number;
+
+  @ApiProperty({
     description: 'Nombre de partages du post',
     example: 12
   })

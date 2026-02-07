@@ -27,6 +27,9 @@ export interface LinkPaymentMethod {
 @Injectable()
 export class StripePaymentService {
   private readonly stripe: Stripe;
+  private cachedTndToUsdRate: number = 0.32; // Fallback rate
+  private rateLastFetched: number = 0;
+  private readonly RATE_CACHE_DURATION_MS = 1200000;
 
   constructor(private configService: ConfigService) {
     const stripeKey = this.configService.get('STRIPE_SECRET_KEY');
@@ -34,6 +37,40 @@ export class StripePaymentService {
       throw new Error('STRIPE_SECRET_KEY is not configured');
     }
     this.stripe = new Stripe(stripeKey);
+  }
+
+  /**
+   * Get TND to USD conversion rate (uses live API with caching and fallback)
+   */
+  private async getTndToUsdRate(): Promise<number> {
+    const now = Date.now();
+
+    // Return cached rate if still valid
+    if (this.rateLastFetched && (now - this.rateLastFetched) < this.RATE_CACHE_DURATION_MS) {
+      return this.cachedTndToUsdRate;
+    }
+
+    try {
+      // Using exchangerate-api.com free tier (no API key required for basic usage)
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      const response = await fetch('https://api.exchangerate-api.com/v4/latest/TND', {
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      if (response.ok) {
+        const data = await response.json();
+        if (data?.rates?.USD) {
+          this.cachedTndToUsdRate = data.rates.USD;
+          this.rateLastFetched = now;
+          console.log(`[Stripe] Updated TND->USD rate: ${this.cachedTndToUsdRate}`);
+        }
+      }
+    } catch (error) {
+      console.warn('[Stripe] Failed to fetch live exchange rate, using cached/fallback:', error);
+    }
+
+    return this.cachedTndToUsdRate;
   }
 
   /**
@@ -54,9 +91,20 @@ export class StripePaymentService {
     }>;
   }): Promise<LinkCheckoutSession> {
     try {
-      // Convert TND to smallest currency unit (millimes)
-      const amount = Math.round(params.amountDT * 1000);
-      const currency = params.currency || 'tnd';
+      const inputCurrency = (params.currency || 'tnd').toLowerCase();
+      let stripeCurrency = inputCurrency;
+      let amountInStripeCurrency = params.amountDT;
+      let conversionRate = 1;
+
+      if (inputCurrency === 'tnd') {
+        const tndToUsdRate = await this.getTndToUsdRate();
+        stripeCurrency = 'usd';
+        conversionRate = tndToUsdRate;
+        amountInStripeCurrency = params.amountDT * tndToUsdRate;
+      }
+
+      const amount = Math.round(amountInStripeCurrency * 100);
+      const currency = stripeCurrency;
 
       // Create checkout session with Link enabled
       const session = await this.stripe.checkout.sessions.create({
@@ -69,7 +117,7 @@ export class StripePaymentService {
               name: item.name,
               description: item.description,
             },
-            unit_amount: Math.round(item.amount * 1000),
+            unit_amount: Math.round((item.amount * conversionRate) * 100),
           },
           quantity: item.quantity || 1,
         })) : [{
@@ -223,7 +271,7 @@ export class StripePaymentService {
       return {
         success: true,
         status: paymentIntent.status,
-        amountDT: paymentIntent.amount / 1000, // Convert from millimes to TND
+        amountDT: paymentIntent.amount / 100, // Convert from cents to dollars
         paymentMethod,
         customerId: customer?.id,
       };
@@ -331,8 +379,8 @@ export class StripePaymentService {
 
       // Then create a price
       const price = await this.stripe.prices.create({
-        unit_amount: Math.round(params.amountDT * 1000),
-        currency: params.currency || 'tnd',
+        unit_amount: Math.round(params.amountDT * 100),
+        currency: params.currency || 'usd',
         recurring: {
           interval: params.interval,
         },

@@ -5,6 +5,9 @@ import { Achievement, AchievementDocument, AchievementCriteriaType } from '../sc
 import { UserAchievement, UserAchievementDocument } from '../schema/user-achievement.schema';
 import { ProgressionService } from '../progression/progression.service';
 import { Community } from '../schema/community.schema';
+import { Post, PostDocument } from '../schema/post.schema';
+import { UserLoginActivity, UserLoginActivityDocument } from '../schema/user-login-activity.schema';
+import { User, UserDocument } from '../schema/user.schema';
 import { CreateAchievementDto } from './dto/create-achievement.dto';
 import { AchievementResponseDto, UserAchievementResponseDto, AchievementWithProgressDto } from './dto/achievement-response.dto';
 
@@ -14,6 +17,9 @@ export class AchievementService {
     @InjectModel(Achievement.name) private achievementModel: Model<AchievementDocument>,
     @InjectModel(UserAchievement.name) private userAchievementModel: Model<UserAchievementDocument>,
     @InjectModel(Community.name) private communityModel: Model<Community>,
+    @InjectModel(Post.name) private postModel: Model<PostDocument>,
+    @InjectModel(UserLoginActivity.name) private userLoginActivityModel: Model<UserLoginActivityDocument>,
+    @InjectModel(User.name) private userModel: Model<UserDocument>,
     private readonly progressionService: ProgressionService,
   ) {}
 
@@ -58,10 +64,94 @@ export class AchievementService {
       case AchievementCriteriaType.TIME_SPENT:
         return await this.calculateTimeSpentProgress(userId, communityId, criteria);
 
-      // Add more criteria types as needed
+      case AchievementCriteriaType.COUNT_CREATED:
+        return await this.calculateCountCreatedProgress(userId, communityId, criteria);
+
+      case AchievementCriteriaType.POINTS_EARNED:
+        return await this.calculatePointsEarnedProgress(userId, communityId, criteria);
+
+      case AchievementCriteriaType.COMMUNITY_JOIN_DATE:
+        return await this.calculateCommunityJoinDateProgress(userId, communityId, criteria);
+
       default:
         return { current: 0, target: criteria.count || 1, percentage: 0 };
     }
+  }
+
+  private async calculateCountCreatedProgress(
+    userId: string,
+    communityId: string,
+    criteria: any,
+  ): Promise<{ current: number; target: number; percentage: number }> {
+    const target = criteria.count || 1;
+    let current = 0;
+
+    if (criteria.contentType === 'post') {
+      current = await this.postModel.countDocuments({
+        authorId: new Types.ObjectId(userId),
+        communityId: new Types.ObjectId(communityId),
+      });
+    } else if (criteria.contentType === 'comment') {
+      const result = await this.postModel.aggregate([
+        { $match: { communityId: new Types.ObjectId(communityId) } },
+        { $unwind: '$comments' },
+        { $match: { 'comments.userId': new Types.ObjectId(userId) } },
+        { $count: 'total' }
+      ]);
+      current = result.length > 0 ? result[0].total : 0;
+    }
+
+    return {
+      current,
+      target,
+      percentage: Math.min((current / target) * 100, 100),
+    };
+  }
+
+  private async calculatePointsEarnedProgress(
+    userId: string,
+    communityId: string,
+    criteria: any,
+  ): Promise<{ current: number; target: number; percentage: number }> {
+    const target = criteria.points || 100;
+    
+    const user = await this.userModel.findById(userId).select('walletBalance totalPointsEarned');
+    const current = user ? (user as any).totalPointsEarned || (user as any).walletBalance || 0 : 0;
+
+    return {
+      current,
+      target,
+      percentage: Math.min((current / target) * 100, 100),
+    };
+  }
+
+  private async calculateCommunityJoinDateProgress(
+    userId: string,
+    communityId: string,
+    criteria: any,
+  ): Promise<{ current: number; target: number; percentage: number }> {
+    const targetMonths = criteria.monthsSinceJoin || 1;
+    const targetDays = criteria.days || (targetMonths * 30);
+    
+    const activity = await this.userLoginActivityModel.findOne({
+      userId: new Types.ObjectId(userId),
+      communityId: new Types.ObjectId(communityId)
+    });
+
+    if (!activity || !activity.joinedAt) {
+      return { current: 0, target: targetDays, percentage: 0 };
+    }
+
+    const joinDate = new Date(activity.joinedAt);
+    const now = new Date();
+    const diffTime = Math.abs(now.getTime() - joinDate.getTime());
+    const currentDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+    return {
+      current: currentDays,
+      target: targetDays,
+      percentage: Math.min((currentDays / targetDays) * 100, 100),
+    };
   }
 
   private async calculateCountCompletedProgress(

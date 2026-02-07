@@ -22,6 +22,7 @@ import { AchievementService } from '../achievement/achievement.service';
 import { UploadService } from '../upload/upload.service';
 
 @Injectable()
+
 export class CoursService {
   constructor(
     @InjectModel('Cours') private coursModel: Model<CoursDocument>,
@@ -40,6 +41,20 @@ export class CoursService {
     private readonly achievementService: AchievementService,
     private readonly uploadService: UploadService,
   ) { }
+
+  private async resolveCourseDocument(courseId: string): Promise<CoursDocument> {
+    let cours: CoursDocument | null = null;
+    if (Types.ObjectId.isValid(courseId)) {
+      cours = await this.coursModel.findById(courseId);
+    }
+    if (!cours) {
+      cours = await this.coursModel.findOne({ id: courseId });
+    }
+    if (!cours) {
+      throw new NotFoundException('Cours non trouvé');
+    }
+    return cours;
+  }
 
   private async attachRatingStatsToCourses(
     coursDocs: CoursDocument[],
@@ -195,10 +210,10 @@ export class CoursService {
       // These are set by attachRatingStatsToCourses and are always fresh
       const attachedRating = (course as any).averageRating;
       const attachedCount = (course as any).ratingCount;
-      
+
       const finalRating = attachedRating !== undefined ? Number(attachedRating) : Number(course.averageRating || 0);
       const finalCount = attachedCount !== undefined ? Number(attachedCount) : Number(course.ratingCount || 0);
-      
+
       return {
         id: course._id.toString(),
         titre: course.titre,
@@ -210,13 +225,13 @@ export class CoursService {
         duree: course.duree,
         averageRating: finalRating,
         ratingCount: finalCount,
-      creator: {
-        name: (course.creatorId as any)?.name || 'Unknown',
-        avatar: this.uploadService.ensureAbsoluteUrl((course.creatorId as any)?.profile_picture || (course.creatorId as any)?.photo_profil) || 'https://placehold.co/64x64?text=MM'
-      },
-      createdAt: course.createdAt,
-      image: this.uploadService.ensureAbsoluteUrl(course.thumbnail) || 'https://placehold.co/400x300?text=Course',
-      thumbnail: this.uploadService.ensureAbsoluteUrl(course.thumbnail) || 'https://placehold.co/400x300?text=Course'
+        creator: {
+          name: (course.creatorId as any)?.name || 'Unknown',
+          avatar: this.uploadService.ensureAbsoluteUrl((course.creatorId as any)?.profile_picture || (course.creatorId as any)?.photo_profil) || 'https://placehold.co/64x64?text=MM'
+        },
+        createdAt: course.createdAt,
+        image: this.uploadService.ensureAbsoluteUrl(course.thumbnail) || 'https://placehold.co/400x300?text=Course',
+        thumbnail: this.uploadService.ensureAbsoluteUrl(course.thumbnail) || 'https://placehold.co/400x300?text=Course'
       };
     });
 
@@ -400,8 +415,8 @@ export class CoursService {
       const chapitresSection = sectionDto.chapitres.map((chapitreDto, chapitreIndex) => {
         console.log(`   📄 Chapitre ${chapitreIndex + 1}: "${chapitreDto.titre}"`);
 
-        const dureeCalculee = chapitreDto.duree 
-          ? this.convertirDureeEnMinutes(chapitreDto.duree) 
+        const dureeCalculee = chapitreDto.duree
+          ? this.convertirDureeEnMinutes(chapitreDto.duree)
           : (chapitreDto.videoUrl ? 5 : 0); // Default 5 minutes for videos, 0 for text
 
         return {
@@ -1998,10 +2013,7 @@ export class CoursService {
 
     try {
       // 1. Récupérer le cours avec ses sections et chapitres
-      const cours = await this.coursModel.findById(coursId);
-      if (!cours) {
-        throw new NotFoundException('Cours non trouvé');
-      }
+      const cours = await this.resolveCourseDocument(coursId);
 
       // 2. Trouver le chapitre dans toutes les sections
       let chapitre: any = null;
@@ -2054,7 +2066,7 @@ export class CoursService {
       // 5. Si le chapitre est payant, vérifier l'inscription au cours
       const inscription = await this.courseEnrollmentModel.findOne({
         userId: new Types.ObjectId(userId),
-        courseId: new Types.ObjectId(coursId),
+        courseId: cours._id,
         isActive: true
       });
 
@@ -2085,7 +2097,6 @@ export class CoursService {
         throw error;
       }
 
-      console.error('❌ Erreur lors de la vérification d\'accès au chapitre:', error);
       throw new BadRequestException('Erreur lors de la vérification d\'accès au chapitre');
     }
   }
@@ -2096,7 +2107,7 @@ export class CoursService {
    * @param userId ID de l'utilisateur
    * @returns Message de confirmation
    */
-  async inscrireAuCours(coursId: string, userId: string, promoCode?: string): Promise<{ message: string; enrollment: any }> {
+  async inscrireAuCours(coursId: string, userId: string, promoCode?: string, session: any = null): Promise<{ message: string; enrollment: any }> {
     console.log('🔧 DEBUG - Début inscrireAuCours');
     console.log(`   📋 Cours ID: ${coursId}`);
     console.log(`   👤 User ID: ${userId}`);
@@ -2107,12 +2118,12 @@ export class CoursService {
 
       // Essayer par _id si c'est un ObjectId valide
       if (Types.ObjectId.isValid(coursId)) {
-        cours = await this.coursModel.findById(coursId);
+        cours = await this.coursModel.findById(coursId).session(session);
       }
 
       // Fallback: essayer par champ custom "id"
       if (!cours) {
-        cours = await this.coursModel.findOne({ id: coursId });
+        cours = await this.coursModel.findOne({ id: coursId }).session(session);
       }
 
       if (!cours) {
@@ -2142,6 +2153,7 @@ export class CoursService {
             contentId: courseObjectId.toString(),
             status: 'paid',
           })
+          .session(session)
           .sort({ createdAt: -1 })
           .exec();
 
@@ -2155,7 +2167,7 @@ export class CoursService {
         userId: userObjectId,
         courseId: courseObjectId,
         isActive: true
-      });
+      }).session(session);
 
       if (inscriptionExistante) {
         const existingEnrollmentResponse = {
@@ -2189,13 +2201,13 @@ export class CoursService {
         progression: []
       });
 
-      const inscriptionEnregistree = await nouvelleInscription.save();
+      const inscriptionEnregistree = await nouvelleInscription.save({ session });
 
       console.log(`   ✅ Inscription créée: ${inscriptionEnregistree._id}`);
 
       // 6. Ajouter la référence de l'inscription au cours
       cours.ajouterInscription(inscriptionEnregistree._id);
-      await cours.save();
+      await cours.save({ session });
 
       console.log('   ✅ Référence ajoutée au cours');
 
@@ -2356,12 +2368,57 @@ export class CoursService {
       throw new NotFoundException('Cours non trouvé');
     }
 
-    const contentId = cours._id.toString();
-    return await this.trackingService.getProgress(
+    const courseObjectId = cours._id;
+    const userObjectId = new Types.ObjectId(userId);
+
+    // 1. Check for official enrollment in CourseEnrollment collection
+    const enrollment = await this.courseEnrollmentModel.findOne({
+      userId: userObjectId,
+      courseId: courseObjectId,
+      isActive: true
+    });
+
+    // 2. Get content tracking progress (views, watch time, etc.)
+    const contentProgress = await this.trackingService.getProgress(
       userId,
-      contentId,
+      courseObjectId.toString(),
       TrackableContentType.COURSE,
     );
+
+    // 3. Calculate calculated progress percentage
+    let progressPercentage = 0;
+    if (enrollment && enrollment.progression) {
+      const totalChapters = cours.sections?.reduce((acc: number, section: any) =>
+        acc + (section.chapitres?.length || 0), 0) || 0;
+      const completedChapters = enrollment.progression.filter(p => p.isCompleted).length;
+      progressPercentage = totalChapters > 0 ? Math.round((completedChapters / totalChapters) * 100) : 0;
+    } else if (contentProgress) {
+      progressPercentage = contentProgress.calculerProgression ? contentProgress.calculerProgression() : 0;
+    }
+
+    // 4. Return combined data structure expected by frontend
+    if (enrollment) {
+      return {
+        enrollment: {
+          id: enrollment._id.toString(),
+          userId: enrollment.userId.toString(),
+          courseId: cours.id, // Return custom ID for frontend routing
+          enrolledAt: enrollment.enrolledAt,
+          isActive: enrollment.isActive,
+          progression: enrollment.progression || []
+        },
+        progress: progressPercentage,
+        lastAccessedAt: contentProgress?.lastAccessedAt || enrollment.updatedAt || new Date(),
+        contentProgress: contentProgress // Include raw content progress if needed
+      };
+    }
+
+    // If no enrollment, return just the content tracking info (e.g. for previews)
+    return {
+      enrollment: null,
+      progress: progressPercentage,
+      contentProgress: contentProgress
+    };
   }
 
   /**
@@ -2533,6 +2590,7 @@ export class CoursService {
     userId: string
   ): Promise<{
     hasAccess: boolean;
+    canAccess: boolean; // Alias for frontend compatibility
     reason: string;
     requiredChapter?: {
       id: string;
@@ -2555,26 +2613,101 @@ export class CoursService {
 
     try {
       // 1. Récupérer le cours
-      const cours = await this.coursModel.findById(coursId);
-      if (!cours) {
-        throw new NotFoundException('Cours non trouvé');
+      const cours = await this.resolveCourseDocument(coursId);
+
+      // 2. Vérifier les permissions spéciales (Admin/Créateur)
+      try {
+        await this.verifierAdminCommunaute(userId, cours.communityId.toString());
+        console.log('   ✅ Accès Admin/Créateur autorisé');
+        return {
+          hasAccess: true,
+          canAccess: true,
+          reason: 'Admin access',
+          unlockMessage: undefined
+        };
+      } catch (e) {
+        // Pas admin, continuer
       }
 
-      // 2. Récupérer l'inscription de l'utilisateur
+      // 3. Trouver le chapitre pour vérifier s'il est gratuit/preview
+      let targetChapter: any = null;
+      for (const s of cours.sections) {
+        const ch = s.chapitres.find((c: any) => c.id === chapitreId);
+        if (ch) {
+          targetChapter = ch;
+          break;
+        }
+      }
+
+      if (!targetChapter) {
+        throw new NotFoundException('Chapitre non trouvé');
+      }
+
+      // 4. Si le chapitre est gratuit/preview, accès autorisé
+      if (targetChapter.isPreview || !targetChapter.isPaidChapter) {
+        console.log('   ✅ Accès autorisé - Chapitre gratuit/preview');
+
+        const nextChapter = cours.obtenirChapitreSuivant(chapitreId);
+
+        return {
+          hasAccess: true,
+          canAccess: true,
+          reason: 'Free chapter',
+          unlockMessage: undefined,
+          nextChapter: nextChapter ? {
+            id: nextChapter.id,
+            titre: nextChapter.titre,
+            ordre: nextChapter.ordre,
+            sectionId: nextChapter.sectionId
+          } : undefined
+        };
+      }
+
+      // 5. Récupérer l'inscription de l'utilisateur
       const enrollment = await this.courseEnrollmentModel.findOne({
         userId: new Types.ObjectId(userId),
-        courseId: new Types.ObjectId(coursId),
+        courseId: cours._id,
         isActive: true
       });
 
+      // 6. Si pas d'inscription
       if (!enrollment) {
-        throw new NotFoundException('Utilisateur non inscrit à ce cours');
+        // Vérifier si le cours est gratuit et l'utilisateur est membre
+        if ((cours.prix || 0) === 0) {
+          const community = await this.communityModel.findById(cours.communityId);
+          if (community) {
+            const isMember = community.members.some(m => m.equals(new Types.ObjectId(userId)));
+            if (isMember) {
+              console.log('   ✅ Accès autorisé - Cours gratuit (membre)');
+              const nextChapter = cours.obtenirChapitreSuivant(chapitreId);
+              return {
+                hasAccess: true,
+                canAccess: true,
+                reason: 'Free course member access',
+                nextChapter: nextChapter ? {
+                  id: nextChapter.id,
+                  titre: nextChapter.titre,
+                  ordre: nextChapter.ordre,
+                  sectionId: nextChapter.sectionId
+                } : undefined
+              };
+            }
+          }
+        }
+
+        console.log('   ❌ Accès refusé - Non inscrit');
+        return {
+          hasAccess: false,
+          canAccess: false,
+          reason: 'Vous devez vous inscrire au cours pour accéder à ce chapitre',
+          unlockMessage: cours.unlockMessage
+        };
       }
 
-      // 3. Utiliser la méthode du schéma pour vérifier l'accès
+      // 7. Si inscrit, utiliser la méthode du schéma pour vérifier l'accès séquentiel
       const accessCheck = cours.verifierAccesChapitre(chapitreId, enrollment.progression || []);
 
-      // 4. Obtenir le chapitre suivant si disponible
+      // 8. Obtenir le chapitre suivant si disponible
       const nextChapter = cours.obtenirChapitreSuivant(chapitreId);
 
       console.log('   ✅ Vérification d\'accès terminée');
@@ -2583,6 +2716,7 @@ export class CoursService {
 
       return {
         hasAccess: accessCheck.hasAccess,
+        canAccess: accessCheck.hasAccess, // Alias for frontend compatibility
         reason: accessCheck.reason,
         requiredChapter: accessCheck.requiredChapter ? {
           id: accessCheck.requiredChapter.id,
@@ -2634,23 +2768,25 @@ export class CoursService {
 
     try {
       // 1. Récupérer le cours
-      const cours = await this.coursModel.findById(coursId);
-      if (!cours) {
-        throw new NotFoundException('Cours non trouvé');
+      const cours = await this.resolveCourseDocument(coursId);
+
+      // 2. Vérifier si l'utilisateur est admin/créateur
+      let isAdmin = false;
+      try {
+        await this.verifierAdminCommunaute(userId, cours.communityId.toString());
+        isAdmin = true;
+      } catch (e) {
+        // Not admin
       }
 
-      // 2. Récupérer l'inscription de l'utilisateur
+      // 3. Récupérer l'inscription de l'utilisateur
       const enrollment = await this.courseEnrollmentModel.findOne({
         userId: new Types.ObjectId(userId),
-        courseId: new Types.ObjectId(coursId),
+        courseId: cours._id,
         isActive: true
       });
 
-      if (!enrollment) {
-        throw new NotFoundException('Utilisateur non inscrit à ce cours');
-      }
-
-      // 3. Construire la liste des chapitres avec leur statut
+      // 4. Construire la liste des chapitres avec leur statut
       const unlockedChapters: Array<{
         id: string;
         titre: string;
@@ -2663,6 +2799,18 @@ export class CoursService {
 
       // Trier les sections par ordre
       const sectionsTriees = [...cours.sections].sort((a, b) => a.ordre - b.ordre);
+      const progression = enrollment?.progression || [];
+
+      // Check for free course member access
+      let isFreeCourseMember = false;
+      if (!enrollment && (cours.prix || 0) === 0) {
+        try {
+          const community = await this.communityModel.findById(cours.communityId);
+          if (community && community.members.some(m => m.equals(new Types.ObjectId(userId)))) {
+            isFreeCourseMember = true;
+          }
+        } catch (e) { }
+      }
 
       for (const section of sectionsTriees) {
         // Trier les chapitres par ordre
@@ -2670,21 +2818,32 @@ export class CoursService {
 
         for (const chapitre of chapitresTries) {
           // Vérifier si le chapitre est complété
-          const progression = enrollment.progression.find(p => p.chapterId === chapitre.id);
-          const isCompleted = progression?.isCompleted || false;
+          const p = progression.find(pr => pr.chapterId === chapitre.id);
+          const isCompleted = p?.isCompleted || false;
 
           // Vérifier si le chapitre est déverrouillé
-          let isUnlocked = true;
-          if (cours.sequentialProgression) {
-            const accessCheck = cours.verifierAccesChapitre(chapitre.id, enrollment.progression || []);
-            isUnlocked = accessCheck.hasAccess;
+          let isUnlocked = isAdmin;
+
+          if (!isUnlocked) {
+            if (enrollment) {
+              // User enrolled: use sequential logic
+              const accessCheck = cours.verifierAccesChapitre(chapitre.id, progression);
+              isUnlocked = accessCheck.hasAccess;
+            } else {
+              // Not enrolled: check for free/preview/member access
+              if (isFreeCourseMember) {
+                isUnlocked = true;
+              } else if (chapitre.isPreview || !chapitre.isPaidChapter) {
+                isUnlocked = true;
+              }
+            }
           }
 
           unlockedChapters.push({
             id: chapitre.id,
             titre: chapitre.titre,
             ordre: chapitre.ordre,
-            sectionId: chapitre.sectionId,
+            sectionId: section.id,
             sectionTitre: section.titre,
             isCompleted,
             isUnlocked
@@ -2697,7 +2856,7 @@ export class CoursService {
 
       return {
         unlockedChapters,
-        sequentialProgressionEnabled: cours.sequentialProgression,
+        sequentialProgressionEnabled: !!cours.sequentialProgression, // Only true if course has it enabled
         unlockMessage: cours.unlockMessage
       };
 
@@ -2733,10 +2892,7 @@ export class CoursService {
 
     try {
       // 1. Vérifier que le cours existe
-      const cours = await this.coursModel.findById(coursId);
-      if (!cours) {
-        throw new NotFoundException('Cours non trouvé');
-      }
+      const cours = await this.resolveCourseDocument(coursId);
 
       // 2. Vérifier que le créateur est admin de la communauté
       await this.verifierAdminCommunaute(creatorId, cours.communityId.toString());
@@ -2744,7 +2900,7 @@ export class CoursService {
       // 3. Récupérer l'inscription de l'utilisateur
       const enrollment = await this.courseEnrollmentModel.findOne({
         userId: new Types.ObjectId(userId),
-        courseId: new Types.ObjectId(coursId),
+        courseId: cours._id,
         isActive: true
       });
 
@@ -2856,7 +3012,7 @@ export class CoursService {
 
     if (updateDto.content) note.content = updateDto.content;
     if (updateDto.timestamp !== undefined) note.timestamp = updateDto.timestamp;
-    
+
     note.updatedAt = new Date();
     return await note.save();
   }

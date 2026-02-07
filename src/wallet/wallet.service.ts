@@ -173,9 +173,12 @@ export class WalletService {
 
     const balanceBefore = user.walletBalance || 0;
     const balanceAfter = balanceBefore + topUpRequest.amountDT;
+    const totalBefore = user.totalPointsEarned || 0;
+    const totalAfter = totalBefore + topUpRequest.amountDT;
 
     // Update user balance
     user.walletBalance = balanceAfter;
+    user.totalPointsEarned = totalAfter;
     await user.save();
 
     // Create transaction record
@@ -293,9 +296,12 @@ export class WalletService {
 
       const balanceBefore = user.walletBalance || 0;
       const balanceAfter = balanceBefore + topUpRequest.amountDT;
+      const totalBefore = user.totalPointsEarned || 0;
+      const totalAfter = totalBefore + topUpRequest.amountDT;
 
       // Update user balance
       user.walletBalance = balanceAfter;
+      user.totalPointsEarned = totalAfter;
       await user.save();
 
       // Create transaction record

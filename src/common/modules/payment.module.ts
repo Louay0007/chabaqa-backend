@@ -25,6 +25,8 @@ import { CoursModule } from '../../cours/cours.module';
 import { ChallengeModule } from '../../challenge/challenge.module';
 import { EventModule } from '../../event/event.module';
 import { SubscriptionModule } from '../../subscription/subscription.module';
+import { SessionModule } from '../../session/session.module';
+import { ProductModule } from '../../product/product.module';
 
 @Global()
 @Module({
@@ -49,6 +51,8 @@ import { SubscriptionModule } from '../../subscription/subscription.module';
     ChallengeModule,
     EventModule,
     SubscriptionModule,
+    SessionModule,
+    ProductModule,
   ],
   controllers: [PaymentController],
   providers: [

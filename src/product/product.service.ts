@@ -262,7 +262,7 @@ export class ProductService {
       // Récupérer les informations complètes
       const populatedProduct = await this.productModel
         .findById(savedProduct._id)
-        .populate('creatorId', 'name email profile_picture')
+        .populate('creatorId', 'name email profile_picture photo_profil')
         .exec();
 
       console.log('✅ Product populated');
@@ -327,7 +327,7 @@ export class ProductService {
     const [products, total] = await Promise.all([
       this.productModel
         .find(query)
-        .populate('creatorId', 'name email profile_picture')
+        .populate('creatorId', 'name email profile_picture photo_profil')
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
@@ -400,13 +400,13 @@ export class ProductService {
   async findOne(id: string): Promise<ProductResponseDto> {
     let product = await this.productModel
       .findOne({ id })
-      .populate('creatorId', 'name email profile_picture')
+      .populate('creatorId', 'name email profile_picture photo_profil')
       .exec();
 
     if (!product && isValidObjectId(id)) {
       product = await this.productModel
         .findById(id)
-        .populate('creatorId', 'name email profile_picture')
+        .populate('creatorId', 'name email profile_picture photo_profil')
         .exec();
     }
 
@@ -459,7 +459,7 @@ export class ProductService {
     // Récupérer les informations complètes
     const populatedProduct = await this.productModel
       .findById(updatedProduct._id)
-      .populate('creatorId', 'name email profile_picture')
+      .populate('creatorId', 'name email profile_picture photo_profil')
       .exec();
 
     const community = await this.communityModel.findOne({
@@ -941,7 +941,7 @@ export class ProductService {
             {
               path: 'creatorId',
               model: 'User',
-              select: 'name email',
+              select: 'name email profile_picture photo_profil',
             },
           ],
         })
@@ -978,6 +978,10 @@ export class ProductService {
                   _id: product.creatorId._id.toString(),
                   name: product.creatorId.name,
                   email: product.creatorId.email,
+                  avatar: this.uploadService.ensureAbsoluteUrl(
+                    product.creatorId.profile_picture ||
+                      product.creatorId.photo_profil,
+                  ),
                 }
               : null;
 

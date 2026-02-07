@@ -306,15 +306,42 @@ ContentProgressSchema.methods.incrementerDownload = function() {
 };
 
 ContentProgressSchema.methods.calculerProgression = function(): number {
-  // Logique de calcul de progression basée sur le type de contenu
+  // 1. If explicitly completed, return 100%
   if (this.isCompleted) return 100;
-  
-  // Pour les contenus avec temps de visionnage
-  if (this.watchTime > 0) {
-    // Cette logique peut être adaptée selon le type de contenu
-    return Math.min((this.watchTime / 3600) * 10, 100); // Exemple: 1h = 10% de progression
+
+  // 2. If explicit percentage is stored in metadata (e.g. from updateProgress)
+  if (this.metadata && typeof this.metadata['progressPercent'] === 'number') {
+    return Math.min(Math.max(this.metadata['progressPercent'], 0), 100);
   }
   
+  // 3. Logic based on content type
+  switch (this.contentType) {
+    case TrackableContentType.COURSE:
+      // For courses, rely on metadata (chapters completed / total)
+      if (this.metadata && this.metadata.completedChapters && this.metadata.totalChapters) {
+        return Math.round((this.metadata.completedChapters / this.metadata.totalChapters) * 100);
+      }
+      break;
+
+    case TrackableContentType.CHALLENGE:
+      // For challenges, rely on tasks completed
+      if (this.metadata && this.metadata.completedTasks && this.metadata.totalTasks) {
+        return Math.round((this.metadata.completedTasks / this.metadata.totalTasks) * 100);
+      }
+      break;
+
+    case TrackableContentType.SESSION:
+    case TrackableContentType.EVENT:
+      // For time-based content, use watchTime vs duration (if available)
+      if (this.metadata && this.metadata.duration && this.watchTime > 0) {
+         return Math.min(Math.round((this.watchTime / this.metadata.duration) * 100), 100);
+      }
+      // Fallback: simple heuristic
+      if (this.watchTime > 600) return 50; // > 10 mins = 50%
+      break;
+  }
+  
+  // 4. Default fallback
   return 0;
 };
 

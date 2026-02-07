@@ -38,6 +38,7 @@ export interface UserDocument extends Document {
   profile_picture: string;
   twoFactorEnabled: boolean;
   walletBalance: number;
+  totalPointsEarned: number;
   googleTokens?: {
     access_token: string;
     refresh_token: string;
@@ -306,6 +307,13 @@ export class User {
     min: 0
   })
   walletBalance: number;
+
+  @Prop({
+    type: Number,
+    default: 0,
+    min: 0
+  })
+  totalPointsEarned: number;
 
   // Admin-specific fields
   /**

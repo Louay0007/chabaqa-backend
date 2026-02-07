@@ -586,6 +586,10 @@ export class CoursController {
 		return await this.coursService.verifierAccesChapitre(coursId, chapitreId, user._id);
 	}
 
+
+
+
+
 	// ============ PERMISSIONS ============
 
 	@UseGuards(JwtAuthGuard)

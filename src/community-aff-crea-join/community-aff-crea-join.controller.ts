@@ -33,7 +33,7 @@ import { CreateCommunityDto } from '../dto-community/create-community.dto';
 import { JoinCommunityDto, JoinByInviteDto, GenerateInviteDto } from '../dto-community/join-community.dto';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Query } from '@nestjs/common';
-import { FileType, UploadService } from 'src/upload/upload.service';
+import { FileType, UploadService } from '../upload/upload.service';
 
 @ApiTags('Community Management')
 @Controller('community-aff-crea-join')

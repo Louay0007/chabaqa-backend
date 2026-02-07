@@ -33,6 +33,7 @@ import {
 import { ContentTrackingService } from '../common/services/content-tracking.service';
 import { FeeService } from '../common/services/fee.service';
 import { PolicyService } from '../common/services/policy.service';
+import { UploadService } from '../upload/upload.service';
 import { TrackableContentType } from '../schema/content-tracking.schema';
 
 @Injectable()
@@ -46,6 +47,7 @@ export class ChallengeService {
     private readonly trackingService: ContentTrackingService,
     private readonly feeService: FeeService,
     private readonly policyService: PolicyService,
+    private readonly uploadService: UploadService,
   ) { }
 
   /**
@@ -69,7 +71,7 @@ export class ChallengeService {
     if (challenge && challenge.tasks) {
       let hasChanges = false;
       challenge.tasks.forEach(task => {
-        if (!task.id) {
+        if (!task.id || !Types.ObjectId.isValid(task.id)) {
           task.id = new Types.ObjectId().toString();
           hasChanges = true;
           console.log(`🔧 [CHALLENGE-SERVICE] Self-healing: generated ID for task in challenge ${challenge.id}`);
@@ -77,14 +79,12 @@ export class ChallengeService {
       });
 
       if (hasChanges) {
-        try {
-          // Use updateOne to avoid validation issues on other fields if any, or just save
-          // save() triggers validation hooks which is safer
-          await challenge.save();
+        // Use non-blocking save to avoid delaying the response
+        challenge.save().then(() => {
           console.log(`✅ [CHALLENGE-SERVICE] Saved repaired challenge ${challenge.id}`);
-        } catch (err) {
+        }).catch(err => {
           console.error(`❌ [CHALLENGE-SERVICE] Failed to save repaired challenge:`, err);
-        }
+        });
       }
     }
 
@@ -123,7 +123,7 @@ export class ChallengeService {
     if (type === 'participated' || type === 'all') {
       const participatedChallenges = await this.challengeModel
         .find({ 'participants.userId': new Types.ObjectId(userId), ...communityFilter })
-        .populate('creatorId', 'name email profile_picture')
+        .populate('creatorId', 'name email profile_picture photo_profil')
         .populate('communityId', 'name slug')
         .sort({ createdAt: -1 })
         .exec();
@@ -148,7 +148,7 @@ export class ChallengeService {
           joinedAt: participant?.joinedAt,
           creator: {
             name: (challenge.creatorId as any)?.name || 'Unknown',
-            avatar: (challenge.creatorId as any)?.profile_picture || 'https://placehold.co/64x64?text=MM'
+            avatar: this.uploadService.ensureAbsoluteUrl((challenge.creatorId as any)?.profile_picture || (challenge.creatorId as any)?.photo_profil || '') || 'https://placehold.co/64x64?text=MM'
           }
         };
       });
@@ -160,7 +160,7 @@ export class ChallengeService {
     if (type === 'created' || type === 'all') {
       const createdChallenges = await this.challengeModel
         .find({ creatorId: new Types.ObjectId(userId), ...communityFilter })
-        .populate('creatorId', 'name email profile_picture')
+        .populate('creatorId', 'name email profile_picture photo_profil')
         .populate('communityId', 'name slug')
         .sort({ createdAt: -1 })
         .exec();
@@ -181,7 +181,7 @@ export class ChallengeService {
         participantsCount: challenge.participants?.length || 0,
         creator: {
           name: (challenge.creatorId as any)?.name || 'Unknown',
-          avatar: (challenge.creatorId as any)?.profile_picture || 'https://placehold.co/64x64?text=MM'
+          avatar: this.uploadService.ensureAbsoluteUrl((challenge.creatorId as any)?.profile_picture || (challenge.creatorId as any)?.photo_profil || '') || 'https://placehold.co/64x64?text=MM'
         }
       }));
 
@@ -251,7 +251,7 @@ export class ChallengeService {
 
       const challenges = await this.challengeModel
         .find(query)
-        .populate('creatorId', 'name email photo_profil avatar')
+        .populate('creatorId', 'name email photo_profil profile_picture avatar')
         .populate('communityId', 'name slug logo')
         .sort({ 'participants.joinedAt': -1 })
         .lean();
@@ -488,7 +488,7 @@ export class ChallengeService {
     const [challenges, total] = await Promise.all([
       this.challengeModel
         .find(query)
-        .populate('creatorId', 'name email avatar')
+        .populate('creatorId', 'name email avatar profile_picture photo_profil')
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
@@ -530,14 +530,14 @@ export class ChallengeService {
     if (Types.ObjectId.isValid(id)) {
       challenge = await this.challengeModel
         .findById(id)
-        .populate('creatorId', 'name email avatar')
+        .populate('creatorId', 'name email avatar profile_picture photo_profil')
         .exec();
     }
 
     if (!challenge) {
       challenge = await this.challengeModel
         .findOne({ id })
-        .populate('creatorId', 'name email avatar')
+        .populate('creatorId', 'name email avatar profile_picture photo_profil')
         .exec();
     }
 
@@ -604,7 +604,7 @@ export class ChallengeService {
 
     const challenges = await this.challengeModel
       .find({ communityId: community.id })
-      .populate('creatorId', 'name email avatar')
+      .populate('creatorId', 'name email avatar profile_picture photo_profil')
       .sort({ createdAt: -1 })
       .exec();
 
@@ -746,17 +746,18 @@ export class ChallengeService {
   async joinChallenge(
     joinChallengeDto: JoinChallengeDto,
     userId: string,
+    session: any = null,
   ): Promise<ChallengeResponseDto> {
     // Try to find by MongoDB _id first, then by custom id field
     let challenge: ChallengeDocument | null = null;
     const challengeId = joinChallengeDto.challengeId;
 
     if (Types.ObjectId.isValid(challengeId)) {
-      challenge = await this.challengeModel.findById(challengeId);
+      challenge = await this.challengeModel.findById(challengeId).session(session);
     }
 
     if (!challenge) {
-      challenge = await this.challengeModel.findOne({ id: challengeId });
+      challenge = await this.challengeModel.findOne({ id: challengeId }).session(session);
     }
 
     if (!challenge) {
@@ -798,14 +799,14 @@ export class ChallengeService {
         contentType: TrackableContentType.CHALLENGE,
         contentId: challenge._id.toString(),
         status: 'paid',
-      });
+      }).session(session);
 
       if (!existingOrder) {
         const breakdown = await this.feeService.calculateForAmount(
           price,
           challenge.creatorId.toString(),
         );
-        await (this.challengeModel as any).db.model('Order').create({
+        await (this.challengeModel as any).db.model('Order').create([{
           buyerId: new Types.ObjectId(userId),
           creatorId: challenge.creatorId,
           contentType: TrackableContentType.CHALLENGE,
@@ -816,17 +817,17 @@ export class ChallengeService {
           platformFeeDT: breakdown.platformFeeDT,
           creatorNetDT: breakdown.creatorNetDT,
           status: 'paid',
-        });
+        }], { session });
       }
     }
 
     // Ajouter le participant
     challenge.addParticipant(new Types.ObjectId(userId));
-    await challenge.save();
+    await challenge.save({ session });
 
     const community = await this.communityModel.findOne({
       id: challenge.communityId,
-    });
+    }).session(session);
     return this.transformToResponseDto(challenge, community || undefined);
   }
 
@@ -1099,7 +1100,7 @@ export class ChallengeService {
         oderId: participant.id, // Use id as oderId for compatibility
         userId: participant.userId.toString(),
         userName: user?.name || 'Utilisateur inconnu',
-        userAvatar: user?.profile_picture || user?.photo_profil,
+        userAvatar: this.uploadService.ensureAbsoluteUrl(user?.profile_picture || user?.photo_profil),
         joinedAt: participant.joinedAt.toISOString(),
         isActive: participant.isActive,
         progress: participant.progress,
@@ -1113,7 +1114,7 @@ export class ChallengeService {
     const postUserIds = challenge.posts.map((p) => p.userId);
     const postUsers = await this.userModel
       .find({ _id: { $in: postUserIds } })
-      .select('name email profile_picture');
+      .select('name email profile_picture photo_profil');
 
     const posts = challenge.posts.map((post) => {
       const user = postUsers.find((u) => u._id.equals(post.userId));
@@ -1133,7 +1134,7 @@ export class ChallengeService {
           content: comment.content,
           userId: comment.userId.toString(),
           userName: commentUser?.name || 'Utilisateur inconnu',
-          userAvatar: commentUser?.profile_picture,
+          userAvatar: this.uploadService.ensureAbsoluteUrl(commentUser?.profile_picture || commentUser?.photo_profil),
           createdAt: comment.createdAt.toISOString(),
           updatedAt: comment.updatedAt.toISOString(),
         };
@@ -1145,7 +1146,7 @@ export class ChallengeService {
         images: post.images,
         userId: post.userId.toString(),
         userName: user?.name || 'Utilisateur inconnu',
-        userAvatar: user?.profile_picture,
+        userAvatar: this.uploadService.ensureAbsoluteUrl(user?.profile_picture || user?.photo_profil),
         likes: post.likes,
         comments: comments,
         createdAt: post.createdAt.toISOString(),
@@ -1168,7 +1169,7 @@ export class ChallengeService {
       communitySlug: community?.slug || '',
       creatorId: challenge.creatorId.toString(),
       creatorName: creator?.name || 'Créateur inconnu',
-      creatorAvatar: creator?.profile_picture || creator?.photo_profil || undefined,
+      creatorAvatar: this.uploadService.ensureAbsoluteUrl(creator?.profile_picture || creator?.photo_profil) || undefined,
       startDate: challenge.startDate.toISOString(),
       endDate: challenge.endDate.toISOString(),
       isActive: challenge.isActive,
@@ -1507,10 +1508,10 @@ export class ChallengeService {
 
     const skip = (page - 1) * limit;
 
-    const [challenges, total] = await Promise.all([
+      const [challenges, total] = await Promise.all([
       this.challengeModel
         .find(query)
-        .populate('creatorId', 'name email avatar')
+        .populate('creatorId', 'name email avatar profile_picture photo_profil')
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
@@ -1564,10 +1565,10 @@ export class ChallengeService {
 
     const skip = (page - 1) * limit;
 
-    const [challenges, total] = await Promise.all([
+      const [challenges, total] = await Promise.all([
       this.challengeModel
         .find(query)
-        .populate('creatorId', 'name email avatar')
+        .populate('creatorId', 'name email avatar profile_picture photo_profil')
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
@@ -2289,7 +2290,7 @@ export class ChallengeService {
           rank: index + 1,
           userId: participant.userId.toString(),
           userName: user?.name || 'Utilisateur inconnu',
-          userAvatar: user?.profile_picture || user?.photo_profil || null,
+          userAvatar: this.uploadService.ensureAbsoluteUrl(user?.profile_picture || user?.photo_profil) || null,
           totalPoints: participant.totalPoints || 0,
           completedTasks: participant.completedTasks?.length || 0,
           progress: participant.progress || 0,

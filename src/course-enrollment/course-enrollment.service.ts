@@ -35,6 +35,20 @@ export class CourseEnrollmentService {
     private readonly achievementService: AchievementService,
   ) {}
 
+  private async resolveCourse(courseId: string): Promise<CoursDocument> {
+    let course: CoursDocument | null = null;
+    if (Types.ObjectId.isValid(courseId)) {
+      course = await this.coursModel.findById(courseId);
+    }
+    if (!course) {
+      course = await this.coursModel.findOne({ id: courseId });
+    }
+    if (!course) {
+      throw new NotFoundException('Cours non trouvé');
+    }
+    return course;
+  }
+
   /**
    * Démarrer un chapitre pour un utilisateur
    */
@@ -56,10 +70,7 @@ export class CourseEnrollmentService {
     }
 
     // Vérifier que le cours existe
-    const course = await this.coursModel.findById(courseId);
-    if (!course) {
-      throw new NotFoundException('Cours non trouvé');
-    }
+    const course = await this.resolveCourse(courseId);
 
     // Vérifier que la section existe dans le cours
     const section = course.sections.find((s) => s.id === sectionId);
@@ -216,7 +227,10 @@ export class CourseEnrollmentService {
         courseId: courseIdValue,
         progress,
         completedChapters:
-          enrollment.progression?.map((p) => p.chapterId).filter(Boolean) || [],
+          enrollment.progression
+            ?.filter((p) => p?.isCompleted)
+            .map((p) => p.chapterId)
+            .filter(Boolean) || [],
         enrolledAt: enrollment.enrolledAt,
         lastAccessedAt: enrollment.updatedAt || enrollment.enrolledAt,
       });
@@ -681,10 +695,7 @@ export class CourseEnrollmentService {
     }
 
     // Vérifier que le cours existe
-    const course = await this.coursModel.findOne({ id: courseId });
-    if (!course) {
-      throw new NotFoundException('Cours non trouvé');
-    }
+    const course = await this.resolveCourse(courseId);
 
     // Vérifier que la section existe dans le cours
     const section = course.sections.find((s) => s.id === sectionId);
@@ -838,10 +849,7 @@ export class CourseEnrollmentService {
     );
 
     // Vérifier que le cours existe
-    const course = await this.coursModel.findOne({ id: courseId });
-    if (!course) {
-      throw new NotFoundException('Cours non trouvé');
-    }
+    const course = await this.resolveCourse(courseId);
 
     // Vérifier que la section existe dans le cours
     const section = course.sections.find((s) => s.id === sectionId);

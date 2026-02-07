@@ -4,7 +4,7 @@ import { CommunityAffCreaJoinController } from './community-aff-crea-join.contro
 import { CommunityAffCreaJoinService } from './community-aff-crea-join.service';
 import { Community, CommunitySchema } from '../schema/community.schema';
 import { User, UserSchema } from '../schema/user.schema';
-import { UploadModule } from 'src/upload/upload.module';
+import { UploadModule } from '../upload/upload.module';
 import { PolicyModule } from '../common/modules/policy.module';
 import { FeeModule } from '../common/modules/fee.module';
 import { PromoModule } from '../common/modules/promo.module';

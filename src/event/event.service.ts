@@ -10,6 +10,7 @@ import { EventResponseDto, EventListResponseDto, EventStatsResponseDto } from '.
 import { FeeService } from '../common/services/fee.service';
 import { PromoService } from '../common/services/promo.service';
 import { PolicyService } from '../common/services/policy.service';
+import { UploadService } from '../upload/upload.service';
 import { TrackableContentType } from '../schema/content-tracking.schema';
 
 @Injectable()
@@ -22,6 +23,7 @@ export class EventService {
     private readonly feeService: FeeService,
     private readonly promoService: PromoService,
     private readonly policyService: PolicyService,
+    private readonly uploadService: UploadService,
   ) {}
 
   /**
@@ -188,7 +190,7 @@ export class EventService {
       this.eventModel
         .find(filter)
         .populate('communityId', 'name slug')
-        .populate('creatorId', 'name email profile_picture')
+        .populate('creatorId', 'name email profile_picture photo_profil')
         .sort({ startDate: 1 })
         .skip(skip)
         .limit(limit)
@@ -216,7 +218,7 @@ export class EventService {
     const event = await this.eventModel
       .findOne({ id })
       .populate('communityId', 'name slug')
-      .populate('creatorId', 'name email profile_picture')
+      .populate('creatorId', 'name email profile_picture photo_profil')
       .exec();
 
     if (!event) {
@@ -541,11 +543,11 @@ export class EventService {
   /**
    * Inscrire un utilisateur à un événement
    */
-  async registerAttendee(eventId: string, ticketType: string, userId: string, promoCode?: string): Promise<{ message: string }> {
+  async registerAttendee(eventId: string, ticketType: string, userId: string, promoCode?: string, session: any = null, skipOrderCreation: boolean = false): Promise<{ message: string }> {
     // Try to find event by custom id first, then by MongoDB _id
-    let event = await this.eventModel.findOne({ id: eventId });
+    let event = await this.eventModel.findOne({ id: eventId }).session(session);
     if (!event) {
-      event = await this.eventModel.findById(eventId);
+      event = await this.eventModel.findById(eventId).session(session);
     }
     if (!event) {
       throw new NotFoundException('Événement non trouvé');
@@ -610,7 +612,7 @@ export class EventService {
     
     // Si billet payant, appliquer promo et créer une commande avec calcul des frais
     const FREE_MODE = process.env.FREE_MODE === 'true';
-    if (ticket.price && ticket.price > 0 && !FREE_MODE) {
+    if (ticket.price && ticket.price > 0 && !FREE_MODE && !skipOrderCreation) {
       let effective = ticket.price;
       let discountDT = 0;
       let appliedCode: string | undefined;
@@ -632,7 +634,7 @@ export class EventService {
       }
       
       const breakdown = await this.feeService.calculateForAmount(effective, event.creatorId.toString());
-      await this.orderModel.create({
+      await this.orderModel.create([{
         buyerId: new Types.ObjectId(userId),
         creatorId: event.creatorId,
         contentType: TrackableContentType.EVENT,
@@ -645,10 +647,10 @@ export class EventService {
         promoCode: appliedCode,
         discountDT,
         status: 'paid'
-      });
+      }], { session });
     }
     
-    await event.save();
+    await event.save({ session });
 
     return { message: 'Inscription réussie' };
   }
@@ -814,12 +816,12 @@ export class EventService {
       id: creator._id.toString(),
       name: creator.name,
       email: creator.email,
-      profile_picture: creator.profile_picture || (creator as any).photo_profil
+      avatar: this.uploadService.ensureAbsoluteUrl(creator.profile_picture || (creator as any).photo_profil)
     } : {
       id: event.creatorId?.toString() || 'unknown',
       name: 'Unknown Creator',
       email: 'unknown@example.com',
-      profile_picture: 'https://placehold.co/64x64?text=UC'
+      avatar: 'https://placehold.co/64x64?text=UC'
     };
 
     // Transformer les participants - handle missing users gracefully
@@ -914,7 +916,7 @@ export class EventService {
         isActive: true
       })
       .populate('communityId', 'name slug')
-      .populate('creatorId', 'name email')
+      .populate('creatorId', 'name email profile_picture photo_profil')
       .sort({ startDate: 1 })
       .exec();
 
@@ -937,7 +939,11 @@ export class EventService {
           const creatorInfo = event.creatorId ? {
             id: (event.creatorId as any)._id.toString(),
             name: (event.creatorId as any).name,
-            email: (event.creatorId as any).email
+            email: (event.creatorId as any).email,
+            avatar: this.uploadService.ensureAbsoluteUrl(
+              (event.creatorId as any).profile_picture ||
+                (event.creatorId as any).photo_profil,
+            ),
           } : null;
 
           return {

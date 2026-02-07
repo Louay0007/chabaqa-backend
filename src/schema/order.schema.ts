@@ -62,7 +62,7 @@ export const OrderSchema = SchemaFactory.createForClass(Order);
 OrderSchema.index({ creatorId: 1, createdAt: -1 });
 OrderSchema.index({ buyerId: 1, createdAt: -1 });
 OrderSchema.index({ contentType: 1, contentId: 1 });
-OrderSchema.index({ paymentId: 1 });
+OrderSchema.index({ paymentId: 1 }, { unique: true, sparse: true });
 OrderSchema.index({ communityId: 1 });
 
 

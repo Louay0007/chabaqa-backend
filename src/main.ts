@@ -36,7 +36,7 @@ async function bootstrap() {
   app.use(express.urlencoded({ limit: '1gb', extended: true }));
 
 
-  app.use('/api/payments/webhook', express.raw({ type: 'application/json' }));
+  app.use('/api/payment/stripe-link/webhook', express.raw({ type: 'application/json' }));
 
 
   app.use(cookieParser());

@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Query, Get, BadRequestException, UnauthorizedException, Req, UseGuards, UseInterceptors, UploadedFile, Param } from '@nestjs/common';
+import { Controller, Post, Body, Query, Get, BadRequestException, UnauthorizedException, Req, UseGuards, UseInterceptors, UploadedFile, Param, Logger } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import { extname, join } from 'path';
@@ -25,6 +25,7 @@ import { CoursService } from '../../cours/cours.service';
 import { ChallengeService } from '../../challenge/challenge.service';
 import { EventService } from '../../event/event.service';
 import { SubscriptionService } from '../../subscription/subscription.service';
+import { SessionService } from '../../session/session.service';
 import { Plan, PlanDocument, PlanTier } from '../../schema/plan.schema';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { NotificationService } from '../../notification/notification.service';
@@ -53,8 +54,10 @@ const manualProofStorage = diskStorage({
 });
 
 @ApiTags('Payments')
-@Controller('payments')
+@Controller('payment')
 export class PaymentController {
+  private readonly logger = new Logger(PaymentController.name);
+
   constructor(
     private readonly flouci: FlouciPaymentService,
     private readonly stripe: StripePaymentService,
@@ -75,9 +78,98 @@ export class PaymentController {
     private readonly coursService: CoursService,
     private readonly challengeService: ChallengeService,
     private readonly eventService: EventService,
+    private readonly sessionService: SessionService,
     private readonly subscriptionService: SubscriptionService,
     @InjectModel(Plan.name) private planModel: Model<PlanDocument>,
   ) { }
+
+  private async enrichOrderDetails(order: any) {
+    const contentType = order.contentType;
+    const contentId = order.contentId;
+    let contentTitle = '';
+    let communitySlug = '';
+    let creatorSlug = '';
+    let contentIdRaw = contentId;
+
+    try {
+      let communityId = order.communityId;
+      let creatorId = order.creatorId;
+
+      // 1. Resolve Content & Links
+      if (contentType === TrackableContentType.COURSE) {
+        const course = await this.coursModel.findById(contentId).select('titre communityId creatorId id').lean();
+        if (course) {
+          contentTitle = (course as any).titre;
+          communityId = (course as any).communityId;
+          creatorId = (course as any).creatorId;
+          // Use string ID if available for URL consistency
+          contentIdRaw = (course as any).id || (course as any)._id.toString();
+        }
+      } else if (contentType === TrackableContentType.COMMUNITY) {
+        communityId = contentId;
+        const comm = await this.communityModel.findById(contentId).select('name createur').lean();
+        if (comm) {
+          contentTitle = (comm as any).name;
+          creatorId = (comm as any).createur;
+        }
+      } else if (contentType === TrackableContentType.CHALLENGE) {
+        const challenge = await this.challengeModel.findById(contentId).select('title communityId creatorId').lean();
+        if (challenge) {
+          contentTitle = (challenge as any).title;
+          communityId = (challenge as any).communityId;
+          creatorId = (challenge as any).creatorId;
+        }
+      } else if (contentType === TrackableContentType.EVENT) {
+        const event = await this.eventModel.findById(contentId).select('title communityId creatorId').lean();
+        if (event) {
+          contentTitle = (event as any).title;
+          communityId = (event as any).communityId;
+          creatorId = (event as any).creatorId;
+        }
+      } else if (contentType === TrackableContentType.PRODUCT) {
+        const product = await this.productModel.findById(contentId).select('name communityId creatorId').lean();
+        if (product) {
+          contentTitle = (product as any).name;
+          communityId = (product as any).communityId;
+          creatorId = (product as any).creatorId;
+        }
+      } else if (contentType === TrackableContentType.SESSION) {
+        const session = await this.sessionModel.findById(contentId).select('title communityId creatorId').lean();
+        if (session) {
+          contentTitle = (session as any).title;
+          communityId = (session as any).communityId;
+          creatorId = (session as any).creatorId;
+        }
+      }
+
+      // 2. Fetch Community Slug
+      if (communityId) {
+        const comm = await this.communityModel.findById(communityId).select('slug').lean();
+        if (comm) communitySlug = (comm as any).slug;
+      }
+
+      // 3. Fetch Creator Slug
+      if (creatorId) {
+        const user = await this.userModel.findById(creatorId).select('name').lean();
+        if (user && (user as any).name) {
+          // Simple slugify: lowercase, replace spaces with dash, remove non-alphanumeric
+          creatorSlug = (user as any).name.toString().toLowerCase()
+            .replace(/\s+/g, '-')
+            .replace(/[^\w\-]+/g, '');
+        }
+      }
+
+    } catch (e) {
+      this.logger.warn(`Error enriching order details: ${e.message}`);
+    }
+
+    return {
+      contentTitle,
+      communitySlug,
+      creatorSlug,
+      targetId: contentIdRaw
+    };
+  }
 
   private async enrichManualOrdersForDashboard(orders: any[]) {
     const items = await Promise.all(
@@ -193,15 +285,8 @@ export class PaymentController {
       status: 'pending',
     });
 
-    const offlineMode = (process.env.PAYMENT_MODE || 'instant') === 'offline';
-    if (offlineMode) {
-      pendingOrder.paymentId = pendingOrder._id.toString();
-      await pendingOrder.save();
-      return { mode: 'offline', paymentId: pendingOrder.paymentId };
-    }
-
-    const successUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment/success?scope=community&id=${communityId}`;
-    const failUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment/failed?scope=community&id=${communityId}`;
+    const successUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-success?scope=community&id=${communityId}`;
+    const failUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-failed?scope=community&id=${communityId}`;
 
     const init = await this.flouci.initPayment({
       amountTND: amount,
@@ -224,50 +309,23 @@ export class PaymentController {
     let order = await this.orderModel.findOne({ paymentId });
     if (!order) {
       const byId = await this.orderModel.findById(paymentId as any);
-      if (byId && byId.status !== 'paid') {
-        const offlineMode = (process.env.PAYMENT_MODE || 'instant') === 'offline';
-        if (offlineMode) {
-          byId.status = 'paid';
-          await byId.save();
-        }
-      }
       order = byId || null;
     }
     if (!order) throw new BadRequestException('Commande non trouvée');
-    const verify = (process.env.PAYMENT_MODE || 'instant') === 'offline'
-      ? { success: true, status: 'SUCCESS', paymentMethod: 'offline' }
-      : await this.flouci.verifyPayment(paymentId);
+    const verify = await this.flouci.verifyPayment(paymentId);
     if (!verify.success) throw new BadRequestException((verify as any).error);
 
-    const offlineMode = (process.env.PAYMENT_MODE || 'instant') === 'offline';
-
-    if (verify.status === 'SUCCESS' || offlineMode) {
-      order.status = 'paid';
-      order.paymentMethod = offlineMode ? 'offline' : ((verify as any).paymentMethod || order.paymentMethod);
-      await order.save();
-
-      if (order.contentType === TrackableContentType.COMMUNITY) {
-        const community = await this.communityModel.findById(order.contentId);
-        if (community) {
-          community.addMember(order.buyerId);
-          await community.save();
-        }
-      } else if (order.contentType === TrackableContentType.SUBSCRIPTION) {
-        // contentId holds plan tier string
-        const tier = (order.contentId || 'STARTER') as PlanTier;
-        await this.subscriptionService.upgradePlan(order.buyerId.toString(), tier);
-      } else if (order.contentType === TrackableContentType.COURSE) {
-        await this.coursService.inscrireAuCours(order.contentId, order.buyerId.toString());
-      } else if (order.contentType === TrackableContentType.CHALLENGE) {
-        await this.challengeService.joinChallenge({ challengeId: order.contentId } as any, order.buyerId.toString());
-      } else if (order.contentType === TrackableContentType.EVENT) {
-        // ticketType is not persisted; for production, persist in Order metadata. Here we skip auto-registration.
-      } else if (order.contentType === TrackableContentType.PRODUCT) {
-        // Add product purchase logic here
-      } else if (order.contentType === TrackableContentType.SESSION) {
-        // Add session purchase logic here
+    if (verify.status === 'SUCCESS') {
+      if (order.status !== 'paid') {
+        await this.orderModel.db.transaction(async (session) => {
+          await this.grantAccess(order, session);
+          order.status = 'paid';
+          order.paymentMethod = (verify as any).paymentMethod || order.paymentMethod;
+          await order.save({ session });
+        });
       }
-      return { status: 'paid' };
+      const enriched = await this.enrichOrderDetails(order);
+      return { status: 'paid', orderId: order._id, ...enriched };
     }
 
     order.status = 'pending';
@@ -303,8 +361,8 @@ export class PaymentController {
       status: 'pending',
     });
 
-    const successUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment/success?scope=subscription&tier=${tier}`;
-    const failUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment/failed?scope=subscription&tier=${tier}`;
+    const successUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-success?scope=subscription&tier=${tier}`;
+    const failUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-failed?scope=subscription&tier=${tier}`;
     const init = await this.flouci.initPayment({ amountTND: amount, successUrl, failUrl, metadata: { userId, contentType: 'subscription', tier } });
     if (!init.success) throw new BadRequestException(init.error);
     pendingOrder.paymentId = init.paymentId; await pendingOrder.save();
@@ -380,17 +438,11 @@ export class PaymentController {
       creatorNetDT: breakdown.creatorNetDT,
       promoCode: appliedCode,
       discountDT,
-      status: offlineMode ? 'pending' : 'pending',
+      status: 'pending',
     });
 
-    if (offlineMode) {
-      pendingOrder.paymentId = pendingOrder._id.toString();
-      await pendingOrder.save();
-      return { mode: 'offline', paymentId: pendingOrder.paymentId };
-    }
-
-    const successUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment/success?scope=course&id=${coursePublicId}`;
-    const failUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment/failed?scope=course&id=${coursePublicId}`;
+    const successUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-success?scope=course&id=${coursePublicId}`;
+    const failUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-failed?scope=course&id=${coursePublicId}`;
     const init = await this.flouci.initPayment({ amountTND: amount, successUrl, failUrl, metadata: { userId, contentType: 'course', contentId: courseId } });
     if (!init.success) throw new BadRequestException(init.error);
     pendingOrder.paymentId = init.paymentId;
@@ -434,17 +486,11 @@ export class PaymentController {
       creatorNetDT: breakdown.creatorNetDT,
       promoCode: appliedCode,
       discountDT,
-      status: offlineMode ? 'pending' : 'pending',
+      status: 'pending',
     });
 
-    if (offlineMode) {
-      pendingOrder.paymentId = pendingOrder._id.toString();
-      await pendingOrder.save();
-      return { mode: 'offline', paymentId: pendingOrder.paymentId };
-    }
-
-    const successUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment/success?scope=challenge&id=${challengeId}`;
-    const failUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment/failed?scope=challenge&id=${challengeId}`;
+    const successUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-success?scope=challenge&id=${challengeId}`;
+    const failUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-failed?scope=challenge&id=${challengeId}`;
     const init = await this.flouci.initPayment({ amountTND: amount, successUrl, failUrl, metadata: { userId, contentType: 'challenge', contentId: challengeId } });
     if (!init.success) throw new BadRequestException(init.error);
     pendingOrder.paymentId = init.paymentId; await pendingOrder.save();
@@ -487,15 +533,10 @@ export class PaymentController {
       creatorNetDT: breakdown.creatorNetDT,
       promoCode: appliedCode,
       discountDT,
-      status: offlineMode ? 'pending' : 'pending',
+      status: 'pending',
     });
-    if (offlineMode) {
-      pendingOrder.paymentId = pendingOrder._id.toString();
-      await pendingOrder.save();
-      return { mode: 'offline', paymentId: pendingOrder.paymentId };
-    }
-    const successUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment/success?scope=event&id=${eventId}`;
-    const failUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment/failed?scope=event&id=${eventId}`;
+    const successUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-success?scope=event&id=${eventId}`;
+    const failUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-failed?scope=event&id=${eventId}`;
     const init = await this.flouci.initPayment({ amountTND: amount, successUrl, failUrl, metadata: { userId, contentType: 'event', contentId: eventId, ticketType } });
     if (!init.success) throw new BadRequestException(init.error);
     pendingOrder.paymentId = init.paymentId; await pendingOrder.save();
@@ -536,15 +577,10 @@ export class PaymentController {
       creatorNetDT: breakdown.creatorNetDT,
       promoCode: appliedCode,
       discountDT,
-      status: offlineMode ? 'pending' : 'pending',
+      status: 'pending',
     });
-    if (offlineMode) {
-      pendingOrder.paymentId = pendingOrder._id.toString();
-      await pendingOrder.save();
-      return { mode: 'offline', paymentId: pendingOrder.paymentId };
-    }
-    const successUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment/success?scope=product&id=${productId}`;
-    const failUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment/failed?scope=product&id=${productId}`;
+    const successUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-success?scope=product&id=${productId}`;
+    const failUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-failed?scope=product&id=${productId}`;
     const init = await this.flouci.initPayment({ amountTND: amount, successUrl, failUrl, metadata: { userId, contentType: 'product', contentId: productId } });
     if (!init.success) throw new BadRequestException(init.error);
     pendingOrder.paymentId = init.paymentId; await pendingOrder.save();
@@ -585,15 +621,10 @@ export class PaymentController {
       creatorNetDT: breakdown.creatorNetDT,
       promoCode: appliedCode,
       discountDT,
-      status: offlineMode ? 'pending' : 'pending',
+      status: 'pending',
     });
-    if (offlineMode) {
-      pendingOrder.paymentId = pendingOrder._id.toString();
-      await pendingOrder.save();
-      return { mode: 'offline', paymentId: pendingOrder.paymentId };
-    }
-    const successUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment/success?scope=session&id=${sessionId}`;
-    const failUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment/failed?scope=session&id=${sessionId}`;
+    const successUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-success?scope=session&id=${sessionId}`;
+    const failUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-failed?scope=session&id=${sessionId}`;
     const init = await this.flouci.initPayment({ amountTND: amount, successUrl, failUrl, metadata: { userId, contentType: 'session', contentId: sessionId } });
     if (!init.success) throw new BadRequestException(init.error);
     pendingOrder.paymentId = init.paymentId; await pendingOrder.save();
@@ -649,8 +680,10 @@ export class PaymentController {
       status: 'pending',
     });
 
-    const successUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment/success?scope=community&id=${communityId}&provider=stripe`;
-    const failUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment/failed?scope=community&id=${communityId}&provider=stripe`;
+    const successUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-success?scope=community&id=${communityId}&provider=stripe&sessionId={CHECKOUT_SESSION_ID}`;
+    const failUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-failed?scope=community&id=${communityId}&provider=stripe`;
+
+    console.log('[Stripe Init] Generated Success URL:', successUrl);
 
     const user = await this.userModel.findById(userId).select('email name');
     const session = await this.stripe.createLinkCheckoutSession({
@@ -709,6 +742,8 @@ export class PaymentController {
     const price = cours.prix || 0;
     if (price <= 0) throw new BadRequestException('Free course');
 
+    const courseCurrency = ((cours as any)?.devise || (cours as any)?.pricing?.currency || 'TND').toString();
+
     let amount = price;
     let discountDT = 0;
     let appliedCode: string | undefined;
@@ -738,12 +773,13 @@ export class PaymentController {
       status: 'pending',
     });
 
-    const successUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment/success?scope=course&id=${coursePublicId}&provider=stripe&sessionId={CHECKOUT_SESSION_ID}`;
-    const failUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment/failed?scope=course&id=${courseId}&provider=stripe`;
+    const successUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-success?scope=course&id=${coursePublicId}&provider=stripe&sessionId={CHECKOUT_SESSION_ID}`;
+    const failUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-failed?scope=course&id=${courseId}&provider=stripe`;
 
     const user = await this.userModel.findById(userId).select('email name');
     const session = await this.stripe.createLinkCheckoutSession({
       amountDT: amount,
+      currency: courseCurrency.toLowerCase(),
       successUrl,
       cancelUrl: failUrl,
       customerEmail: user?.email,
@@ -756,6 +792,347 @@ export class PaymentController {
       lineItems: [{
         name: cours.titre,
         description: cours.description,
+        amount: amount,
+        quantity: 1
+      }]
+    });
+
+    if (!session.success) throw new BadRequestException(session.error);
+
+    pendingOrder.paymentId = session.sessionId;
+    await pendingOrder.save();
+
+    return {
+      checkoutUrl: session.url,
+      sessionId: session.sessionId,
+      provider: 'stripe-link'
+    };
+  }
+
+  @Post('stripe-link/init/challenge')
+  @ApiOperation({ summary: 'Initiate Stripe Link payment for challenge participation' })
+  @ApiQuery({ name: 'promoCode', required: false })
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  async initStripeLinkChallengePayment(
+    @Body('challengeId') challengeId: string,
+    @Req() req: any,
+    @Query('promoCode') promoCode?: string,
+  ) {
+    const userId = (req.user?._id || req.user?.sub || '').toString();
+    const challenge = await this.challengeModel.findOne({ id: challengeId }) || await this.challengeModel.findById(challengeId);
+    if (!challenge) throw new BadRequestException('Challenge not found');
+
+    const pricing = (challenge as any)?.pricing || {};
+    const depositAmount = pricing.depositAmount ?? (challenge as any)?.depositAmount ?? 0;
+    const participationFee = pricing.participationFee ?? pricing.price ?? (challenge as any)?.participationFee ?? 0;
+    const shouldUseDeposit = Boolean(pricing.depositRequired || depositAmount > 0);
+    const baseAmount = shouldUseDeposit ? depositAmount : participationFee;
+    if (!baseAmount || baseAmount <= 0) throw new BadRequestException('Free challenge');
+    const challengeCurrency = (pricing.currency || (challenge as any)?.currency || 'TND').toString();
+
+    let amount = baseAmount;
+    let discountDT = 0;
+    let appliedCode: string | undefined;
+    if (promoCode) {
+      const buyer = await this.userModel.findById(userId).select('email');
+      const promo = await this.promoService.validateAndApply(promoCode, baseAmount, TrackableContentType.CHALLENGE, challenge._id.toString(), (buyer as any)?.email);
+      if (promo.valid) {
+        amount = promo.finalAmountDT;
+        discountDT = promo.discountDT;
+        appliedCode = promo.appliedCode;
+      }
+    }
+
+    const breakdown = await this.feeService.calculateForAmount(amount, challenge.creatorId.toString());
+    const pendingOrder = await this.orderModel.create({
+      buyerId: new Types.ObjectId(userId),
+      creatorId: challenge.creatorId,
+      contentType: TrackableContentType.CHALLENGE,
+      contentId: challenge._id.toString(),
+      amountDT: breakdown.amountDT,
+      platformPercent: breakdown.platformPercent,
+      platformFixedDT: breakdown.platformFixedDT,
+      platformFeeDT: breakdown.platformFeeDT,
+      creatorNetDT: breakdown.creatorNetDT,
+      promoCode: appliedCode,
+      discountDT,
+      status: 'pending',
+    });
+
+    const successUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-success?scope=challenge&id=${challengeId}&provider=stripe&sessionId={CHECKOUT_SESSION_ID}`;
+    const failUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-failed?scope=challenge&id=${challengeId}&provider=stripe`;
+
+    const user = await this.userModel.findById(userId).select('email name');
+    const session = await this.stripe.createLinkCheckoutSession({
+      amountDT: amount,
+      currency: challengeCurrency.toLowerCase(),
+      successUrl,
+      cancelUrl: failUrl,
+      customerEmail: user?.email,
+      metadata: {
+        userId,
+        contentType: 'challenge',
+        contentId: challengeId,
+        orderId: pendingOrder._id.toString()
+      },
+      lineItems: [{
+        name: challenge.title || 'Challenge',
+        description: challenge.description,
+        amount: amount,
+        quantity: 1
+      }]
+    });
+
+    if (!session.success) throw new BadRequestException(session.error);
+
+    pendingOrder.paymentId = session.sessionId;
+    await pendingOrder.save();
+
+    return {
+      checkoutUrl: session.url,
+      sessionId: session.sessionId,
+      provider: 'stripe-link'
+    };
+  }
+
+  @Post('stripe-link/init/event')
+  @ApiOperation({ summary: 'Initiate Stripe Link payment for event ticket' })
+  @ApiQuery({ name: 'promoCode', required: false })
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  async initStripeLinkEventPayment(
+    @Body('eventId') eventId: string,
+    @Body('ticketType') ticketType: string,
+    @Req() req: any,
+    @Query('promoCode') promoCode?: string,
+  ) {
+    const userId = (req.user?._id || req.user?.sub || '').toString();
+    const event = await this.eventModel.findOne({ id: eventId }) || await this.eventModel.findById(eventId);
+    if (!event) throw new BadRequestException('Event not found');
+
+    const ticket = event.tickets.find(t => t.type === ticketType || t.id === ticketType);
+    if (!ticket) throw new BadRequestException('Ticket type not found');
+
+    const price = ticket.price || 0;
+    if (price <= 0) throw new BadRequestException('Free ticket');
+    const eventCurrency = ((event as any)?.pricing?.currency || (event as any)?.currency || 'TND').toString();
+
+    let amount = price;
+    let discountDT = 0;
+    let appliedCode: string | undefined;
+    if (promoCode) {
+      const buyer = await this.userModel.findById(userId).select('email');
+      const promo = await this.promoService.validateAndApply(promoCode, price, TrackableContentType.EVENT, event._id.toString(), (buyer as any)?.email);
+      if (promo.valid) {
+        amount = promo.finalAmountDT;
+        discountDT = promo.discountDT;
+        appliedCode = promo.appliedCode;
+      }
+    }
+
+    const breakdown = await this.feeService.calculateForAmount(amount, event.creatorId.toString());
+    const pendingOrder = await this.orderModel.create({
+      buyerId: new Types.ObjectId(userId),
+      creatorId: event.creatorId,
+      contentType: TrackableContentType.EVENT,
+      contentId: event._id.toString(),
+      amountDT: breakdown.amountDT,
+      platformPercent: breakdown.platformPercent,
+      platformFixedDT: breakdown.platformFixedDT,
+      platformFeeDT: breakdown.platformFeeDT,
+      creatorNetDT: breakdown.creatorNetDT,
+      promoCode: appliedCode,
+      discountDT,
+      status: 'pending',
+      metadata: { ticketType }
+    });
+
+    const successUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-success?scope=event&id=${eventId}&provider=stripe&sessionId={CHECKOUT_SESSION_ID}`;
+    const failUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-failed?scope=event&id=${eventId}&provider=stripe`;
+
+    const user = await this.userModel.findById(userId).select('email name');
+    const session = await this.stripe.createLinkCheckoutSession({
+      amountDT: amount,
+      currency: eventCurrency.toLowerCase(),
+      successUrl,
+      cancelUrl: failUrl,
+      customerEmail: user?.email,
+      metadata: {
+        userId,
+        contentType: 'event',
+        contentId: eventId,
+        orderId: pendingOrder._id.toString(),
+        ticketType
+      },
+      lineItems: [{
+        name: event.title || 'Event Ticket',
+        description: `${ticket.name} for ${event.title}`,
+        amount: amount,
+        quantity: 1
+      }]
+    });
+
+    if (!session.success) throw new BadRequestException(session.error);
+
+    pendingOrder.paymentId = session.sessionId;
+    await pendingOrder.save();
+
+    return {
+      checkoutUrl: session.url,
+      sessionId: session.sessionId,
+      provider: 'stripe-link'
+    };
+  }
+
+  @Post('stripe-link/init/product')
+  @ApiOperation({ summary: 'Initiate Stripe Link payment for product' })
+  @ApiQuery({ name: 'promoCode', required: false })
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  async initStripeLinkProductPayment(
+    @Body('productId') productId: string,
+    @Req() req: any,
+    @Query('promoCode') promoCode?: string,
+  ) {
+    const userId = (req.user?._id || req.user?.sub || '').toString();
+    const product = await this.productModel.findOne({ id: productId }) || await this.productModel.findById(productId);
+    if (!product) throw new BadRequestException('Product not found');
+
+    const price = product.price || 0;
+    if (price <= 0) throw new BadRequestException('Free product');
+
+    let amount = price;
+    let discountDT = 0;
+    let appliedCode: string | undefined;
+    if (promoCode) {
+      const buyer = await this.userModel.findById(userId).select('email');
+      const promo = await this.promoService.validateAndApply(promoCode, price, TrackableContentType.PRODUCT, product._id.toString(), (buyer as any)?.email);
+      if (promo.valid) {
+        amount = promo.finalAmountDT;
+        discountDT = promo.discountDT;
+        appliedCode = promo.appliedCode;
+      }
+    }
+
+    const breakdown = await this.feeService.calculateForAmount(amount, product.creatorId.toString());
+    const pendingOrder = await this.orderModel.create({
+      buyerId: new Types.ObjectId(userId),
+      creatorId: product.creatorId,
+      contentType: TrackableContentType.PRODUCT,
+      contentId: product._id.toString(),
+      amountDT: breakdown.amountDT,
+      platformPercent: breakdown.platformPercent,
+      platformFixedDT: breakdown.platformFixedDT,
+      platformFeeDT: breakdown.platformFeeDT,
+      creatorNetDT: breakdown.creatorNetDT,
+      promoCode: appliedCode,
+      discountDT,
+      status: 'pending',
+    });
+
+    const successUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-success?scope=product&id=${productId}&provider=stripe&sessionId={CHECKOUT_SESSION_ID}`;
+    const failUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-failed?scope=product&id=${productId}&provider=stripe`;
+
+    const user = await this.userModel.findById(userId).select('email name');
+    const session = await this.stripe.createLinkCheckoutSession({
+      amountDT: amount,
+      successUrl,
+      cancelUrl: failUrl,
+      customerEmail: user?.email,
+      metadata: {
+        userId,
+        contentType: 'product',
+        contentId: productId,
+        orderId: pendingOrder._id.toString()
+      },
+      lineItems: [{
+        name: product.title || 'Product',
+        description: product.description,
+        amount: amount,
+        quantity: 1
+      }]
+    });
+
+    if (!session.success) throw new BadRequestException(session.error);
+
+    pendingOrder.paymentId = session.sessionId;
+    await pendingOrder.save();
+
+    return {
+      checkoutUrl: session.url,
+      sessionId: session.sessionId,
+      provider: 'stripe-link'
+    };
+  }
+
+  @Post('stripe-link/init/session')
+  @ApiOperation({ summary: 'Initiate Stripe Link payment for 1-to-1 session' })
+  @ApiQuery({ name: 'promoCode', required: false })
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  async initStripeLinkSessionPayment(
+    @Body('sessionId') sessionId: string,
+    @Body('bookingDto') bookingDto: any,
+    @Req() req: any,
+    @Query('promoCode') promoCode?: string,
+  ) {
+    const userId = (req.user?._id || req.user?.sub || '').toString();
+    const sessionDoc = await this.sessionModel.findOne({ id: sessionId }) || await this.sessionModel.findById(sessionId);
+    if (!sessionDoc) throw new BadRequestException('Session not found');
+
+    const price = sessionDoc.price || 0;
+    if (price <= 0) throw new BadRequestException('Free session');
+
+    let amount = price;
+    let discountDT = 0;
+    let appliedCode: string | undefined;
+    if (promoCode) {
+      const buyer = await this.userModel.findById(userId).select('email');
+      const promo = await this.promoService.validateAndApply(promoCode, price, TrackableContentType.SESSION, sessionDoc._id.toString(), (buyer as any)?.email);
+      if (promo.valid) {
+        amount = promo.finalAmountDT;
+        discountDT = promo.discountDT;
+        appliedCode = promo.appliedCode;
+      }
+    }
+
+    const breakdown = await this.feeService.calculateForAmount(amount, sessionDoc.creatorId.toString());
+    const pendingOrder = await this.orderModel.create({
+      buyerId: new Types.ObjectId(userId),
+      creatorId: sessionDoc.creatorId,
+      contentType: TrackableContentType.SESSION,
+      contentId: sessionDoc._id.toString(),
+      amountDT: breakdown.amountDT,
+      platformPercent: breakdown.platformPercent,
+      platformFixedDT: breakdown.platformFixedDT,
+      platformFeeDT: breakdown.platformFeeDT,
+      creatorNetDT: breakdown.creatorNetDT,
+      promoCode: appliedCode,
+      discountDT,
+      status: 'pending',
+      metadata: { bookingDto }
+    });
+
+    const successUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-success?scope=session&id=${sessionId}&provider=stripe&sessionId={CHECKOUT_SESSION_ID}`;
+    const failUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-failed?scope=session&id=${sessionId}&provider=stripe`;
+
+    const user = await this.userModel.findById(userId).select('email name');
+    const session = await this.stripe.createLinkCheckoutSession({
+      amountDT: amount,
+      successUrl,
+      cancelUrl: failUrl,
+      customerEmail: user?.email,
+      metadata: {
+        userId,
+        contentType: 'session',
+        contentId: sessionId,
+        orderId: pendingOrder._id.toString(),
+        bookingDto
+      },
+      lineItems: [{
+        name: sessionDoc.title || 'Session',
+        description: sessionDoc.description,
         amount: amount,
         quantity: 1
       }]
@@ -816,8 +1193,8 @@ export class PaymentController {
 
     if (!priceResult.success) throw new BadRequestException(priceResult.error);
 
-    const successUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment/success?scope=subscription&tier=${tier}&provider=stripe`;
-    const failUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment/failed?scope=subscription&tier=${tier}&provider=stripe`;
+    const successUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-success?scope=subscription&tier=${tier}&provider=stripe&sessionId={CHECKOUT_SESSION_ID}`;
+    const failUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-failed?scope=subscription&tier=${tier}&provider=stripe`;
 
     const user = await this.userModel.findById(userId).select('email name');
     const session = await this.stripe.createLinkSubscriptionSession({
@@ -846,11 +1223,61 @@ export class PaymentController {
     };
   }
 
+
+
+  private async grantAccess(order: any, session: any = null) {
+    this.logger.log(`Granting access for order ${order._id} (Type: ${order.contentType})`);
+
+    switch (order.contentType) {
+      case TrackableContentType.COMMUNITY:
+        const community = await this.communityModel.findById(order.contentId).session(session);
+        if (community) {
+          community.addMember(order.buyerId);
+          await community.save({ session });
+        }
+        break;
+
+      case TrackableContentType.SUBSCRIPTION:
+        const tier = (order.contentId || 'STARTER') as PlanTier;
+        await this.subscriptionService.upgradePlan(order.buyerId.toString(), tier, session);
+        break;
+
+      case TrackableContentType.COURSE:
+        await this.coursService.inscrireAuCours(order.contentId, order.buyerId.toString(), order.promoCode, session);
+        break;
+
+      case TrackableContentType.CHALLENGE:
+        await this.challengeService.joinChallenge({ challengeId: order.contentId } as any, order.buyerId.toString(), session);
+        break;
+
+      case TrackableContentType.EVENT:
+        // Use metadata ticketType if available
+        const ticketType = order.metadata?.ticketType || 'standard';
+        await this.eventService.registerAttendee(order.contentId, ticketType, order.buyerId.toString(), order.promoCode, session, true);
+        break;
+
+      case TrackableContentType.SESSION:
+        // metadata might contain booking details, or we use a standard booking
+        const bookingDto = order.metadata?.bookingDto || {};
+        await this.sessionService.bookSession(order.contentId, bookingDto, order.buyerId.toString(), order.promoCode, session, 'confirmed');
+        break;
+
+      case TrackableContentType.PRODUCT:
+        // Mark as purchased in tracking or similar
+        // ProductService doesn't have a clear "purchase" yet, so we mark order as paid (already done)
+        this.logger.log(`Product ${order.contentId} marked as purchased for user ${order.buyerId}`);
+        break;
+
+      default:
+        this.logger.warn(`Access granting not implemented for content type: ${order.contentType}`);
+    }
+  }
+
   @Get('stripe-link/verify')
   @ApiOperation({ summary: 'Verify Stripe Link payment' })
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  async verifyStripeLinkPayment(@Query('sessionId') sessionId: string) {
+  async verifyStripeLink(@Query('sessionId') sessionId: string) {
     const verify = await this.stripe.verifyLinkPayment(sessionId);
     if (!verify.success) throw new BadRequestException(verify.error);
 
@@ -858,31 +1285,22 @@ export class PaymentController {
     const order = await this.orderModel.findOne({ paymentId: sessionId });
     if (!order) throw new BadRequestException('Order not found');
 
-    if (verify.status === 'succeeded') {
-      order.status = 'paid';
-      order.paymentMethod = verify.paymentMethod?.type || 'stripe-link';
-      await order.save();
-
-      // Grant access based on content type
-      if (order.contentType === TrackableContentType.COMMUNITY) {
-        const community = await this.communityModel.findById(order.contentId);
-        if (community) {
-          community.addMember(order.buyerId);
-          await community.save();
-        }
-      } else if (order.contentType === TrackableContentType.SUBSCRIPTION) {
-        const tier = (order.contentId || 'STARTER') as PlanTier;
-        await this.subscriptionService.upgradePlan(order.buyerId.toString(), tier);
-      } else if (order.contentType === TrackableContentType.COURSE) {
-        await this.coursService.inscrireAuCours(order.contentId, order.buyerId.toString());
-      } else if (order.contentType === TrackableContentType.CHALLENGE) {
-        await this.challengeService.joinChallenge({ challengeId: order.contentId } as any, order.buyerId.toString());
+    if (verify.status === 'paid' || verify.status === 'succeeded' || verify.status === 'complete') {
+      if (order.status !== 'paid') {
+        await this.orderModel.db.transaction(async (session) => {
+          order.status = 'paid';
+          order.paymentMethod = verify.paymentMethod?.type || 'stripe-link';
+          await order.save({ session });
+          await this.grantAccess(order, session);
+        });
       }
 
       return {
         status: 'paid',
         paymentMethod: verify.paymentMethod,
-        customerId: verify.customerId
+        customerId: verify.customerId,
+        orderId: order._id,
+        ...(await this.enrichOrderDetails(order))
       };
     }
 
@@ -901,36 +1319,28 @@ export class PaymentController {
     if (!event.success) throw new UnauthorizedException(event.error);
 
     const stripeEvent = event.event!;
+    this.logger.log(`Received Stripe webhook event: ${stripeEvent.type}`);
 
     // Handle different event types
     switch (stripeEvent.type) {
       case 'checkout.session.completed':
+      case 'checkout.session.async_payment_succeeded':
         const session = stripeEvent.data.object as any;
         if (session.payment_status === 'paid') {
           // Process successful payment
           const order = await this.orderModel.findOne({ paymentId: session.id });
           if (order && order.status !== 'paid') {
             order.status = 'paid';
+            order.paymentMethod = 'stripe';
             await order.save();
-
-            // Grant access based on content type
-            if (order.contentType === TrackableContentType.COMMUNITY) {
-              const community = await this.communityModel.findById(order.contentId);
-              if (community) {
-                community.addMember(order.buyerId);
-                await community.save();
-              }
-            } else if (order.contentType === TrackableContentType.SUBSCRIPTION) {
-              const tier = (order.contentId || 'STARTER') as PlanTier;
-              await this.subscriptionService.upgradePlan(order.buyerId.toString(), tier);
-            }
+            await this.grantAccess(order);
           }
         }
         break;
 
       case 'customer.subscription.updated':
       case 'customer.subscription.deleted':
-        // Handle subscription changes
+        // These are handled by subscriptionService.handleWebhook if configured
         break;
     }
 
@@ -1109,10 +1519,10 @@ export class PaymentController {
     @Query('promoCode') promoCode?: string,
   ) {
     const userId = (req.user?._id || req.user?.sub || '').toString();
-    
+
     console.log('[Challenge Payment] Received challengeId:', challengeId);
     console.log('[Challenge Payment] Body:', req.body);
-    
+
     if (!challengeId) {
       throw new BadRequestException('Challenge ID is required');
     }
@@ -1132,9 +1542,9 @@ export class PaymentController {
 
     // Get the deposit amount from various possible locations
     const price = challenge.depositAmount || challenge.pricing?.depositAmount || challenge.pricing?.participationFee || challenge.pricing?.price || (challenge as any).prix || 0;
-    
+
     console.log('[Challenge Payment] Challenge found:', challenge.title, 'Price:', price);
-    
+
     // For free challenges, just add the user as a participant
     if (price <= 0) {
       // Check if already participating
@@ -1365,7 +1775,7 @@ export class PaymentController {
   ) {
     if (!file) throw new BadRequestException('Payment proof file is required');
     const userId = (req.user?._id || req.user?.sub || '').toString();
-    
+
     // Find session by custom id field first, then by _id
     let session = await this.sessionModel.findOne({ id: sessionId });
     if (!session) {
@@ -1521,7 +1931,7 @@ export class PaymentController {
         } else if (order.contentType === TrackableContentType.SESSION) {
           // Create a booking for the session when payment is approved
           console.log(`[verifyManualPayment] Processing session payment for order ${order._id}, contentId: ${order.contentId}`);
-          
+
           // Try finding by _id first (contentId is stored as session._id.toString())
           let session = await this.sessionModel.findById(order.contentId);
           if (!session) {
@@ -1529,13 +1939,13 @@ export class PaymentController {
             session = await this.sessionModel.findOne({ id: order.contentId });
           }
           console.log(`[verifyManualPayment] Session lookup result: ${session ? `found (id: ${session.id}, _id: ${session._id})` : 'not found'}`);
-          
+
           if (session) {
             // Check if booking already exists for this user
-            const existingBooking = session.bookings.find(b => 
+            const existingBooking = session.bookings.find(b =>
               b.userId.toString() === order.buyerId.toString()
             );
-            
+
             if (!existingBooking) {
               // Get slot info from order metadata if available
               const metadata = (order as any).metadata || {};
@@ -1555,11 +1965,11 @@ export class PaymentController {
                 createdAt: new Date(),
                 updatedAt: new Date(),
               } as any);
-              
+
               // Mark bookings as modified to ensure Mongoose saves it
               session.markModified('bookings');
               await session.save();
-              
+
               console.log(`[verifyManualPayment] Created booking ${bookingId} for session ${session.id}, user ${order.buyerId}`);
               console.log(`[verifyManualPayment] Session now has ${session.bookings.length} bookings`);
             } else {

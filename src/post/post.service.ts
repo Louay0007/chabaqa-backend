@@ -242,7 +242,9 @@ export class PostService {
             isLikedByUser: false,
             isSharedByUser: false,
             comments: [],
+            commentsCount: 0,
             tags: post.tags || [],
+            images: post.images || [],
             createdAt: post.createdAt.toISOString(),
             updatedAt: post.updatedAt.toISOString(),
           };
@@ -440,14 +442,14 @@ export class PostService {
     // Récupérer les informations de l'utilisateur
     const user = await this.userModel
       .findById(userId)
-      .select('name profile_picture');
+      .select('name profile_picture photo_profil');
 
     return {
       id: comment.id,
       content: comment.content,
       userId: comment.userId.toString(),
       userName: user?.name || 'Utilisateur inconnu',
-      userAvatar: user?.profile_picture,
+      userAvatar: user?.photo_profil || user?.profile_picture,
       createdAt: comment.createdAt.toISOString(),
       updatedAt: comment.updatedAt.toISOString(),
     };
@@ -544,14 +546,14 @@ export class PostService {
     // Récupérer les informations de l'utilisateur
     const user = await this.userModel
       .findById(userId)
-      .select('name profile_picture');
+      .select('name profile_picture photo_profil');
 
     return {
       id: comment.id,
       content: comment.content,
       userId: comment.userId.toString(),
       userName: user?.name || 'Utilisateur inconnu',
-      userAvatar: user?.profile_picture,
+      userAvatar: user?.photo_profil || user?.profile_picture,
       createdAt: comment.createdAt.toISOString(),
       updatedAt: comment.updatedAt.toISOString(),
     };
@@ -991,6 +993,7 @@ export class PostService {
         shareCount: post.shareCount || 0,
         isSharedByUser: userId ? post.isSharedBy(new Types.ObjectId(userId)) : false,
         comments,
+        commentsCount: post.comments.length,
         tags: post.tags || [],
         images: post.images || [],
         videos: post.videos || [],
@@ -1036,6 +1039,7 @@ export class PostService {
         isLikedByUser: false,
         isSharedByUser: false,
         comments: [],
+        commentsCount: 0,
         tags: post.tags || [],
         images: post.images || [],
         videos: post.videos || [],
@@ -1163,6 +1167,7 @@ export class PostService {
           shareCount: post.shareCount || 0,
           isSharedByUser: post.isSharedBy(userObjectId),
           comments: [], // Empty for list view - will be populated in detailed view
+          commentsCount: post.comments.length,
           tags: post.tags,
           images: post.images || [],
           videos: post.videos || [],

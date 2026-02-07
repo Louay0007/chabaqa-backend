@@ -173,8 +173,8 @@ export class SubscriptionService {
     return sub;
   }
 
-  async upgradePlan(creatorId: string | Types.ObjectId, tier: PlanTier) {
-    const plan = await this.planModel.findOne({ tier, isActive: true });
+  async upgradePlan(creatorId: string | Types.ObjectId, tier: PlanTier, session: any = null) {
+    const plan = await this.planModel.findOne({ tier, isActive: true }).session(session);
     if (!plan) {
       throw new BadRequestException('Plan introuvable ou inactif');
     }
@@ -199,7 +199,7 @@ export class SubscriptionService {
           adminsMax: plan.limits.adminsMax,
         },
       },
-      { upsert: true, new: true },
+      { upsert: true, new: true, session },
     );
 
     return { message: 'Plan mis à jour', subscription: sub };

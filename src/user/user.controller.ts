@@ -1,10 +1,10 @@
 import { Controller, Post, Get, Put, Delete, Body, Param, HttpStatus, Res, Response, ConflictException, UseGuards, Request, ForbiddenException } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBody, ApiBearerAuth, ApiParam } from '@nestjs/swagger';
 import { UserService } from './user.service';
-import { CreateUserDto } from 'src/dto-user/create-user.dto';
-import { UpdateUserDto } from 'src/dto-user/update-user.dto';
-import { ForgotPasswordDto } from 'src/dto-user/forgot-password.dto';
-import { ResetPasswordDto } from 'src/dto-user/reset-password.dto';
+import { CreateUserDto } from '../dto-user/create-user.dto';
+import { UpdateUserDto } from '../dto-user/update-user.dto';
+import { ForgotPasswordDto } from '../dto-user/forgot-password.dto';
+import { ResetPasswordDto } from '../dto-user/reset-password.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 @ApiTags('Users')
