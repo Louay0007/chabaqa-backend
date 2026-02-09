@@ -51,6 +51,18 @@ export class SessionBookingResponseDto {
   @ApiPropertyOptional({ description: 'Notes de la réservation' })
   notes?: string;
 
+  @ApiPropertyOptional({ description: 'Prix de la session', example: 50 })
+  sessionPrice?: number;
+
+  @ApiPropertyOptional({ description: 'Devise de la session', example: 'USD' })
+  sessionCurrency?: string;
+
+  @ApiPropertyOptional({ description: 'Durée de la session en minutes', example: 60 })
+  sessionDuration?: number;
+
+  @ApiPropertyOptional({ description: 'Montant payé', example: 50 })
+  amountPaid?: number;
+
   @ApiProperty({ description: 'Date de création', example: '2024-02-15T10:30:00.000Z' })
   createdAt: string;
 

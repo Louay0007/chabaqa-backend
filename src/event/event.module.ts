@@ -10,6 +10,7 @@ import { FeeModule } from '../common/modules/fee.module';
 import { OrderSchema } from '../schema/order.schema';
 import { PolicyModule } from '../common/modules/policy.module';
 import { PromoModule } from '../common/modules/promo.module';
+import { TrackingModule } from '../common/modules/tracking.module';
 
 @Module({
   imports: [
@@ -22,7 +23,8 @@ import { PromoModule } from '../common/modules/promo.module';
     AuthModule,
     FeeModule,
     PolicyModule,
-    PromoModule
+    PromoModule,
+    TrackingModule
   ],
   controllers: [EventController],
   providers: [EventService],

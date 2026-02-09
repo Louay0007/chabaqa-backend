@@ -822,6 +822,15 @@ ChallengeSchema.pre('validate', function (next) {
     next(new Error('Le nombre de participants ne peut pas dépasser le maximum autorisé'));
   }
 
+  // Vérifier l'unicité des jours de tâches
+  if (this.tasks && this.tasks.length > 0) {
+    const days = this.tasks.map(t => t.day);
+    const uniqueDays = new Set(days);
+    if (uniqueDays.size !== days.length) {
+      next(new Error('Chaque tâche doit avoir un numéro de jour unique'));
+    }
+  }
+
   next();
 });
 

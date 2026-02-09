@@ -41,7 +41,20 @@ import { TrackableContentType } from '../schema/content-tracking.schema';`,
    * Marquer un {contentType} comme terminé
    */
   async track{ContentType}Complete({contentType}Id: string, userId: string) {
-    return await this.trackingService.trackComplete(userId, {contentType}Id, TrackableContentType.{CONTENT_TYPE});
+    const result = await this.trackingService.trackComplete(userId, {contentType}Id, TrackableContentType.{CONTENT_TYPE});
+    
+    // Check for achievements after completing
+    try {
+      await this.achievementService.checkAchievements(userId, {
+        type: 'content_completed',
+        contentType: TrackableContentType.{CONTENT_TYPE},
+        contentId: {contentType}Id
+      });
+    } catch (err) {
+      console.error('⚠️ Achievement check failed:', err.message);
+    }
+    
+    return result;
   }
 
   /**

@@ -125,6 +125,19 @@ export class ProductController {
     return { success: true, data: products };
   }
 
+  @Get('my-purchases')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Récupérer les produits achetés par l\'utilisateur' })
+  @ApiResponse({ status: 200, description: 'Produits achetés récupérés avec succès' })
+  @ApiResponse({ status: 401, description: 'Non autorisé' })
+  async getMyPurchases(
+    @Request() req
+  ): Promise<{ success: boolean; products: any[] }> {
+    const products = await this.productService.getMyPurchases(req.user.userId);
+    return { success: true, products };
+  }
+
   @Get(':id/reviews')
   @ApiOperation({ summary: 'Lister les avis d\'un produit (rating + message)' })
   async getReviews(
@@ -332,19 +345,6 @@ export class ProductController {
   ): Promise<{ success: boolean; downloadUrl: string; message: string }> {
     const result = await this.productService.downloadFile(productId, fileId, req.user.userId, promoCode);
     return { success: true, ...result };
-  }
-
-  @Get('my-purchases')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Récupérer les produits achetés par l\'utilisateur' })
-  @ApiResponse({ status: 200, description: 'Produits achetés récupérés avec succès' })
-  @ApiResponse({ status: 401, description: 'Non autorisé' })
-  async getMyPurchases(
-    @Request() req
-  ): Promise<{ success: boolean; products: any[] }> {
-    const products = await this.productService.getMyPurchases(req.user.userId);
-    return { success: true, products };
   }
 
   @Get(':id/check-purchase')

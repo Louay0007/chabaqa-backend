@@ -125,6 +125,8 @@ export class ContentTrackingService {
     progress.mettreAJourDernierAcces();
     await progress.save();
 
+    console.log(`[CONTENT-TRACKING-SERVICE] TrackStart: user=${userId}, content=${contentId}, type=${contentType}`);
+
     // Enregistrer l'action
     await this.trackAction(
       userId,

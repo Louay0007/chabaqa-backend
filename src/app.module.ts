@@ -76,6 +76,7 @@ import { AiModule } from './ai/ai.module';
 import { AdminUser, AdminUserSchema } from './admin/schemas/admin-user.schema';
 import { AuditLog, AuditLogSchema } from './admin/schemas/audit-log.schema';
 import { ContentModerationQueue, ContentModerationQueueSchema } from './admin/schemas/content-moderation-queue.schema';
+import { ChallengeSubmission, ChallengeSubmissionSchema } from './schema/challenge-submission.schema';
 
 @Module({
   imports: [
@@ -144,6 +145,7 @@ import { ContentModerationQueue, ContentModerationQueueSchema } from './admin/sc
       { name: AdminUser.name, schema: AdminUserSchema },
       { name: AuditLog.name, schema: AuditLogSchema },
       { name: ContentModerationQueue.name, schema: ContentModerationQueueSchema },
+      { name: ChallengeSubmission.name, schema: ChallengeSubmissionSchema },
     ]),
     AuthModule,
     CommunityAffCreaJoinModule,

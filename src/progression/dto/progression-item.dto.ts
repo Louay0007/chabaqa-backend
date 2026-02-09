@@ -64,6 +64,9 @@ export class ProgressionSummaryByTypeDto {
 
   @ApiProperty()
   completed: number;
+
+  @ApiPropertyOptional()
+  inProgress?: number;
 }
 
 export class ProgressionSummaryDto {

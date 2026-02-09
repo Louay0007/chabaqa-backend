@@ -189,14 +189,27 @@ export class UploadController {
       throw new BadRequestException('Aucune vidéo fournie');
     }
 
+    console.log('🎬 [VIDEO UPLOAD ENDPOINT] Received video upload request');
+    console.log('   📁 Original name:', file.originalname);
+    console.log('   📊 Size:', file.size, 'bytes');
+    console.log('   🏷️ MIME type:', file.mimetype);
+    console.log('   💾 Temp filename:', file.filename);
+
     const fileType = this.uploadService.getFileType(file.originalname);
     if (fileType !== FileType.VIDEO) {
+      console.error('❌ [VIDEO UPLOAD ENDPOINT] Invalid file type:', fileType);
       throw new BadRequestException('Le fichier doit être une vidéo');
     }
 
     const reqAny = (arguments as any)[0];
     const userId = (reqAny as any)?.user?._id || (reqAny as any)?.user?.sub;
+    console.log('   👤 User ID:', userId);
+    
     const result = await this.uploadService.processUploadedFile(file, file.filename, { userId });
+    
+    console.log('✅ [VIDEO UPLOAD ENDPOINT] Upload processed successfully');
+    console.log('   🔗 Generated URL:', result.url);
+    console.log('   📝 Filename:', result.filename);
     
     return {
       filename: result.filename,

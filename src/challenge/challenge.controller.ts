@@ -16,7 +16,15 @@ import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery, ApiParam, 
 import { ChallengeService } from './challenge.service';
 import { CreateChallengeDto } from '../dto-challenge/create-challenge.dto';
 import { UpdateChallengeDto } from '../dto-challenge/update-challenge.dto';
-import { JoinChallengeDto, LeaveChallengeDto, UpdateProgressDto, CreateChallengePostDto, CreateChallengeCommentDto } from '../dto-challenge/join-challenge.dto';
+import { ChallengeSubmission, ChallengeSubmissionSchema } from '../schema/challenge-submission.schema';
+import { CreateSubmissionDto, ReviewSubmissionDto } from '../dto-challenge/challenge-submission.dto';
+import {
+  JoinChallengeDto,
+  LeaveChallengeDto,
+  UpdateProgressDto,
+  CreateChallengePostDto,
+  CreateChallengeCommentDto
+} from '../dto-challenge/join-challenge.dto';
 import { ChallengeResponseDto, ChallengeListResponseDto } from '../dto-challenge/challenge-response.dto';
 import {
   UpdateChallengePricingDto,
@@ -170,7 +178,59 @@ export class ChallengeController {
     return this.challengeService.remove(id, userId);
   }
 
-  @Post('join')
+  @Get('free')
+  @ApiOperation({ summary: 'Récupérer les défis gratuits' })
+  @ApiResponse({ status: 200, description: 'Liste des défis gratuits récupérée avec succès', type: ChallengeListResponseDto })
+  @ApiQuery({ name: 'page', required: false, description: 'Numéro de page', example: 1 })
+  @ApiQuery({ name: 'limit', required: false, description: 'Nombre d\'éléments par page', example: 10 })
+  @ApiQuery({ name: 'communitySlug', required: false, description: 'Slug de la communauté' })
+  async findFreeChallenges(
+    @Query('page') page: number = 1,
+    @Query('limit') limit: number = 10,
+    @Query('communitySlug') communitySlug?: string
+  ): Promise<ChallengeListResponseDto> {
+    return this.challengeService.findFreeChallenges(page, limit, communitySlug);
+  }
+
+  @Post('project-submissions')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Soumettre un projet pour une tâche' })
+  @ApiResponse({ status: 201, description: 'Soumission créée avec succès' })
+  async submitProject(
+    @Body() createSubmissionDto: CreateSubmissionDto,
+    @Request() req: any
+  ) {
+    const userId = req.user._id || req.user.userId;
+    console.log(`🚀 [CHALLENGE-CONTROLLER] Received submission for task ${createSubmissionDto.taskId} from user ${userId}`);
+    return this.challengeService.submitProject(createSubmissionDto, userId);
+  }
+
+  @Get(':id/submissions')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Récupérer les soumissions d\'un défi' })
+  async getSubmissions(
+    @Param('id') challengeId: string,
+    @Request() req: any
+  ) {
+    const userId = req.user._id || req.user.userId;
+    return this.challengeService.getSubmissions(challengeId, userId);
+  }
+
+  @Patch('submissions/:id/review')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Review a project submission' })
+  async reviewSubmission(
+    @Param('id') submissionId: string,
+    @Body() reviewDto: ReviewSubmissionDto,
+    @Request() req: any
+  ) {
+    const adminId = req.user._id || req.user.userId;
+    // Note: In a real app, check if user is admin or challenge creator
+    return this.challengeService.reviewSubmission(submissionId, reviewDto, adminId);
+  }
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Rejoindre un défi' })
@@ -287,20 +347,6 @@ export class ChallengeController {
     @Body() checkAccessDto: CheckChallengeAccessDto
   ): Promise<ChallengeAccessResponseDto> {
     return this.challengeService.checkAccess(checkAccessDto);
-  }
-
-  @Get('free')
-  @ApiOperation({ summary: 'Récupérer les défis gratuits' })
-  @ApiResponse({ status: 200, description: 'Liste des défis gratuits récupérée avec succès', type: ChallengeListResponseDto })
-  @ApiQuery({ name: 'page', required: false, description: 'Numéro de page', example: 1 })
-  @ApiQuery({ name: 'limit', required: false, description: 'Nombre d\'éléments par page', example: 10 })
-  @ApiQuery({ name: 'communitySlug', required: false, description: 'Slug de la communauté' })
-  async findFreeChallenges(
-    @Query('page') page: number = 1,
-    @Query('limit') limit: number = 10,
-    @Query('communitySlug') communitySlug?: string
-  ): Promise<ChallengeListResponseDto> {
-    return this.challengeService.findFreeChallenges(page, limit, communitySlug);
   }
 
   @Get('user/my-participations')

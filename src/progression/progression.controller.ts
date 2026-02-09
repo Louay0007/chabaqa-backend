@@ -21,7 +21,8 @@ export class ProgressionController {
     @Request() req: any,
     @Query() query: GetProgressionOverviewDto,
   ): Promise<ProgressionOverviewDto> {
-    return this.progressionService.getUserProgressOverview(req.user.userId, query);
+    const userId = req.user._id || req.user.userId;
+    return this.progressionService.getUserProgressOverview(userId, query);
   }
 }
 

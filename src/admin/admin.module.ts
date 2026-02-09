@@ -105,17 +105,17 @@ import { AnalyticsController } from './common/controllers/analytics.controller';
       {
         name: 'admin-default',
         ttl: 60000, // 60 seconds
-        limit: 100, // 100 requests per minute
+        limit: 1000, // 1000 requests per minute
       },
       {
         name: 'admin-strict',
         ttl: 60000, // 60 seconds
-        limit: 20, // 20 requests per minute for sensitive operations
+        limit: 200, // 200 requests per minute for sensitive operations
       },
       {
         name: 'admin-bulk',
         ttl: 60000, // 60 seconds
-        limit: 5, // 5 requests per minute for bulk operations
+        limit: 50, // 50 requests per minute for bulk operations
       },
     ]),
     

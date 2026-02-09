@@ -12,6 +12,7 @@ import { OrderSchema } from '../schema/order.schema';
 import { PolicyModule } from '../common/modules/policy.module';
 import { UploadModule } from '../upload/upload.module';
 import { ContentProgressSchema } from '../schema/content-tracking.schema';
+import { ChallengeSubmission, ChallengeSubmissionSchema } from '../schema/challenge-submission.schema';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { ContentProgressSchema } from '../schema/content-tracking.schema';
       { name: User.name, schema: UserSchema },
       { name: 'Order', schema: OrderSchema },
       { name: 'ContentProgress', schema: ContentProgressSchema },
+      { name: ChallengeSubmission.name, schema: ChallengeSubmissionSchema },
     ]),
     AuthModule,
     TrackingModule,

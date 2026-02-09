@@ -11,6 +11,7 @@ import { FeeService } from '../common/services/fee.service';
 import { PromoService } from '../common/services/promo.service';
 import { PolicyService } from '../common/services/policy.service';
 import { UploadService } from '../upload/upload.service';
+import { ContentTrackingService } from '../common/services/content-tracking.service';
 import { TrackableContentType } from '../schema/content-tracking.schema';
 
 @Injectable()
@@ -24,6 +25,7 @@ export class EventService {
     private readonly promoService: PromoService,
     private readonly policyService: PolicyService,
     private readonly uploadService: UploadService,
+    private readonly trackingService: ContentTrackingService,
   ) {}
 
   /**
@@ -547,10 +549,25 @@ export class EventService {
     // Try to find event by custom id first, then by MongoDB _id
     let event = await this.eventModel.findOne({ id: eventId });
     if (!event) {
-      event = await this.eventModel.findById(eventId);
+      if (Types.ObjectId.isValid(eventId)) {
+        event = await this.eventModel.findById(eventId);
+      }
     }
+
     if (!event) {
       throw new NotFoundException('Événement non trouvé');
+    }
+
+    // Unified Progression Tracking: Track the start of event participation
+    try {
+      await this.trackingService.trackStart(
+        userId,
+        event._id.toString(),
+        TrackableContentType.EVENT
+      );
+      console.log(`✅ [EVENT-SERVICE] Tracked registration for user ${userId} in event ${event._id}`);
+    } catch (error) {
+      console.error(`⚠️ [EVENT-SERVICE] Failed to track event registration:`, error.message);
     }
 
     if (!event.isActive || !event.isPublished) {
@@ -951,35 +968,37 @@ export class EventService {
             id: event.id,
             title: event.title,
             description: event.description,
-            start_date: event.startDate.toISOString(),
-            end_date: event.endDate?.toISOString(),
-            start_time: event.startTime,
-            end_time: event.endTime,
+            startDate: event.startDate.toISOString(),
+            endDate: event.endDate?.toISOString(),
+            startTime: event.startTime,
+            endTime: event.endTime,
             location: event.location,
-            venue: event.location,
+            venue: event.location, // Keep venue for backward compatibility if needed
             onlineUrl: event.onlineUrl,
             category: event.category,
             type: event.type,
-            is_active: event.isActive,
-            is_published: event.isPublished,
-            attendees_count: event.attendees.length,
-            max_attendees: event.tickets.reduce((total, ticket) => total + (ticket.quantity || 0), 0),
+            isActive: event.isActive,
+            isPublished: event.isPublished,
+            attendeesCount: event.attendees.length,
+            maxAttendees: event.tickets.reduce((total, ticket) => total + (ticket.quantity || 0), 0),
             thumbnail: event.image,
-            cover_image: event.image,
+            coverImage: event.image,
+            image: event.image,
             tickets: event.tickets,
             sessions: event.sessions,
             speakers: event.speakers,
             tags: event.tags,
-            created_at: (event as any).createdAt?.toISOString() || new Date().toISOString(),
-            updated_at: (event as any).updatedAt?.toISOString() || new Date().toISOString(),
-            created_by: creatorInfo,
-            community_id: communityInfo,
-            // Détails de l'inscription de l'utilisateur
-            user_registration: {
-              ticket_type: userRegistration?.ticketType,
-              registered_at: userRegistration?.registeredAt?.toISOString(),
-              checked_in: userRegistration?.checkedIn,
-              checked_in_at: userRegistration?.checkedInAt?.toISOString()
+            createdAt: (event as any).createdAt?.toISOString() || new Date().toISOString(),
+            updatedAt: (event as any).updatedAt?.toISOString() || new Date().toISOString(),
+            creator: creatorInfo,
+            community: communityInfo,
+            // User registration details in camelCase
+            userRegistration: {
+              id: userRegistration?.id, // Add ID for unique key in frontend
+              ticketType: userRegistration?.ticketType,
+              registeredAt: userRegistration?.registeredAt?.toISOString(),
+              checkedIn: userRegistration?.checkedIn,
+              checkedInAt: userRegistration?.checkedInAt?.toISOString()
             }
           };
         })

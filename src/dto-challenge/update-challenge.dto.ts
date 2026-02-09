@@ -14,6 +14,11 @@ export class UpdateChallengeDto extends PartialType(OmitType(CreateChallengeDto,
   @IsBoolean()
   isActive?: boolean;
 
+  @ApiPropertyOptional({ description: 'Si la progression séquentielle est activée', example: true })
+  @IsOptional()
+  @IsBoolean()
+  sequentialProgression?: boolean;
+
   @ApiPropertyOptional({ description: 'Ressources du défi', type: [CreateChallengeResourceDto] })
   @IsOptional()
   @IsArray()

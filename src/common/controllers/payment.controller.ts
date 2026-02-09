@@ -105,6 +105,24 @@ export class PaymentController {
           // Use string ID if available for URL consistency
           contentIdRaw = (course as any).id || (course as any)._id.toString();
         }
+      } else if (contentType === 'chapter') { // ADDED: Chapter Support
+        // Find course containing this chapter
+        // Note: contentId here is chapterId
+        const course = await this.coursModel.findOne({ 'sections.chapitres.id': contentId }).select('titre communityId creatorId id sections').lean();
+        if (course) {
+           // Find chapter details
+           let chapterTitle = 'Paid Chapter';
+           (course as any).sections.forEach(s => {
+             const c = s.chapitres.find(ch => ch.id === contentId);
+             if (c) chapterTitle = c.titre;
+           });
+           
+           contentTitle = `${(course as any).titre} - ${chapterTitle}`;
+           communityId = (course as any).communityId;
+           creatorId = (course as any).creatorId;
+           // We might want to link back to the course page
+           contentIdRaw = (course as any).id || (course as any)._id.toString();
+        }
       } else if (contentType === TrackableContentType.COMMUNITY) {
         communityId = contentId;
         const comm = await this.communityModel.findById(contentId).select('name createur').lean();
@@ -1128,7 +1146,7 @@ export class PaymentController {
         contentType: 'session',
         contentId: sessionId,
         orderId: pendingOrder._id.toString(),
-        bookingDto
+        bookingDto: JSON.stringify(bookingDto) // Serialize object to string
       },
       lineItems: [{
         name: sessionDoc.title || 'Session',
@@ -1268,6 +1286,20 @@ export class PaymentController {
         this.logger.log(`Product ${order.contentId} marked as purchased for user ${order.buyerId}`);
         break;
 
+      case 'chapter': // Custom Type
+        // Grant access to specific chapter
+        // We reuse the updateWatchTime logic to "enroll" the user if needed, and maybe mark a "purchased" flag?
+        // Actually, CourseEnrollmentService needs a way to mark a specific chapter as "purchased/unlocked".
+        // For now, we'll ensure they are enrolled in the course (even if free enrollment) and maybe add a "purchasedChapters" array to enrollment schema later.
+        // OR: We just rely on the Order record existing. The "checkChapterAccess" logic needs to look up Orders.
+        // CURRENT IMPLEMENTATION: We ensure basic enrollment exists.
+        const courseIdMeta = order.metadata?.courseId;
+        if (courseIdMeta) {
+           await this.coursService.inscrireAuCours(courseIdMeta, order.buyerId.toString(), undefined, session);
+           this.logger.log(`Chapter ${order.contentId} purchased. Ensured enrollment in course ${courseIdMeta}`);
+        }
+        break;
+
       default:
         this.logger.warn(`Access granting not implemented for content type: ${order.contentType}`);
     }
@@ -1369,6 +1401,127 @@ export class PaymentController {
     if (!portal.success) throw new BadRequestException(portal.error);
 
     return { portalUrl: portal.url };
+  }
+
+  @Post('stripe-link/init/chapter')
+  @ApiOperation({ summary: 'Initiate Stripe Link payment for a single chapter' })
+  @ApiQuery({ name: 'promoCode', required: false })
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  async initStripeLinkChapterPayment(
+    @Body('courseId') courseId: string,
+    @Body('chapterId') chapterId: string,
+    @Req() req: any,
+    @Query('promoCode') promoCode?: string,
+  ) {
+    const userId = (req.user?._id || req.user?.sub || '').toString();
+    
+    // 1. Find Course
+    let cours: CoursDocument | null = null;
+    if (Types.ObjectId.isValid(courseId)) {
+      cours = await this.coursModel.findById(courseId);
+    }
+    if (!cours) {
+      cours = await this.coursModel.findOne({ id: courseId });
+    }
+    if (!cours) throw new BadRequestException('Course not found');
+    
+    // 2. Find Chapter & Price
+    let targetChapter: any = null;
+    cours.sections.forEach(section => {
+      const found = section.chapitres.find(c => c.id === chapterId);
+      if (found) targetChapter = found;
+    });
+
+    if (!targetChapter) throw new BadRequestException('Chapter not found in this course');
+    
+    // Check if it's actually a paid chapter
+    if (!targetChapter.isPaidChapter) {
+        throw new BadRequestException('This chapter is not marked as a paid chapter');
+    }
+
+    const price = targetChapter.prix || 0;
+    if (price <= 0) throw new BadRequestException('Free chapter (invalid price)');
+
+    const currency = ((cours as any)?.devise || 'TND').toString();
+
+    // 3. Calculate Amount & Discounts
+    let amount = price;
+    let discountDT = 0;
+    let appliedCode: string | undefined;
+    
+    if (promoCode) {
+      const buyer = await this.userModel.findById(userId).select('email');
+      // Using 'chapter' as content type for promo validation might require updating PromoService, 
+      // or we can treat it as a product/course. For now, assuming 'chapter' logic or fallback.
+      // We'll pass 'chapter' as string which might need TrackableContentType enum update.
+      // Casting to any to bypass enum strictness if needed for now.
+      const promo = await this.promoService.validateAndApply(promoCode, price, 'chapter' as any, chapterId, (buyer as any)?.email);
+      if (promo.valid) {
+        amount = promo.finalAmountDT;
+        discountDT = promo.discountDT;
+        appliedCode = promo.appliedCode;
+      }
+    }
+
+    // 4. Create Pending Order
+    const breakdown = await this.feeService.calculateForAmount(amount, cours.creatorId.toString());
+    const pendingOrder = await this.orderModel.create({
+      buyerId: new Types.ObjectId(userId),
+      creatorId: cours.creatorId,
+      contentType: 'chapter', // Custom content type
+      contentId: chapterId,   // Storing chapter ID as the main content ID
+      amountDT: breakdown.amountDT,
+      platformPercent: breakdown.platformPercent,
+      platformFixedDT: breakdown.platformFixedDT,
+      platformFeeDT: breakdown.platformFeeDT,
+      creatorNetDT: breakdown.creatorNetDT,
+      promoCode: appliedCode,
+      discountDT,
+      status: 'pending',
+      metadata: {
+        courseId: cours.id || cours._id.toString(), // Store course ID in metadata for access granting
+        chapterTitle: targetChapter.titre
+      }
+    });
+
+    // 5. Create Stripe Session
+    const coursePublicId = cours.id || cours._id.toString();
+    const successUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-success?scope=chapter&id=${chapterId}&courseId=${coursePublicId}&provider=stripe&sessionId={CHECKOUT_SESSION_ID}`;
+    const failUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-failed?scope=chapter&id=${chapterId}&courseId=${coursePublicId}&provider=stripe`;
+
+    const user = await this.userModel.findById(userId).select('email name');
+    const session = await this.stripe.createLinkCheckoutSession({
+      amountDT: amount,
+      currency: currency.toLowerCase(),
+      successUrl,
+      cancelUrl: failUrl,
+      customerEmail: user?.email,
+      metadata: {
+        userId,
+        contentType: 'chapter',
+        contentId: chapterId,
+        courseId: coursePublicId,
+        orderId: pendingOrder._id.toString()
+      },
+      lineItems: [{
+        name: `${targetChapter.titre} (Chapter)`,
+        description: `Access to single chapter in ${cours.titre}`,
+        amount: amount,
+        quantity: 1
+      }]
+    });
+
+    if (!session.success) throw new BadRequestException(session.error);
+
+    pendingOrder.paymentId = session.sessionId;
+    await pendingOrder.save();
+
+    return {
+      checkoutUrl: session.url,
+      sessionId: session.sessionId,
+      provider: 'stripe-link'
+    };
   }
 
   // ==================== MANUAL PAYMENT ENDPOINTS ====================

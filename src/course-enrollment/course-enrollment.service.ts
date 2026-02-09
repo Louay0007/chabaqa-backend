@@ -26,6 +26,10 @@ import { AchievementService } from '../achievement/achievement.service';
 
 @Injectable()
 export class CourseEnrollmentService {
+  // Auto-complete threshold (percent). Chapters watched this percent or higher are auto-completed.
+  // Default: 90 (aligns with frontend ~90% behaviour)
+  private readonly AUTO_COMPLETE_THRESHOLD = 90;
+
   constructor(
     @InjectModel(CourseEnrollment.name)
     private courseEnrollmentModel: Model<CourseEnrollmentDocument>,
@@ -557,62 +561,70 @@ export class CourseEnrollmentService {
     }
 
     const normalizedWatchTimeSeconds = Math.floor(watchTime);
-    const existingWatchTimeSeconds = Number(progress.watchTime ?? 0);
-    progress.watchTime = Math.max(
-      existingWatchTimeSeconds,
-      normalizedWatchTimeSeconds,
-    );
-    progress.lastAccessedAt = new Date();
-    progress.updatedAt = new Date();
-
-    // Store videoDuration in progress for accurate calculations later
-    if (videoDuration && videoDuration > 0) {
-      (progress as any).videoDuration = videoDuration;
+    const currentProgression = Number(progress.watchTime ?? 0);
+    
+    // Only update if the new watch time is greater than what we already have saved
+    // CRITICAL FIX: If already completed, DO NOT overwrite/revert progress unless explicitly forced.
+    // However, if the user re-watches, we might want to track that, BUT NEVER unset isCompleted.
+    // The High-Water Mark logic handles the `watchTime` value itself (line 567), but we must ensure `isCompleted` sticks.
+    
+    if (normalizedWatchTimeSeconds > currentProgression) {
+      progress.watchTime = normalizedWatchTimeSeconds;
+      console.log(`📈 [CourseEnrollmentService] Progress increased: ${currentProgression}s -> ${normalizedWatchTimeSeconds}s`);
+    } else {
+      console.log(`ℹ️ [CourseEnrollmentService] Progress maintained at ${currentProgression}s (ignored smaller value ${normalizedWatchTimeSeconds}s)`);
     }
 
     // Auto-complete chapter if watch time reaches threshold
     let isAutoCompleted = false;
+    // Ensure isCompleted is NEVER reverted to false by a watch update
+    if (progress.isCompleted) {
+       // If it was already completed, keep it completed.
+       // Even if watchPercentage calculation below says otherwise (e.g. video duration changed).
+       isAutoCompleted = true; // effectively treat as "still completed"
+    }
+
+    progress.lastAccessedAt = new Date();
+    progress.updatedAt = new Date();
     let watchPercentage = 0;
 
     // Get chapter duration for percentage calculation
     let chapterDurationSeconds: number | undefined = videoDuration;
 
-    if (!chapterDurationSeconds) {
-      // Use the course object we already found earlier
-      if (course) {
-        // Find the chapter to get its stored duration
-        for (let sIdx = 0; sIdx < course.sections.length; sIdx++) {
-          const section = course.sections[sIdx];
-          const cIdx = section.chapitres.findIndex((c) => c.id === chapterId);
-          if (cIdx !== -1) {
-            const chapter = section.chapitres[cIdx];
+    if (course) {
+      // Find the chapter to get its stored duration or update it
+      for (let sIdx = 0; sIdx < course.sections.length; sIdx++) {
+        const section = course.sections[sIdx];
+        const cIdx = section.chapitres.findIndex((c) => c.id === chapterId);
+        if (cIdx !== -1) {
+          const chapter = section.chapitres[cIdx];
 
-            // If videoDuration was provided, update the chapter duration in DB
-            if (videoDuration && videoDuration > 0) {
-              const durationInMinutes = Math.round(videoDuration / 60);
-              if (
-                !chapter.duree ||
-                chapter.duree === 0 ||
-                Math.abs(chapter.duree - durationInMinutes) > 1
-              ) {
-                console.log(
-                  `📝 [CourseEnrollmentService] Updating chapter ${chapterId} duration to ${durationInMinutes}m`,
-                );
-                course.sections[sIdx].chapitres[cIdx].duree = durationInMinutes;
-                course.markModified('sections');
-                await course.save();
-              }
-              chapterDurationSeconds = videoDuration;
-            } else if (chapter.duree) {
-              // Handle legacy data: if duree > 1000, it's likely in seconds
-              if (chapter.duree > 1000) {
-                chapterDurationSeconds = chapter.duree;
-              } else {
-                chapterDurationSeconds = chapter.duree * 60; // duree is in minutes
-              }
+          // If videoDuration was provided, update the chapter duration in DB if significantly different
+          if (videoDuration && videoDuration > 0) {
+            const durationInMinutes = Math.round(videoDuration / 60);
+            if (
+              !chapter.duree ||
+              chapter.duree === 0 ||
+              Math.abs(chapter.duree - (videoDuration > 1000 ? videoDuration : durationInMinutes)) > 2
+            ) {
+              console.log(
+                `📝 [CourseEnrollmentService] Updating chapter ${chapterId} duration to ${videoDuration}s`,
+              );
+              // Store as seconds if > 1000, else minutes (following existing logic)
+              course.sections[sIdx].chapitres[cIdx].duree = videoDuration > 1000 ? videoDuration : durationInMinutes;
+              course.markModified('sections');
+              await course.save();
             }
-            break;
+            chapterDurationSeconds = videoDuration;
+          } else if (chapter.duree) {
+            // Handle legacy data: if duree > 1000, it's likely in seconds
+            if (chapter.duree > 1000) {
+              chapterDurationSeconds = chapter.duree;
+            } else {
+              chapterDurationSeconds = chapter.duree * 60; // duree is in minutes
+            }
           }
+          break;
         }
       }
     }
@@ -628,8 +640,8 @@ export class CourseEnrollmentService {
         `   📊 Watch progress: ${progress.watchTime}s / ${chapterDurationSeconds}s = ${watchPercentage.toFixed(1)}%`,
       );
 
-      // Auto-complete if watched 99.5% or more
-      if (watchPercentage >= 99.5) {
+      // Auto-complete if watched >= configured threshold
+      if (watchPercentage >= this.AUTO_COMPLETE_THRESHOLD) {
         progress.isCompleted = true;
         progress.completedAt = new Date();
         isAutoCompleted = true;

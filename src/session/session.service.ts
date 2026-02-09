@@ -883,6 +883,10 @@ export class SessionService {
       updatedAt: Date;
       sessionId: string;
       sessionTitle: string;
+      sessionPrice?: number;
+      sessionCurrency?: string;
+      sessionDuration?: number;
+      amountPaid?: number;
       creatorName: string;
       creatorAvatar?: string;
     }
@@ -917,6 +921,9 @@ export class SessionService {
           ...(booking as any).toObject ? (booking as any).toObject() : booking,
           sessionId: session.id,
           sessionTitle: session.title,
+          sessionPrice: session.price,
+          sessionCurrency: session.currency,
+          sessionDuration: session.duration,
           creatorName: creator?.name || 'Unknown',
           creatorAvatar: creatorAvatar
         });
@@ -933,6 +940,10 @@ export class SessionService {
         id: booking.id,
         sessionId: booking.sessionId,
         sessionTitle: booking.sessionTitle,
+        sessionPrice: booking.sessionPrice,
+        sessionCurrency: booking.sessionCurrency,
+        sessionDuration: booking.sessionDuration,
+        amountPaid: booking.amountPaid ?? booking.sessionPrice, // Include amountPaid or fallback to session price
         creatorName: booking.creatorName,
         creatorAvatar: booking.creatorAvatar,
         userId: booking.userId.toString(),

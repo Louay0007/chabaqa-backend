@@ -414,12 +414,13 @@ export class CoursService {
       // Créer tous les chapitres de cette section
       const chapitresSection = sectionDto.chapitres.map((chapitreDto, chapitreIndex) => {
         console.log(`   📄 Chapitre ${chapitreIndex + 1}: "${chapitreDto.titre}"`);
+        console.log(`      🎬 Video URL received: "${chapitreDto.videoUrl || '(empty)'}"`);
 
         const dureeCalculee = chapitreDto.duree
           ? this.convertirDureeEnMinutes(chapitreDto.duree)
           : (chapitreDto.videoUrl ? 5 : 0); // Default 5 minutes for videos, 0 for text
 
-        return {
+        const chapter = {
           id: new Types.ObjectId().toString(),
           titre: chapitreDto.titre,
           contenu: chapitreDto.description,
@@ -434,6 +435,9 @@ export class CoursService {
           sectionId: '', // Sera défini après
           createdAt: new Date()
         };
+        
+        console.log(`      💾 Stored video URL: "${chapter.videoUrl}"`);
+        return chapter;
       });
 
       // Créer la section avec ses chapitres
@@ -727,6 +731,15 @@ export class CoursService {
           const completedChapters = enrollment.progression?.filter((p: any) => p.isCompleted).length || 0;
           const progress = totalChapters > 0 ? Math.round((completedChapters / totalChapters) * 100) : 0;
 
+          // Unified Tracking Sync: Ensure course progress is in the global system
+          this.trackingService.updateProgress(
+            userId,
+            course._id.toString(),
+            TrackableContentType.COURSE,
+            progress,
+            { completedChapters, totalChapters }
+          ).catch(err => console.error('⚠️ [COURS-SERVICE] Sync failed:', err.message));
+
           return {
             id: course._id.toString(),
             titre: course.titre,
@@ -991,6 +1004,10 @@ export class CoursService {
    */
   private async transformerEnReponse(cours: CoursDocument): Promise<CoursResponseDto> {
     try {
+      console.log('🔄 [TRANSFORM] Starting course transformation');
+      console.log('   📚 Course:', cours.titre);
+      console.log('   📁 Sections:', cours.sections?.length || 0);
+      
       // Récupérer la communauté pour avoir accès au slug (ID ou slug)
       let community: any = null;
       if (cours.communityId) {
@@ -1005,21 +1022,30 @@ export class CoursService {
       const sections = Array.isArray(cours.sections) ? cours.sections : [];
       const tousLesChapitres = sections.flatMap(section => {
         const chapitres = Array.isArray(section.chapitres) ? section.chapitres : [];
-        return chapitres.map(chapitre => ({
-          id: chapitre.id,
-          titre: chapitre.titre,
-          description: chapitre.contenu,
-          videoUrl: this.uploadService.ensureAbsoluteUrl(chapitre.videoUrl),
-          isPaid: !chapitre.isPreview, // Inverse de isPreview
-          ordre: chapitre.ordre,
-          duree: chapitre.duree?.toString(),
-          courseId: section.courseId,
-          sectionId: chapitre.sectionId,
-          prix: chapitre.prix,
-          notes: chapitre.notes,
-          ressources: chapitre.ressources,
-          createdAt: chapitre.createdAt
-        }));
+        return chapitres.map(chapitre => {
+          const originalUrl = chapitre.videoUrl;
+          const transformedUrl = this.uploadService.ensureAbsoluteUrl(chapitre.videoUrl);
+          
+          if (originalUrl) {
+            console.log(`   🎬 Chapter "${chapitre.titre}": ${originalUrl} → ${transformedUrl}`);
+          }
+          
+          return {
+            id: chapitre.id,
+            titre: chapitre.titre,
+            description: chapitre.contenu,
+            videoUrl: transformedUrl,
+            isPaid: !chapitre.isPreview, // Inverse de isPreview
+            ordre: chapitre.ordre,
+            duree: chapitre.duree?.toString(),
+            courseId: section.courseId,
+            sectionId: chapitre.sectionId,
+            prix: chapitre.prix,
+            notes: chapitre.notes,
+            ressources: chapitre.ressources,
+            createdAt: chapitre.createdAt
+          };
+        });
       });
 
       // Safely handle creator data
@@ -1064,30 +1090,39 @@ export class CoursService {
             courseId: section.courseId,
             ordre: section.ordre,
             createdAt: section.createdAt,
-            chapitres: chapitres.map(chapitre => ({
-              id: chapitre.id,
-              titre: chapitre.titre,
-              description: chapitre.contenu,
-              videoUrl: this.uploadService.ensureAbsoluteUrl(chapitre.videoUrl),
-              isPaid: !chapitre.isPreview,
-              isPreview: Boolean(chapitre.isPreview),
-              ordre: chapitre.ordre,
-              duree: chapitre.duree?.toString(),
-              courseId: section.courseId,
-              sectionId: chapitre.sectionId,
-              prix: chapitre.prix,
-              isPaidChapter: chapitre.isPaidChapter || !chapitre.isPreview,
-              notes: chapitre.notes,
-              ressources: Array.isArray(chapitre.ressources) ? chapitre.ressources.map(res => ({
-                id: res.id,
-                titre: res.titre,
-                type: res.type,
-                url: this.uploadService.ensureAbsoluteUrl(res.url),
-                description: res.description,
-                ordre: res.ordre
-              })) : [],
-              createdAt: chapitre.createdAt
-            }))
+            chapitres: chapitres.map(chapitre => {
+              const originalUrl = chapitre.videoUrl;
+              const transformedUrl = this.uploadService.ensureAbsoluteUrl(chapitre.videoUrl);
+              
+              if (originalUrl) {
+                console.log(`   🔄 [TRANSFORM SECTION] Chapter "${chapitre.titre}": ${originalUrl} → ${transformedUrl}`);
+              }
+              
+              return {
+                id: chapitre.id,
+                titre: chapitre.titre,
+                description: chapitre.contenu,
+                videoUrl: transformedUrl,
+                isPaid: !chapitre.isPreview,
+                isPreview: Boolean(chapitre.isPreview),
+                ordre: chapitre.ordre,
+                duree: chapitre.duree?.toString(),
+                courseId: section.courseId,
+                sectionId: chapitre.sectionId,
+                prix: chapitre.prix,
+                isPaidChapter: chapitre.isPaidChapter || !chapitre.isPreview,
+                notes: chapitre.notes,
+                ressources: Array.isArray(chapitre.ressources) ? chapitre.ressources.map(res => ({
+                  id: res.id,
+                  titre: res.titre,
+                  type: res.type,
+                  url: this.uploadService.ensureAbsoluteUrl(res.url),
+                  description: res.description,
+                  ordre: res.ordre
+                })) : [],
+                createdAt: chapitre.createdAt
+              };
+            })
           };
         }),
         category: cours.category,
@@ -1635,6 +1670,41 @@ export class CoursService {
 
       console.error('❌ Erreur lors de la mise à jour de l\'URL vidéo:', error);
       throw new BadRequestException('Erreur lors de la mise à jour de l\'URL vidéo');
+    }
+  }
+
+  /**
+   * Upload video for a chapter directly
+   */
+  async uploadChapterVideo(
+    coursId: string,
+    sectionId: string,
+    chapitreId: string,
+    file: Express.Multer.File,
+    userId: string
+  ): Promise<CoursResponseDto> {
+    console.log('🔧 DEBUG - Début uploadChapterVideo');
+    console.log(`   📋 Cours ID: ${coursId}`);
+    console.log(`   📑 Section ID: ${sectionId}`);
+    console.log(`   📄 Chapitre ID: ${chapitreId}`);
+    console.log(`   👤 User ID: ${userId}`);
+
+    if (!file) {
+      throw new BadRequestException('Aucun fichier fourni');
+    }
+
+    try {
+      // 1. Process upload via UploadService to get URL and validate
+      // This will throw if file is invalid
+      const uploadResult = await this.uploadService.processUploadedFile(file, file.filename, { userId });
+
+      console.log(`   ✅ Video uploaded to: ${uploadResult.url}`);
+
+      // 2. Update the chapter with the new URL
+      return await this.mettreAJourVideoUrl(coursId, sectionId, chapitreId, uploadResult.url, userId);
+    } catch (error) {
+      console.error('❌ Error uploading chapter video:', error);
+      throw error;
     }
   }
 

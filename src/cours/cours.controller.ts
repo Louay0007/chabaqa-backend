@@ -1,5 +1,6 @@
-import { Controller, Get, Post, Param, Body, Query, UseGuards, Req, Patch, Delete, Put } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags, ApiQuery, ApiParam, ApiBody, ApiResponse } from '@nestjs/swagger';
+import { Controller, Get, Post, Param, Body, Query, UseGuards, Req, Patch, Delete, Put, UseInterceptors, UploadedFile } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiTags, ApiQuery, ApiParam, ApiBody, ApiResponse, ApiConsumes } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { CoursService } from './cours.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CreateCoursDto } from '../dto-cours/create-cours.dto';
@@ -557,6 +558,34 @@ export class CoursController {
 	) {
 		const user = req.user as AuthenticatedUser;
 		return await this.coursService.mettreAJourVideoUrl(coursId, sectionId, chapitreId, videoUrl, user._id);
+	}
+
+	@UseGuards(JwtAuthGuard)
+	@ApiBearerAuth('JWT-auth')
+	@Post(':coursId/sections/:sectionId/chapitres/:chapitreId/upload-video')
+	@UseInterceptors(FileInterceptor('file'))
+	@ApiOperation({ summary: 'Upload video for a chapter directly' })
+	@ApiConsumes('multipart/form-data')
+	@ApiBody({
+		schema: {
+			type: 'object',
+			properties: {
+				file: {
+					type: 'string',
+					format: 'binary',
+				},
+			},
+		},
+	})
+	async uploadChapterVideo(
+		@Param('coursId') coursId: string,
+		@Param('sectionId') sectionId: string,
+		@Param('chapitreId') chapitreId: string,
+		@UploadedFile() file: Express.Multer.File,
+		@Req() req
+	) {
+		const user = req.user as AuthenticatedUser;
+		return await this.coursService.uploadChapterVideo(coursId, sectionId, chapitreId, file, user._id);
 	}
 
 	// ============ INSCRIPTION AUX COURS ============

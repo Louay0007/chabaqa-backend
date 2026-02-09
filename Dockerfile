@@ -18,7 +18,22 @@ COPY . .
 RUN NODE_OPTIONS="--max-old-space-size=3072 --max-semi-space-size=128" npm run build
 
 # ================================
-# Stage 2: Production
+# Stage 2: Development
+# ================================
+FROM node:20.19.0-alpine3.20 AS dev
+WORKDIR /app
+# Install dependencies including devDependencies
+COPY package*.json ./
+RUN npm install
+# Copy source code
+COPY . .
+# Expose port
+EXPOSE 3000
+# Start in dev mode
+CMD ["npm", "run", "start:dev"]
+
+# ================================
+# Stage 3: Production
 # ================================
 FROM node:20.19.0-alpine3.20 AS production
 

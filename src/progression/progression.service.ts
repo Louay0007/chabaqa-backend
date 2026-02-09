@@ -124,6 +124,8 @@ export class ProgressionService {
           ? communitiesMap.get(details.communityId)
           : undefined;
 
+      console.log(`[PROGRESSION-SERVICE] Processing item: ${progress.contentId} (${progress.contentType}) - Found details: ${!!details}`);
+
       return this.buildProgressionItem(progress, details, community);
     });
 
@@ -367,7 +369,7 @@ export class ProgressionService {
 
     const docs = await this.courseModel
       .find({ id: { $in: ids } })
-      .select('id titre description thumbnail communityId category niveau prix')
+      .select('id titre description thumbnail communityId category niveau prix sections')
       .lean()
       .exec();
 
@@ -385,6 +387,7 @@ export class ProgressionService {
             level: doc.niveau,
             price: doc.prix,
             type: 'course',
+            totalChapters: doc.sections?.reduce((acc: number, s: any) => acc + (s.chapitres?.length || 0), 0) || 0,
           },
         },
       ]),
@@ -697,7 +700,7 @@ export class ProgressionService {
   }
 
   private buildSummary(items: ProgressionItemDto[]): ProgressionSummaryDto {
-    const summaryByType: Record<string, ProgressionSummaryByTypeDto> = {};
+  const summaryByType: Record<string, ProgressionSummaryByTypeDto> = {};
 
     let completed = 0;
     let inProgress = 0;
@@ -705,7 +708,7 @@ export class ProgressionService {
 
     for (const item of items) {
       if (!summaryByType[item.contentType]) {
-        summaryByType[item.contentType] = { total: 0, completed: 0 };
+        summaryByType[item.contentType] = { total: 0, completed: 0, inProgress: 0 };
       }
 
       summaryByType[item.contentType].total += 1;
@@ -713,6 +716,7 @@ export class ProgressionService {
         summaryByType[item.contentType].completed += 1;
         completed += 1;
       } else if (item.status === 'in_progress') {
+        summaryByType[item.contentType].inProgress = (summaryByType[item.contentType].inProgress || 0) + 1;
         inProgress += 1;
       } else {
         notStarted += 1;
