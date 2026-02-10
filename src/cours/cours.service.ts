@@ -2314,31 +2314,44 @@ export class CoursService {
 
   // ============ TRACKING METHODS ============
 
+  private async resolveCourseTrackingId(coursId: string): Promise<{ trackingId: string; course: any | null }> {
+    let course: any | null = null;
+    if (Types.ObjectId.isValid(coursId)) {
+      course = await this.coursModel.findById(coursId);
+    }
+    if (!course) {
+      course = await this.coursModel.findOne({ id: coursId });
+    }
+    return { trackingId: course?.id ? String(course.id) : String(coursId), course };
+  }
+
   /**
    * Enregistrer une vue d'un cours
    */
-  async trackCoursView(coursId: string, userId: string) {
-    return await this.trackingService.trackView(userId, coursId, TrackableContentType.COURSE);
+  async trackCoursView(coursId: string, userId: string, metadata?: any) {
+    const { trackingId } = await this.resolveCourseTrackingId(coursId);
+    return await this.trackingService.trackView(userId, trackingId, TrackableContentType.COURSE, metadata);
   }
 
   /**
    * Démarrer un cours
    */
-  async trackCoursStart(coursId: string, userId: string) {
-    return await this.trackingService.trackStart(userId, coursId, TrackableContentType.COURSE);
+  async trackCoursStart(coursId: string, userId: string, metadata?: any) {
+    const { trackingId } = await this.resolveCourseTrackingId(coursId);
+    return await this.trackingService.trackStart(userId, trackingId, TrackableContentType.COURSE, metadata);
   }
 
   /**
    * Marquer un cours comme terminé
    */
-  async trackCoursComplete(coursId: string, userId: string) {
-    const result = await this.trackingService.trackComplete(userId, coursId, TrackableContentType.COURSE);
+  async trackCoursComplete(coursId: string, userId: string, metadata?: any) {
+    const { trackingId, course } = await this.resolveCourseTrackingId(coursId);
+    const result = await this.trackingService.trackComplete(userId, trackingId, TrackableContentType.COURSE, metadata);
 
     // Check for achievements after completing a course
     try {
-      const cours = await this.coursModel.findById(coursId);
-      if (cours) {
-        await this.achievementService.checkAchievements(userId, cours.communityId);
+      if (course) {
+        await this.achievementService.checkAchievements(userId, course.communityId);
       }
     } catch (error) {
       console.error('Error checking achievements after course completion:', error);
@@ -2358,22 +2371,22 @@ export class CoursService {
   /**
    * Enregistrer un like sur un cours
    */
-  async trackCoursLike(coursId: string, userId: string) {
-    return await this.trackingService.trackLike(userId, coursId, TrackableContentType.COURSE);
+  async trackCoursLike(coursId: string, userId: string, metadata: Record<string, any> = {}) {
+    return await this.trackingService.trackLike(userId, coursId, TrackableContentType.COURSE, metadata);
   }
 
   /**
    * Enregistrer un partage d'un cours
    */
-  async trackCoursShare(coursId: string, userId: string) {
-    return await this.trackingService.trackShare(userId, coursId, TrackableContentType.COURSE);
+  async trackCoursShare(coursId: string, userId: string, metadata: Record<string, any> = {}) {
+    return await this.trackingService.trackShare(userId, coursId, TrackableContentType.COURSE, metadata);
   }
 
   /**
    * Enregistrer un téléchargement d'un cours
    */
-  async trackCoursDownload(coursId: string, userId: string) {
-    return await this.trackingService.trackDownload(userId, coursId, TrackableContentType.COURSE);
+  async trackCoursDownload(coursId: string, userId: string, metadata: Record<string, any> = {}) {
+    return await this.trackingService.trackDownload(userId, coursId, TrackableContentType.COURSE, metadata);
   }
 
   /**

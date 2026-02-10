@@ -11,7 +11,7 @@ import {
   HttpCode, 
   HttpStatus 
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags, ApiQuery, ApiParam } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags, ApiQuery, ApiParam, ApiBody } from '@nestjs/swagger';
 import { ContentTrackingService } from '../services/content-tracking.service';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { TrackableContentType, TrackingActionType } from '../../schema/content-tracking.schema';
@@ -36,13 +36,18 @@ export class TrackingController {
   @ApiOperation({ summary: 'Track content view' })
   @ApiParam({ name: 'contentType', enum: TrackableContentType })
   @ApiParam({ name: 'contentId', description: 'Content ID' })
+  @ApiBody({ schema: { type: 'object', properties: { metadata: { type: 'object' } } } })
   async trackView(
     @Param('contentType') contentType: TrackableContentType,
     @Param('contentId') contentId: string,
-    @Req() req
+    @Req() req,
+    @Body('metadata') metadata?: any,
   ) {
     const user = req.user as AuthenticatedUser;
-    return await this.trackingService.trackView(user._id, contentId, contentType);
+    const userAgent = req.headers?.['user-agent'];
+    const enriched = { ...(metadata || {}) };
+    if (typeof userAgent === 'string' && !enriched.userAgent) enriched.userAgent = userAgent;
+    return await this.trackingService.trackView(user._id, contentId, contentType, enriched);
   }
 
   /**
@@ -53,13 +58,18 @@ export class TrackingController {
   @ApiOperation({ summary: 'Track content start' })
   @ApiParam({ name: 'contentType', enum: TrackableContentType })
   @ApiParam({ name: 'contentId', description: 'Content ID' })
+  @ApiBody({ schema: { type: 'object', properties: { metadata: { type: 'object' } } } })
   async trackStart(
     @Param('contentType') contentType: TrackableContentType,
     @Param('contentId') contentId: string,
-    @Req() req
+    @Req() req,
+    @Body('metadata') metadata?: any,
   ) {
     const user = req.user as AuthenticatedUser;
-    return await this.trackingService.trackStart(user._id, contentId, contentType);
+    const userAgent = req.headers?.['user-agent'];
+    const enriched = { ...(metadata || {}) };
+    if (typeof userAgent === 'string' && !enriched.userAgent) enriched.userAgent = userAgent;
+    return await this.trackingService.trackStart(user._id, contentId, contentType, enriched);
   }
 
   /**
@@ -70,13 +80,18 @@ export class TrackingController {
   @ApiOperation({ summary: 'Track content completion' })
   @ApiParam({ name: 'contentType', enum: TrackableContentType })
   @ApiParam({ name: 'contentId', description: 'Content ID' })
+  @ApiBody({ schema: { type: 'object', properties: { metadata: { type: 'object' } } } })
   async trackComplete(
     @Param('contentType') contentType: TrackableContentType,
     @Param('contentId') contentId: string,
-    @Req() req
+    @Req() req,
+    @Body('metadata') metadata?: any,
   ) {
     const user = req.user as AuthenticatedUser;
-    return await this.trackingService.trackComplete(user._id, contentId, contentType);
+    const userAgent = req.headers?.['user-agent'];
+    const enriched = { ...(metadata || {}) };
+    if (typeof userAgent === 'string' && !enriched.userAgent) enriched.userAgent = userAgent;
+    return await this.trackingService.trackComplete(user._id, contentId, contentType, enriched);
   }
 
   /**
@@ -105,13 +120,18 @@ export class TrackingController {
   @ApiOperation({ summary: 'Track content like' })
   @ApiParam({ name: 'contentType', enum: TrackableContentType })
   @ApiParam({ name: 'contentId', description: 'Content ID' })
+  @ApiBody({ schema: { type: 'object', properties: { metadata: { type: 'object' } } } })
   async trackLike(
     @Param('contentType') contentType: TrackableContentType,
     @Param('contentId') contentId: string,
-    @Req() req
+    @Req() req,
+    @Body('metadata') metadata?: any,
   ) {
     const user = req.user as AuthenticatedUser;
-    return await this.trackingService.trackLike(user._id, contentId, contentType);
+    const userAgent = req.headers?.['user-agent'];
+    const enriched = { ...(metadata || {}) };
+    if (typeof userAgent === 'string' && !enriched.userAgent) enriched.userAgent = userAgent;
+    return await this.trackingService.trackLike(user._id, contentId, contentType, enriched);
   }
 
   /**
@@ -122,13 +142,18 @@ export class TrackingController {
   @ApiOperation({ summary: 'Track content share' })
   @ApiParam({ name: 'contentType', enum: TrackableContentType })
   @ApiParam({ name: 'contentId', description: 'Content ID' })
+  @ApiBody({ schema: { type: 'object', properties: { metadata: { type: 'object' } } } })
   async trackShare(
     @Param('contentType') contentType: TrackableContentType,
     @Param('contentId') contentId: string,
-    @Req() req
+    @Req() req,
+    @Body('metadata') metadata?: any,
   ) {
     const user = req.user as AuthenticatedUser;
-    return await this.trackingService.trackShare(user._id, contentId, contentType);
+    const userAgent = req.headers?.['user-agent'];
+    const enriched = { ...(metadata || {}) };
+    if (typeof userAgent === 'string' && !enriched.userAgent) enriched.userAgent = userAgent;
+    return await this.trackingService.trackShare(user._id, contentId, contentType, enriched);
   }
 
   /**
@@ -139,13 +164,18 @@ export class TrackingController {
   @ApiOperation({ summary: 'Track content download' })
   @ApiParam({ name: 'contentType', enum: TrackableContentType })
   @ApiParam({ name: 'contentId', description: 'Content ID' })
+  @ApiBody({ schema: { type: 'object', properties: { metadata: { type: 'object' } } } })
   async trackDownload(
     @Param('contentType') contentType: TrackableContentType,
     @Param('contentId') contentId: string,
-    @Req() req
+    @Req() req,
+    @Body('metadata') metadata?: any,
   ) {
     const user = req.user as AuthenticatedUser;
-    return await this.trackingService.trackDownload(user._id, contentId, contentType);
+    const userAgent = req.headers?.['user-agent'];
+    const enriched = { ...(metadata || {}) };
+    if (typeof userAgent === 'string' && !enriched.userAgent) enriched.userAgent = userAgent;
+    return await this.trackingService.trackDownload(user._id, contentId, contentType, enriched);
   }
 
   /**

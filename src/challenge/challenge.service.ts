@@ -1868,33 +1868,36 @@ export class ChallengeService {
   /**
    * Enregistrer une vue d'un défi
    */
-  async trackChallengeView(challengeId: string, userId: string) {
+  async trackChallengeView(challengeId: string, userId: string, metadata: Record<string, any> = {}) {
     return await this.trackingService.trackView(
       userId,
       challengeId,
       TrackableContentType.CHALLENGE,
+      metadata,
     );
   }
 
   /**
    * Démarrer un défi
    */
-  async trackChallengeStart(challengeId: string, userId: string) {
+  async trackChallengeStart(challengeId: string, userId: string, metadata: Record<string, any> = {}) {
     return await this.trackingService.trackStart(
       userId,
       challengeId,
       TrackableContentType.CHALLENGE,
+      metadata,
     );
   }
 
   /**
    * Marquer un défi comme terminé
    */
-  async trackChallengeComplete(challengeId: string, userId: string) {
+  async trackChallengeComplete(challengeId: string, userId: string, metadata: Record<string, any> = {}) {
     return await this.trackingService.trackComplete(
       userId,
       challengeId,
       TrackableContentType.CHALLENGE,
+      metadata,
     );
   }
 
@@ -1917,22 +1920,24 @@ export class ChallengeService {
   /**
    * Enregistrer un like sur un défi
    */
-  async trackChallengeLike(challengeId: string, userId: string) {
+  async trackChallengeLike(challengeId: string, userId: string, metadata: Record<string, any> = {}) {
     return await this.trackingService.trackLike(
       userId,
       challengeId,
       TrackableContentType.CHALLENGE,
+      metadata,
     );
   }
 
   /**
    * Enregistrer un partage d'un défi
    */
-  async trackChallengeShare(challengeId: string, userId: string) {
+  async trackChallengeShare(challengeId: string, userId: string, metadata: Record<string, any> = {}) {
     return await this.trackingService.trackShare(
       userId,
       challengeId,
       TrackableContentType.CHALLENGE,
+      metadata,
     );
   }
 

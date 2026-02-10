@@ -11,7 +11,7 @@ export class AiController {
   async askQuestion(
     @Param('courseId') courseId: string,
     @Param('chapterId') chapterId: string,
-    @Body('question') body: { question: string },
+    @Body() body: { question: string },
   ) {
     return this.aiService.askChapterQuestion(courseId, chapterId, body.question);
   }

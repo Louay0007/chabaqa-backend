@@ -7,6 +7,7 @@ import { Community, CommunityDocument } from '../../../schema/community.schema';
 import { Order, OrderDocument } from '../../../schema/order.schema';
 import { Subscription, SubscriptionDocument } from '../../../schema/subscription.schema';
 import { Cours, CoursDocument } from '../../../schema/course.schema';
+import { Ga4ReportingService } from '../../../ga4/ga4-reporting.service';
 
 export interface TimePeriod {
   startDate: Date;
@@ -97,6 +98,7 @@ export class AnalyticsService {
     @InjectModel(Subscription.name) private subscriptionModel: Model<SubscriptionDocument>,
     @InjectModel(Cours.name) private courseModel: Model<CoursDocument>,
     @InjectConnection() private connection: Connection,
+    private readonly ga4ReportingService: Ga4ReportingService,
   ) {}
   
   /**
@@ -196,41 +198,65 @@ export class AnalyticsService {
   /**
    * Get engagement metrics with optional filtering
    * @param filters - Engagement filters
+   * @param period  - Optional explicit time period; defaults to last 30 days
    */
-  async getEngagementMetrics(filters: EngagementFilters = {}): Promise<EngagementMetrics> {
-    // Since we don't have a dedicated "Session" or "PageView" collection yet,
-    // we will infer engagement from related activities (Community joins, Orders, Course progress)
-    // This is an estimation strategy until dedicated analytics collection is implemented.
+  async getEngagementMetrics(
+    filters: EngagementFilters = {},
+    period?: TimePeriod,
+  ): Promise<EngagementMetrics> {
+    const startDate = period?.startDate ?? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const endDate = period?.endDate ?? new Date();
 
-    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-
-    // Community Participation: Number of users in communities
-    // Approximated by total communities * avg members (or simple count if schema supports)
-    // Here we count total communities as a proxy for engagement hubs
+    // Community Participation: Number of communities (exact)
     const totalCommunities = await this.communityModel.countDocuments();
-    
-    // Content Interactions: Proxied by Orders (purchases) + New Courses
+
+    // Content Interactions: proxied by Orders (purchases) + total courses
     const recentOrders = await this.orderModel.countDocuments({
-      createdAt: { $gte: thirtyDaysAgo }
+      createdAt: { $gte: startDate, $lte: endDate },
     });
     const totalCourses = await this.courseModel.countDocuments();
 
-    // Estimation Logic
-    // Fix: Ensure we use the real numbers without multipliers for the main dashboard display
-    // Note: totalSessions is an estimated metric, but totalCommunities should be exact.
-    const totalSessions = recentOrders * 5 + totalCommunities * 10 + 100; // Base baseline
-    const pageViews = totalSessions * 4;
-    
+    // Try to source core engagement metrics from GA4
+    let totalSessions = 0;
+    let pageViews = 0;
+    let averageSessionDuration = 0;
+    let bounceRate = 0;
+
+    try {
+      const ga4Summary = await this.ga4ReportingService.getEngagementSummary(
+        startDate.toISOString().slice(0, 10),
+        endDate.toISOString().slice(0, 10),
+      );
+
+      if (ga4Summary) {
+        totalSessions = ga4Summary.totalSessions;
+        pageViews = ga4Summary.pageViews;
+        averageSessionDuration = ga4Summary.averageSessionDuration;
+        bounceRate = ga4Summary.bounceRate; // already 0-1
+      }
+    } catch {
+      // If GA4 is misconfigured or fails, we fall back to the previous estimation logic below.
+    }
+
+    // Fallback or complement if GA4 not available
+    if (totalSessions === 0 || pageViews === 0) {
+      const estimatedSessions = recentOrders * 5 + totalCommunities * 10 + 100;
+      totalSessions = totalSessions || estimatedSessions;
+      pageViews = pageViews || estimatedSessions * 4;
+      averageSessionDuration = averageSessionDuration || 450; // 7.5 mins
+      bounceRate = bounceRate || 0.455; // 45.5%
+    }
+
     return {
       totalSessions,
-      averageSessionDuration: 450, // Hardcoded estimate (7.5 mins)
+      averageSessionDuration,
       pageViews,
-      bounceRate: 45.5, // Hardcoded estimate
+      bounceRate,
       contentInteractions: recentOrders + totalCourses,
-      communityParticipation: totalCommunities, // This returns the exact count
+      communityParticipation: totalCommunities,
       period: {
-        startDate: thirtyDaysAgo,
-        endDate: new Date(),
+        startDate,
+        endDate,
       },
     };
   }
@@ -356,7 +382,7 @@ export class AnalyticsService {
   }> {
     const [userGrowth, engagement, revenue, health] = await Promise.all([
       this.calculateUserGrowth(period),
-      this.getEngagementMetrics(),
+      this.getEngagementMetrics({}, period),
       this.getRevenueAnalytics(period),
       this.getPlatformHealth(),
     ]);

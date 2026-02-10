@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { CoursService } from '../cours/cours.service';
 import OpenAI from 'openai';
@@ -79,11 +79,15 @@ export class AiService {
     `;
 
     // 3. Call OpenRouter
-    const model = this.configService.get<string>('AI_MODEL') || 'google/gemini-2.0-flash-lite-preview-02-05:free';
+    // Prefer env override, but fall back to a known good free model on OpenRouter.
+    // Using Gemini 1.5 Flash (free tier) for better reliability and lower cost.
+    const model =
+      this.configService.get<string>('AI_MODEL') ||
+      'google/gemini-2.0-flash-001';
     
     try {
       const completion = await this.openai.chat.completions.create({
-        model: model,
+        model,
         messages: [
           {
             role: 'system',
@@ -93,19 +97,21 @@ export class AiService {
             Be concise and encouraging.
             
             Context:
-            ${context}`
+            ${context}`,
           },
-          { role: 'user', content: question }
+          { role: 'user', content: question },
         ],
       });
 
+      const answer = completion.choices[0]?.message?.content ?? '';
+
       return {
-        answer: completion.choices[0].message.content,
-        chapterId: chapterId
+        answer,
+        chapterId,
       };
     } catch (error) {
       console.error('AI Service Error:', error);
-      throw new Error('Failed to generate response from AI');
+      throw new InternalServerErrorException('Failed to generate response from AI');
     }
   }
 }

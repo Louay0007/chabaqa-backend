@@ -641,12 +641,16 @@ export class CoursController {
 		description: 'Enregistre qu\'un utilisateur a visualisé un cours. Incrémente le compteur de vues.'
 	})
 	@ApiParam({ name: 'id', description: 'ID du cours', type: 'string' })
+	@ApiBody({ schema: { type: 'object', properties: { metadata: { type: 'object' } } } })
 	@ApiResponse({ status: 200, description: 'Vue enregistrée avec succès' })
 	@ApiResponse({ status: 401, description: 'Non autorisé' })
 	@ApiResponse({ status: 404, description: 'Cours non trouvé' })
-	async trackView(@Param('id') id: string, @Req() req) {
+	async trackView(@Param('id') id: string, @Req() req, @Body('metadata') metadata?: any) {
 		const user = req.user as AuthenticatedUser;
-		return await this.coursService.trackCoursView(id, user._id);
+		const userAgent = req.headers?.['user-agent'];
+		const enriched = { ...(metadata || {}) };
+		if (typeof userAgent === 'string' && !enriched.userAgent) enriched.userAgent = userAgent;
+		return await this.coursService.trackCoursView(id, user._id, enriched);
 	}
 
 	@UseGuards(JwtAuthGuard)
@@ -657,12 +661,16 @@ export class CoursController {
 		description: 'Marque le début de la consommation d\'un cours par un utilisateur. Enregistre l\'heure de début.'
 	})
 	@ApiParam({ name: 'id', description: 'ID du cours', type: 'string' })
+	@ApiBody({ schema: { type: 'object', properties: { metadata: { type: 'object' } } } })
 	@ApiResponse({ status: 200, description: 'Démarrage enregistré avec succès' })
 	@ApiResponse({ status: 401, description: 'Non autorisé' })
 	@ApiResponse({ status: 404, description: 'Cours non trouvé' })
-	async trackStart(@Param('id') id: string, @Req() req) {
+	async trackStart(@Param('id') id: string, @Req() req, @Body('metadata') metadata?: any) {
 		const user = req.user as AuthenticatedUser;
-		return await this.coursService.trackCoursStart(id, user._id);
+		const userAgent = req.headers?.['user-agent'];
+		const enriched = { ...(metadata || {}) };
+		if (typeof userAgent === 'string' && !enriched.userAgent) enriched.userAgent = userAgent;
+		return await this.coursService.trackCoursStart(id, user._id, enriched);
 	}
 
 	@UseGuards(JwtAuthGuard)
@@ -673,12 +681,16 @@ export class CoursController {
 		description: 'Marque la fin de la consommation d\'un cours par un utilisateur. Enregistre l\'heure de fin et calcule la progression.'
 	})
 	@ApiParam({ name: 'id', description: 'ID du cours', type: 'string' })
+	@ApiBody({ schema: { type: 'object', properties: { metadata: { type: 'object' } } } })
 	@ApiResponse({ status: 200, description: 'Completion enregistrée avec succès' })
 	@ApiResponse({ status: 401, description: 'Non autorisé' })
 	@ApiResponse({ status: 404, description: 'Cours non trouvé' })
-	async trackComplete(@Param('id') id: string, @Req() req) {
+	async trackComplete(@Param('id') id: string, @Req() req, @Body('metadata') metadata?: any) {
 		const user = req.user as AuthenticatedUser;
-		return await this.coursService.trackCoursComplete(id, user._id);
+		const userAgent = req.headers?.['user-agent'];
+		const enriched = { ...(metadata || {}) };
+		if (typeof userAgent === 'string' && !enriched.userAgent) enriched.userAgent = userAgent;
+		return await this.coursService.trackCoursComplete(id, user._id, enriched);
 	}
 
 	@UseGuards(JwtAuthGuard)
@@ -717,9 +729,13 @@ export class CoursController {
 	@ApiResponse({ status: 200, description: 'Like enregistré avec succès' })
 	@ApiResponse({ status: 401, description: 'Non autorisé' })
 	@ApiResponse({ status: 404, description: 'Cours non trouvé' })
-	async trackLike(@Param('id') id: string, @Req() req) {
+	@ApiBody({ schema: { type: 'object', properties: { metadata: { type: 'object' } } } })
+	async trackLike(@Param('id') id: string, @Req() req, @Body('metadata') metadata?: any) {
 		const user = req.user as AuthenticatedUser;
-		return await this.coursService.trackCoursLike(id, user._id);
+		const userAgent = req.headers?.['user-agent'];
+		const enriched = { ...(metadata || {}) };
+		if (typeof userAgent === 'string' && !enriched.userAgent) enriched.userAgent = userAgent;
+		return await this.coursService.trackCoursLike(id, user._id, enriched);
 	}
 
 	@UseGuards(JwtAuthGuard)
@@ -733,9 +749,13 @@ export class CoursController {
 	@ApiResponse({ status: 200, description: 'Partage enregistré avec succès' })
 	@ApiResponse({ status: 401, description: 'Non autorisé' })
 	@ApiResponse({ status: 404, description: 'Cours non trouvé' })
-	async trackShare(@Param('id') id: string, @Req() req) {
+	@ApiBody({ schema: { type: 'object', properties: { metadata: { type: 'object' } } } })
+	async trackShare(@Param('id') id: string, @Req() req, @Body('metadata') metadata?: any) {
 		const user = req.user as AuthenticatedUser;
-		return await this.coursService.trackCoursShare(id, user._id);
+		const userAgent = req.headers?.['user-agent'];
+		const enriched = { ...(metadata || {}) };
+		if (typeof userAgent === 'string' && !enriched.userAgent) enriched.userAgent = userAgent;
+		return await this.coursService.trackCoursShare(id, user._id, enriched);
 	}
 
 	@UseGuards(JwtAuthGuard)
@@ -749,9 +769,13 @@ export class CoursController {
 	@ApiResponse({ status: 200, description: 'Téléchargement enregistré avec succès' })
 	@ApiResponse({ status: 401, description: 'Non autorisé' })
 	@ApiResponse({ status: 404, description: 'Cours non trouvé' })
-	async trackDownload(@Param('id') id: string, @Req() req) {
+	@ApiBody({ schema: { type: 'object', properties: { metadata: { type: 'object' } } } })
+	async trackDownload(@Param('id') id: string, @Req() req, @Body('metadata') metadata?: any) {
 		const user = req.user as AuthenticatedUser;
-		return await this.coursService.trackCoursDownload(id, user._id);
+		const userAgent = req.headers?.['user-agent'];
+		const enriched = { ...(metadata || {}) };
+		if (typeof userAgent === 'string' && !enriched.userAgent) enriched.userAgent = userAgent;
+		return await this.coursService.trackCoursDownload(id, user._id, enriched);
 	}
 
 	@UseGuards(JwtAuthGuard)

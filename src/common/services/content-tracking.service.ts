@@ -13,6 +13,13 @@ import {
   TrackableContentType,
   TrackingActionType,
 } from '../../schema/content-tracking.schema';
+import { Cours, CoursDocument } from '../../schema/course.schema';
+import { Challenge, ChallengeDocument } from '../../schema/challenge.schema';
+import { Session, SessionDocument } from '../../schema/session.schema';
+import { Event, EventDocument } from '../../schema/event.schema';
+import { Product, ProductDocument } from '../../schema/product.schema';
+import { Post, PostDocument } from '../../schema/post.schema';
+import { Ga4Service } from '../../ga4/ga4.service';
 
 @Injectable()
 export class ContentTrackingService {
@@ -21,7 +28,120 @@ export class ContentTrackingService {
     private contentProgressModel: Model<ContentProgressDocument>,
     @InjectModel('TrackingAction')
     private trackingActionModel: Model<TrackingActionDocument>,
+    @InjectModel(Cours.name) private courseModel: Model<CoursDocument>,
+    @InjectModel(Challenge.name) private challengeModel: Model<ChallengeDocument>,
+    @InjectModel(Session.name) private sessionModel: Model<SessionDocument>,
+    @InjectModel(Event.name) private eventModel: Model<EventDocument>,
+    @InjectModel(Product.name) private productModel: Model<ProductDocument>,
+    @InjectModel(Post.name) private postModel: Model<PostDocument>,
+    private readonly ga4Service: Ga4Service,
   ) {}
+
+  private normalizeMetadata(metadata: Record<string, any> = {}): Record<string, any> {
+    if (!metadata || typeof metadata !== 'object') return {};
+
+    const normalized: Record<string, any> = { ...metadata };
+
+    const userAgent: string | undefined =
+      typeof normalized.userAgent === 'string'
+        ? normalized.userAgent
+        : typeof normalized.ua === 'string'
+          ? normalized.ua
+          : undefined;
+
+    if (userAgent && typeof normalized.userAgent !== 'string') {
+      normalized.userAgent = userAgent;
+    }
+
+    const ua = userAgent?.toLowerCase() || '';
+
+    if (!normalized.device || typeof normalized.device !== 'string') {
+      let device = 'desktop';
+      const isTablet =
+        ua.includes('tablet') ||
+        ua.includes('ipad') ||
+        ua.includes('playbook') ||
+        ua.includes('silk') ||
+        (ua.includes('android') && !ua.includes('mobile'));
+      const isMobile =
+        ua.includes('mobi') ||
+        ua.includes('iphone') ||
+        ua.includes('ipod') ||
+        ua.includes('iemobile') ||
+        ua.includes('blackberry') ||
+        ua.includes('kindle') ||
+        ua.includes('opera mini') ||
+        ua.includes('windows phone') ||
+        ua.includes('android');
+
+      if (isTablet) device = 'tablet';
+      else if (isMobile) device = 'mobile';
+
+      normalized.device = device;
+    }
+
+    if ((!normalized.os || typeof normalized.os !== 'string') && ua) {
+      let os = 'unknown';
+      if (ua.includes('windows')) os = 'Windows';
+      else if (ua.includes('android')) os = 'Android';
+      else if (ua.includes('iphone') || ua.includes('ipad') || ua.includes('ipod') || ua.includes('like mac os x')) os = 'iOS';
+      else if (ua.includes('mac os x') || ua.includes('macintosh')) os = 'MacOS';
+      else if (ua.includes('linux')) os = 'Linux';
+      normalized.os = os;
+    }
+
+    if ((!normalized.browser || typeof normalized.browser !== 'string') && ua) {
+      let browser = 'unknown';
+      if (ua.includes('firefox') || ua.includes('fxios')) browser = 'Firefox';
+      else if (ua.includes('samsungbrowser')) browser = 'Samsung Browser';
+      else if (ua.includes('opr/') || ua.includes('opera')) browser = 'Opera';
+      else if (ua.includes('edg/')) browser = 'Edge';
+      else if (ua.includes('chrome') || ua.includes('crios')) browser = 'Chrome';
+      else if (ua.includes('safari')) browser = 'Safari';
+      normalized.browser = browser;
+    }
+
+    return normalized;
+  }
+
+  private async getContentContext(contentId: string, contentType: TrackableContentType): Promise<{ creatorId?: string, communityId?: string }> {
+    try {
+      let doc: any = null;
+      switch (contentType) {
+        case TrackableContentType.COURSE:
+          doc = await this.courseModel.findById(contentId).select('creatorId communityId').lean();
+          break;
+        case TrackableContentType.CHALLENGE:
+          doc = await this.challengeModel.findById(contentId).select('creatorId communityId').lean();
+          break;
+        case TrackableContentType.SESSION:
+          doc = await this.sessionModel.findById(contentId).select('creatorId communityId').lean();
+          break;
+        case TrackableContentType.EVENT:
+          doc = await this.eventModel.findById(contentId).select('creatorId communityId').lean();
+          break;
+        case TrackableContentType.PRODUCT:
+          doc = await this.productModel.findById(contentId).select('creatorId communityId').lean();
+          break;
+        case TrackableContentType.POST:
+          doc = await this.postModel.findById(contentId).select('authorId communityId').lean();
+          if (doc) {
+             return { creatorId: doc.authorId?.toString(), communityId: doc.communityId?.toString() };
+          }
+          break;
+      }
+
+      if (doc) {
+        return { 
+          creatorId: doc.creatorId?.toString(), 
+          communityId: doc.communityId?.toString() 
+        };
+      }
+    } catch (err) {
+      console.warn(`[ContentTracking] Failed to load context for ${contentType} ${contentId}`, err);
+    }
+    return {};
+  }
 
   /**
    * Obtenir ou créer un suivi de progression pour un contenu
@@ -69,17 +189,53 @@ export class ContentTrackingService {
     actionType: TrackingActionType,
     metadata: Record<string, any> = {},
   ): Promise<TrackingActionDocument> {
+    const normalizedMetadata = this.normalizeMetadata(metadata);
     const action = new this.trackingActionModel({
       id: new Types.ObjectId().toString(),
       userId: new Types.ObjectId(userId),
       contentId,
       contentType,
       actionType,
-      metadata,
+      metadata: normalizedMetadata,
       timestamp: new Date(),
     });
 
-    return await action.save();
+    const saved = await action.save();
+
+    // Mirror to GA4 according to the unified event schema
+    const context = await this.getContentContext(contentId, contentType);
+    
+    const baseParams = {
+      content_type: contentType,
+      content_id: contentId,
+      action_type: actionType,
+      creator_id: context.creatorId,
+      community_id: context.communityId,
+      ...normalizedMetadata,
+    };
+
+    // Map TrackingActionType to GA4 event names
+    let ga4EventName: string | null = null;
+    if (actionType === TrackingActionType.VIEW) ga4EventName = 'content_view';
+    else if (actionType === TrackingActionType.START) ga4EventName = 'content_start';
+    else if (actionType === TrackingActionType.COMPLETE) ga4EventName = 'content_complete';
+    else if (actionType === TrackingActionType.LIKE) ga4EventName = 'content_like';
+    else if (actionType === TrackingActionType.SHARE) ga4EventName = 'content_share';
+    else if (actionType === TrackingActionType.DOWNLOAD) ga4EventName = 'content_download';
+    else if (actionType === TrackingActionType.BOOKMARK) ga4EventName = 'content_bookmark';
+    else if (actionType === TrackingActionType.COMMENT) ga4EventName = 'content_comment';
+    else if (actionType === TrackingActionType.RATE) ga4EventName = 'content_rate';
+
+    if (ga4EventName) {
+      void this.ga4Service.sendEvent({
+        userId,
+        clientId: undefined,
+        name: ga4EventName,
+        params: baseParams,
+      });
+    }
+
+    return saved;
   }
 
   /**
@@ -89,6 +245,7 @@ export class ContentTrackingService {
     userId: string,
     contentId: string,
     contentType: TrackableContentType,
+    metadata: Record<string, any> = {},
   ): Promise<ContentProgressDocument> {
     const progress = await this.getOrCreateProgress(
       userId,
@@ -104,6 +261,7 @@ export class ContentTrackingService {
       contentId,
       contentType,
       TrackingActionType.VIEW,
+      metadata
     );
 
     return progress;
@@ -116,6 +274,7 @@ export class ContentTrackingService {
     userId: string,
     contentId: string,
     contentType: TrackableContentType,
+    metadata: Record<string, any> = {},
   ): Promise<ContentProgressDocument> {
     const progress = await this.getOrCreateProgress(
       userId,
@@ -133,6 +292,7 @@ export class ContentTrackingService {
       contentId,
       contentType,
       TrackingActionType.START,
+      metadata
     );
 
     return progress;
@@ -145,6 +305,7 @@ export class ContentTrackingService {
     userId: string,
     contentId: string,
     contentType: TrackableContentType,
+    metadata: Record<string, any> = {},
   ): Promise<ContentProgressDocument> {
     const progress = await this.getOrCreateProgress(
       userId,
@@ -160,6 +321,7 @@ export class ContentTrackingService {
       contentId,
       contentType,
       TrackingActionType.COMPLETE,
+      metadata
     );
 
     return progress;
@@ -244,6 +406,7 @@ export class ContentTrackingService {
     userId: string,
     contentId: string,
     contentType: TrackableContentType,
+    metadata: Record<string, any> = {},
   ): Promise<ContentProgressDocument> {
     const progress = await this.getOrCreateProgress(
       userId,
@@ -259,6 +422,7 @@ export class ContentTrackingService {
       contentId,
       contentType,
       TrackingActionType.LIKE,
+      metadata,
     );
 
     return progress;
@@ -271,6 +435,7 @@ export class ContentTrackingService {
     userId: string,
     contentId: string,
     contentType: TrackableContentType,
+    metadata: Record<string, any> = {},
   ): Promise<ContentProgressDocument> {
     const progress = await this.getOrCreateProgress(
       userId,
@@ -286,6 +451,7 @@ export class ContentTrackingService {
       contentId,
       contentType,
       TrackingActionType.SHARE,
+      metadata,
     );
 
     return progress;
@@ -298,6 +464,7 @@ export class ContentTrackingService {
     userId: string,
     contentId: string,
     contentType: TrackableContentType,
+    metadata: Record<string, any> = {},
   ): Promise<ContentProgressDocument> {
     const progress = await this.getOrCreateProgress(
       userId,
@@ -313,6 +480,7 @@ export class ContentTrackingService {
       contentId,
       contentType,
       TrackingActionType.DOWNLOAD,
+      metadata,
     );
 
     return progress;

@@ -490,9 +490,13 @@ export class ChallengeController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Enregistrer une vue d\'un défi' })
   @ApiResponse({ status: 200, description: 'Vue enregistrée avec succès' })
-  async trackView(@Param('id') id: string, @Request() req: any) {
+  @ApiBody({ schema: { type: 'object', properties: { metadata: { type: 'object' } } } })
+  async trackView(@Param('id') id: string, @Request() req: any, @Body('metadata') metadata?: any) {
     const userId = req.user._id || req.user.userId;
-    return this.challengeService.trackChallengeView(id, userId);
+    const userAgent = req.headers?.['user-agent'];
+    const enriched = { ...(metadata || {}) };
+    if (typeof userAgent === 'string' && !enriched.userAgent) enriched.userAgent = userAgent;
+    return this.challengeService.trackChallengeView(id, userId, enriched);
   }
 
   @Post(':id/track/start')
@@ -501,9 +505,13 @@ export class ChallengeController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Démarrer un défi' })
   @ApiResponse({ status: 200, description: 'Défi démarré avec succès' })
-  async trackStart(@Param('id') id: string, @Request() req: any) {
+  @ApiBody({ schema: { type: 'object', properties: { metadata: { type: 'object' } } } })
+  async trackStart(@Param('id') id: string, @Request() req: any, @Body('metadata') metadata?: any) {
     const userId = req.user._id || req.user.userId;
-    return this.challengeService.trackChallengeStart(id, userId);
+    const userAgent = req.headers?.['user-agent'];
+    const enriched = { ...(metadata || {}) };
+    if (typeof userAgent === 'string' && !enriched.userAgent) enriched.userAgent = userAgent;
+    return this.challengeService.trackChallengeStart(id, userId, enriched);
   }
 
   @Post(':id/track/complete')
@@ -512,9 +520,13 @@ export class ChallengeController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Marquer un défi comme terminé' })
   @ApiResponse({ status: 200, description: 'Défi marqué comme terminé' })
-  async trackComplete(@Param('id') id: string, @Request() req: any) {
+  @ApiBody({ schema: { type: 'object', properties: { metadata: { type: 'object' } } } })
+  async trackComplete(@Param('id') id: string, @Request() req: any, @Body('metadata') metadata?: any) {
     const userId = req.user._id || req.user.userId;
-    return this.challengeService.trackChallengeComplete(id, userId);
+    const userAgent = req.headers?.['user-agent'];
+    const enriched = { ...(metadata || {}) };
+    if (typeof userAgent === 'string' && !enriched.userAgent) enriched.userAgent = userAgent;
+    return this.challengeService.trackChallengeComplete(id, userId, enriched);
   }
 
   @Post(':id/track/like')
@@ -523,9 +535,13 @@ export class ChallengeController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Enregistrer un like sur un défi' })
   @ApiResponse({ status: 200, description: 'Like enregistré avec succès' })
-  async trackLike(@Param('id') id: string, @Request() req: any) {
+  @ApiBody({ schema: { type: 'object', properties: { metadata: { type: 'object' } } } })
+  async trackLike(@Param('id') id: string, @Request() req: any, @Body('metadata') metadata?: any) {
     const userId = req.user._id || req.user.userId;
-    return this.challengeService.trackChallengeLike(id, userId);
+    const userAgent = req.headers?.['user-agent'];
+    const enriched = { ...(metadata || {}) };
+    if (typeof userAgent === 'string' && !enriched.userAgent) enriched.userAgent = userAgent;
+    return this.challengeService.trackChallengeLike(id, userId, enriched);
   }
 
   @Post(':id/track/share')
@@ -534,9 +550,13 @@ export class ChallengeController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Enregistrer un partage d\'un défi' })
   @ApiResponse({ status: 200, description: 'Partage enregistré avec succès' })
-  async trackShare(@Param('id') id: string, @Request() req: any) {
+  @ApiBody({ schema: { type: 'object', properties: { metadata: { type: 'object' } } } })
+  async trackShare(@Param('id') id: string, @Request() req: any, @Body('metadata') metadata?: any) {
     const userId = req.user._id || req.user.userId;
-    return this.challengeService.trackChallengeShare(id, userId);
+    const userAgent = req.headers?.['user-agent'];
+    const enriched = { ...(metadata || {}) };
+    if (typeof userAgent === 'string' && !enriched.userAgent) enriched.userAgent = userAgent;
+    return this.challengeService.trackChallengeShare(id, userId, enriched);
   }
 
   @Post(':id/track/bookmark')

@@ -71,6 +71,7 @@ import { UserAchievement, UserAchievementSchema } from './schema/user-achievemen
 import { ManualPaymentService } from './common/services/manual-payment.service';
 import { WalletModule } from './wallet/wallet.module';
 import { AiModule } from './ai/ai.module';
+import { Ga4Module } from './ga4/ga4.module';
 
 // Import new admin schemas
 import { AdminUser, AdminUserSchema } from './admin/schemas/admin-user.schema';
@@ -183,6 +184,7 @@ import { ChallengeSubmission, ChallengeSubmissionSchema } from './schema/challen
     PayoutModule,
     WalletModule,
     AiModule,
+    Ga4Module,
   ],
   controllers: [AppController, UserController, TrackingController, PaymentController],
   providers: [

@@ -56,7 +56,7 @@ export class AnalyticsDashboardService {
       retentionAnalysis
     ] = await Promise.all([
       this.analyticsService.calculateUserGrowth(period),
-      this.analyticsService.getEngagementMetrics(),
+      this.analyticsService.getEngagementMetrics({}, period),
       this.analyticsService.getRevenueAnalytics(period),
       this.analyticsService.getPlatformHealth(),
       this.calculatePlatformStatistics(period),
@@ -104,7 +104,7 @@ export class AnalyticsDashboardService {
    * Requirements: 5.2
    */
   async getEngagementMetrics(period: TimePeriod): Promise<EngagementMetricsDto> {
-    const engagement = await this.analyticsService.getEngagementMetrics();
+    const engagement = await this.analyticsService.getEngagementMetrics({}, period);
     return this.mapEngagementMetrics(engagement);
   }
 

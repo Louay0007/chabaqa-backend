@@ -38,24 +38,36 @@ export class AnalyticsController {
   @ApiOperation({ summary: 'Audience devices breakdown' })
   @ApiQuery({ name: 'from', required: false })
   @ApiQuery({ name: 'to', required: false })
-  async getDevices(@Req() req, @Query('from') from?: string, @Query('to') to?: string) {
+  @ApiQuery({ name: 'communityId', required: false })
+  async getDevices(
+    @Req() req, 
+    @Query('from') from?: string, 
+    @Query('to') to?: string,
+    @Query('communityId') communityId?: string
+  ) {
     const user = req.user;
     const creatorId = user.sub || user._id || user.userId;
     const toDate = to ? new Date(to) : new Date();
     const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 30 * 24 * 3600 * 1000);
-    return this.analyticsService.getDevices(creatorId, fromDate, toDate);
+    return this.analyticsService.getDevices(creatorId, fromDate, toDate, communityId);
   }
 
   @Get('referrers')
   @ApiOperation({ summary: 'Top referrers/UTMs' })
   @ApiQuery({ name: 'from', required: false })
   @ApiQuery({ name: 'to', required: false })
-  async getReferrers(@Req() req, @Query('from') from?: string, @Query('to') to?: string) {
+  @ApiQuery({ name: 'communityId', required: false })
+  async getReferrers(
+    @Req() req, 
+    @Query('from') from?: string, 
+    @Query('to') to?: string,
+    @Query('communityId') communityId?: string
+  ) {
     const user = req.user;
     const creatorId = user.sub || user._id || user.userId;
     const toDate = to ? new Date(to) : new Date();
     const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 30 * 24 * 3600 * 1000);
-    return this.analyticsService.getReferrers(creatorId, fromDate, toDate);
+    return this.analyticsService.getReferrers(creatorId, fromDate, toDate, communityId);
   }
 
   @Get('export')
@@ -63,17 +75,19 @@ export class AnalyticsController {
   @ApiQuery({ name: 'scope', required: true })
   @ApiQuery({ name: 'from', required: false })
   @ApiQuery({ name: 'to', required: false })
+  @ApiQuery({ name: 'communityId', required: false })
   async exportCsv(
     @Req() req,
     @Query('scope') scope: 'overview'|'courses'|'challenges'|'sessions'|'events'|'products'|'posts',
     @Query('from') from?: string,
     @Query('to') to?: string,
+    @Query('communityId') communityId?: string,
   ) {
     const user = req.user;
     const creatorId = user.sub || user._id || user.userId;
     const toDate = to ? new Date(to) : new Date();
     const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 30 * 24 * 3600 * 1000);
-    return this.analyticsService.exportCsv(creatorId, scope, fromDate, toDate);
+    return this.analyticsService.exportCsv(creatorId, scope, fromDate, toDate, communityId);
   }
 
   @Get('communities')
@@ -92,72 +106,108 @@ export class AnalyticsController {
   @ApiOperation({ summary: 'Courses analytics (plan-gated)' })
   @ApiQuery({ name: 'from', required: false })
   @ApiQuery({ name: 'to', required: false })
-  async getCourses(@Req() req, @Query('from') from?: string, @Query('to') to?: string) {
+  @ApiQuery({ name: 'communityId', required: false })
+  async getCourses(
+    @Req() req, 
+    @Query('from') from?: string, 
+    @Query('to') to?: string,
+    @Query('communityId') communityId?: string
+  ) {
     const user = req.user;
     const creatorId = user.sub || user._id || user.userId;
     const toDate = to ? new Date(to) : new Date();
     const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 30 * 24 * 3600 * 1000);
-    return this.analyticsService.getCourses(creatorId, fromDate, toDate);
+    return this.analyticsService.getCourses(creatorId, fromDate, toDate, communityId);
   }
 
   @Get('challenges')
   @ApiOperation({ summary: 'Challenges analytics (plan-gated)' })
   @ApiQuery({ name: 'from', required: false })
   @ApiQuery({ name: 'to', required: false })
-  async getChallenges(@Req() req, @Query('from') from?: string, @Query('to') to?: string) {
+  @ApiQuery({ name: 'communityId', required: false })
+  async getChallenges(
+    @Req() req, 
+    @Query('from') from?: string, 
+    @Query('to') to?: string,
+    @Query('communityId') communityId?: string
+  ) {
     const user = req.user;
     const creatorId = user.sub || user._id || user.userId;
     const toDate = to ? new Date(to) : new Date();
     const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 30 * 24 * 3600 * 1000);
-    return this.analyticsService.getChallenges(creatorId, fromDate, toDate);
+    return this.analyticsService.getChallenges(creatorId, fromDate, toDate, communityId);
   }
 
   @Get('sessions')
   @ApiOperation({ summary: 'Sessions analytics (plan-gated)' })
   @ApiQuery({ name: 'from', required: false })
   @ApiQuery({ name: 'to', required: false })
-  async getSessions(@Req() req, @Query('from') from?: string, @Query('to') to?: string) {
+  @ApiQuery({ name: 'communityId', required: false })
+  async getSessions(
+    @Req() req, 
+    @Query('from') from?: string, 
+    @Query('to') to?: string,
+    @Query('communityId') communityId?: string
+  ) {
     const user = req.user;
     const creatorId = user.sub || user._id || user.userId;
     const toDate = to ? new Date(to) : new Date();
     const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 30 * 24 * 3600 * 1000);
-    return this.analyticsService.getSessions(creatorId, fromDate, toDate);
+    return this.analyticsService.getSessions(creatorId, fromDate, toDate, communityId);
   }
 
   @Get('events')
   @ApiOperation({ summary: 'Events analytics (plan-gated)' })
   @ApiQuery({ name: 'from', required: false })
   @ApiQuery({ name: 'to', required: false })
-  async getEvents(@Req() req, @Query('from') from?: string, @Query('to') to?: string) {
+  @ApiQuery({ name: 'communityId', required: false })
+  async getEvents(
+    @Req() req, 
+    @Query('from') from?: string, 
+    @Query('to') to?: string,
+    @Query('communityId') communityId?: string
+  ) {
     const user = req.user;
     const creatorId = user.sub || user._id || user.userId;
     const toDate = to ? new Date(to) : new Date();
     const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 30 * 24 * 3600 * 1000);
-    return this.analyticsService.getEvents(creatorId, fromDate, toDate);
+    return this.analyticsService.getEvents(creatorId, fromDate, toDate, communityId);
   }
 
   @Get('products')
   @ApiOperation({ summary: 'Products analytics (plan-gated)' })
   @ApiQuery({ name: 'from', required: false })
   @ApiQuery({ name: 'to', required: false })
-  async getProducts(@Req() req, @Query('from') from?: string, @Query('to') to?: string) {
+  @ApiQuery({ name: 'communityId', required: false })
+  async getProducts(
+    @Req() req, 
+    @Query('from') from?: string, 
+    @Query('to') to?: string,
+    @Query('communityId') communityId?: string
+  ) {
     const user = req.user;
     const creatorId = user.sub || user._id || user.userId;
     const toDate = to ? new Date(to) : new Date();
     const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 30 * 24 * 3600 * 1000);
-    return this.analyticsService.getProducts(creatorId, fromDate, toDate);
+    return this.analyticsService.getProducts(creatorId, fromDate, toDate, communityId);
   }
 
   @Get('posts')
   @ApiOperation({ summary: 'Posts analytics (plan-gated)' })
   @ApiQuery({ name: 'from', required: false })
   @ApiQuery({ name: 'to', required: false })
-  async getPosts(@Req() req, @Query('from') from?: string, @Query('to') to?: string) {
+  @ApiQuery({ name: 'communityId', required: false })
+  async getPosts(
+    @Req() req, 
+    @Query('from') from?: string, 
+    @Query('to') to?: string,
+    @Query('communityId') communityId?: string
+  ) {
     const user = req.user;
     const creatorId = user.sub || user._id || user.userId;
     const toDate = to ? new Date(to) : new Date();
     const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 30 * 24 * 3600 * 1000);
-    return this.analyticsService.getPosts(creatorId, fromDate, toDate);
+    return this.analyticsService.getPosts(creatorId, fromDate, toDate, communityId);
   }
 
   @Get('backfill')
@@ -187,5 +237,14 @@ export class AnalyticsController {
     const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 30 * 24 * 3600 * 1000);
     
     return this.analyticsService.getCourseAnalytics(creatorId, courseId, fromDate, toDate);
+  }
+
+  @Get('debug-status')
+  @ApiOperation({ summary: 'Debug creator analytics status (tracking vs rollups)' })
+  @ApiQuery({ name: 'communityId', required: false })
+  async debugStatus(@Req() req, @Query('communityId') communityId?: string) {
+    const user = req.user;
+    const creatorId = user.sub || user._id || user.userId;
+    return this.analyticsService.debugCreatorStatus(creatorId, communityId);
   }
 }
