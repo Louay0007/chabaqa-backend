@@ -290,6 +290,7 @@ export class SessionController {
   @ApiQuery({ name: 'limit', required: false, type: Number, description: 'Items per page' })
   @ApiQuery({ name: 'type', required: false, enum: ['booked', 'created', 'all'], description: 'Session type filter' })
   @ApiQuery({ name: 'timeFilter', required: false, enum: ['upcoming', 'past', 'all'], description: 'Time filter' })
+  @ApiQuery({ name: 'communityId', required: false, type: String, description: 'Filter by community ID' })
   @ApiResponse({
     status: 200,
     description: 'User sessions retrieved successfully',
@@ -331,14 +332,16 @@ export class SessionController {
     @Query('page') page = '1',
     @Query('limit') limit = '10',
     @Query('type') type: 'booked' | 'created' | 'all' = 'all',
-    @Query('timeFilter') timeFilter: 'upcoming' | 'past' | 'all' = 'all'
+    @Query('timeFilter') timeFilter: 'upcoming' | 'past' | 'all' = 'all',
+    @Query('communityId') communityId?: string
   ) {
     return await this.sessionService.getSessionsByUser(
       userId, 
       Number(page) || 1, 
       Number(limit) || 10,
       type,
-      timeFilter
+      timeFilter,
+      communityId
     );
   }
 

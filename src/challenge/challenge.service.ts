@@ -36,7 +36,9 @@ import { ContentTrackingService } from '../common/services/content-tracking.serv
 import { FeeService } from '../common/services/fee.service';
 import { PolicyService } from '../common/services/policy.service';
 import { UploadService } from '../upload/upload.service';
-import { TrackableContentType } from '../schema/content-tracking.schema';
+import { TrackableContentType, TrackingActionType } from '../schema/content-tracking.schema';
+import { AnalyticsDaily, AnalyticsDailyDocument } from '../schema/analytics-daily.schema';
+import { Ga4Service } from '../ga4/ga4.service';
 
 @Injectable()
 export class ChallengeService {
@@ -47,10 +49,12 @@ export class ChallengeService {
     private communityModel: Model<CommunityDocument>,
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     @InjectModel(ChallengeSubmission.name) private submissionModel: Model<ChallengeSubmissionDocument>,
+    @InjectModel(AnalyticsDaily.name) private analyticsDailyModel: Model<AnalyticsDailyDocument>,
     private readonly trackingService: ContentTrackingService,
     private readonly feeService: FeeService,
     private readonly policyService: PolicyService,
     private readonly uploadService: UploadService,
+    private readonly ga4Service: Ga4Service,
   ) { }
 
   /**
@@ -226,16 +230,16 @@ export class ChallengeService {
     const challenge = await this.findChallengeById(dto.challengeId);
     if (!challenge) throw new NotFoundException('Challenge not found');
 
-    const task = challenge.tasks?.find(t => 
-      (t.id && String(t.id) === String(dto.taskId)) || 
+    const task = challenge.tasks?.find(t =>
+      (t.id && String(t.id) === String(dto.taskId)) ||
       (t.day && String(t.day) === String(dto.taskId)) ||
       ((t as any)._id && (t as any)._id?.toString() === String(dto.taskId))
     );
-    
+
     // Log the challenge tasks to debug if not found
     if (!task) {
       console.log(`[CHALLENGE-SERVICE] Debug - Attempting to match taskId: "${dto.taskId}" (type: ${typeof dto.taskId})`);
-      console.log(`[CHALLENGE-SERVICE] Debug - Challenge tasks for ${challenge.id}:`, 
+      console.log(`[CHALLENGE-SERVICE] Debug - Challenge tasks for ${challenge.id}:`,
         challenge.tasks?.map(t => ({ id: t.id, day: t.day, _id: (t as any)._id }))
       );
     }
@@ -248,7 +252,7 @@ export class ChallengeService {
         const dayNum = parseInt(String(dto.taskId), 10);
         finalTask = challenge.tasks?.find(t => t.day === dayNum);
       }
-      
+
       // SUPER EXTREME FALLBACK: The user provided a log where taskId is "07d7d5b4-5cb6-433d-9550-8e04f28b296c"
       // but the only task has id "6988d2df9d7bff79aa9d42ab".
       // This is a common case during migration/sync. Let's map any single-task submission to the only task.
@@ -267,21 +271,21 @@ export class ChallengeService {
     }
 
     if (!finalTask) {
-      console.error(`❌ [CHALLENGE-SERVICE] Task not found: ${dto.taskId} in challenge ${challenge.id}. Available IDs:`, 
+      console.error(`❌ [CHALLENGE-SERVICE] Task not found: ${dto.taskId} in challenge ${challenge.id}. Available IDs:`,
         challenge.tasks?.map(t => t.id || (t as any)._id?.toString())
       );
       throw new NotFoundException('Task not found');
     }
 
-    const isParticipant = challenge.participants.some(p => 
-      String(p.userId) === String(userId) || 
+    const isParticipant = challenge.participants.some(p =>
+      String(p.userId) === String(userId) ||
       (p.userId as any)._id?.toString() === String(userId)
     );
     if (!isParticipant) {
-      console.log(`[CHALLENGE-SERVICE] Debug - Participant check failed for user ${userId}. Current participants:`, 
+      console.log(`[CHALLENGE-SERVICE] Debug - Participant check failed for user ${userId}. Current participants:`,
         challenge.participants.map(p => String(p.userId))
       );
-      
+
       // AUTO-HEAL: If the user is the creator of the challenge, ensure they are a participant
       const isCreator = String(challenge.creatorId) === String(userId);
       if (isCreator) {
@@ -326,14 +330,14 @@ export class ChallengeService {
       const completedTasks = participant?.completedTasks?.length || 0;
       // Even if pending, submitting a task counts as progress activity
       const progressPercent = Math.round((completedTasks / totalTasks) * 100);
-      
+
       await this.trackingService.updateProgress(
         userId,
         challenge._id.toString(),
         TrackableContentType.CHALLENGE,
         progressPercent,
-        { 
-          completedTasks, 
+        {
+          completedTasks,
           totalTasks,
           lastTaskId: canonicalTaskId,
           submissionStatus: 'pending'
@@ -352,7 +356,7 @@ export class ChallengeService {
    */
   async getSubmissions(challengeId: string, userId: string): Promise<any> {
     console.log(`🔍 [CHALLENGE-SERVICE] getSubmissions for challenge ${challengeId} user ${userId}`);
-    
+
     // Resolve challenge first to ensure we have the correct _id (in case challengeId is a slug/custom ID)
     const challenge = await this.findChallengeById(challengeId);
     if (!challenge) {
@@ -364,12 +368,12 @@ export class ChallengeService {
       challengeId: challenge._id,
       userId: new Types.ObjectId(userId)
     };
-    
+
     console.log(`🔍 [CHALLENGE-SERVICE] Querying submissions with:`, query);
 
     const submissions = await this.submissionModel.find(query).sort({ createdAt: -1 });
     console.log(`✅ [CHALLENGE-SERVICE] Found ${submissions.length} submissions`);
-    
+
     return submissions;
   }
 
@@ -382,7 +386,7 @@ export class ChallengeService {
       taskId,
       userId: new Types.ObjectId(userId)
     });
-    
+
     if (!submission) return null;
     return submission;
   }
@@ -398,7 +402,7 @@ export class ChallengeService {
     submission.feedback = dto.feedback;
     submission.reviewedBy = new Types.ObjectId(adminId);
     submission.reviewedAt = new Date();
-    
+
     if (dto.pointsAwarded !== undefined) {
       submission.pointsAwarded = dto.pointsAwarded;
     }
@@ -1089,6 +1093,27 @@ export class ChallengeService {
     challenge.addParticipant(new Types.ObjectId(userId));
     await challenge.save({ session });
 
+    // Fire tracking events for analytics rollups
+    try {
+      const trackingContentId = challenge.id || challenge._id.toString();
+      await this.trackingService.trackView(
+        userId,
+        trackingContentId,
+        TrackableContentType.CHALLENGE,
+        { challengeTitle: challenge.title, communityId: challenge.communityId },
+      );
+      await this.trackingService.trackStart(
+        userId,
+        trackingContentId,
+        TrackableContentType.CHALLENGE,
+        { challengeTitle: challenge.title, communityId: challenge.communityId },
+      );
+      console.log(`✅ [CHALLENGE-SERVICE] Tracked view+start for user ${userId} on challenge ${trackingContentId}`);
+    } catch (trackingError) {
+      // Never break join flow because of tracking
+      console.warn(`⚠️ [CHALLENGE-SERVICE] Tracking failed for joinChallenge:`, trackingError);
+    }
+
     const community = await this.communityModel.findOne({
       id: challenge.communityId,
     }).session(session);
@@ -1239,6 +1264,59 @@ export class ChallengeService {
       } catch (saveError) {
         console.error('❌ [DEBUG-BACKEND] Error saving challenge:', saveError);
         throw new BadRequestException('Erreur lors de la sauvegarde du progrès: ' + saveError.message);
+      }
+
+      // Fire tracking events for analytics
+      try {
+        const trackingContentId = challenge.id || challenge._id.toString();
+        const totalTasksCount = challenge.tasks?.length || 1;
+
+        // Task-level tracking with metadata.taskId for funnel analytics
+        if (updateProgressDto.status === 'completed') {
+          await this.trackingService.trackAction(
+            userId,
+            trackingContentId,
+            TrackableContentType.CHALLENGE,
+            TrackingActionType.COMPLETE,
+            {
+              taskId: updateProgressDto.taskId,
+              taskTitle: task?.title,
+              communityId: challenge.communityId,
+              completedTasks: participant?.completedTasks?.length || 0,
+              totalTasks: totalTasksCount,
+            },
+          );
+        } else {
+          await this.trackingService.trackAction(
+            userId,
+            trackingContentId,
+            TrackableContentType.CHALLENGE,
+            TrackingActionType.START,
+            {
+              taskId: updateProgressDto.taskId,
+              taskTitle: task?.title,
+              communityId: challenge.communityId,
+            },
+          );
+        }
+
+        // Challenge-level completion when all tasks are done
+        if (participant && participant.progress >= 100) {
+          await this.trackingService.trackComplete(
+            userId,
+            trackingContentId,
+            TrackableContentType.CHALLENGE,
+            {
+              communityId: challenge.communityId,
+              completedTasks: participant.completedTasks.length,
+              totalTasks: totalTasksCount,
+            },
+          );
+          console.log(`✅ [CHALLENGE-SERVICE] User ${userId} completed all tasks in challenge ${trackingContentId}`);
+        }
+      } catch (trackingError) {
+        // Never break progress flow because of tracking
+        console.warn(`⚠️ [CHALLENGE-SERVICE] Tracking failed for updateProgress:`, trackingError);
       }
 
       const community = await this.communityModel.findOne({
@@ -1772,7 +1850,7 @@ export class ChallengeService {
 
     const skip = (page - 1) * limit;
 
-      const [challenges, total] = await Promise.all([
+    const [challenges, total] = await Promise.all([
       this.challengeModel
         .find(query)
         .populate('creatorId', 'name email avatar profile_picture photo_profil')
@@ -1829,7 +1907,7 @@ export class ChallengeService {
 
     const skip = (page - 1) * limit;
 
-      const [challenges, total] = await Promise.all([
+    const [challenges, total] = await Promise.all([
       this.challengeModel
         .find(query)
         .populate('creatorId', 'name email avatar profile_picture photo_profil')
@@ -1866,95 +1944,513 @@ export class ChallengeService {
   // ============ TRACKING METHODS ============
 
   /**
-   * Enregistrer une vue d'un défi
+   * Track challenge view with real-time analytics rollup and GA4
    */
-  async trackChallengeView(challengeId: string, userId: string, metadata: Record<string, any> = {}) {
-    return await this.trackingService.trackView(
+  async trackChallengeView(challengeId: string, userId: string, metadata: Record<string, any> = {}): Promise<any> {
+    console.log(`👁️ [CHALLENGE-TRACKING] View: challenge=${challengeId}, user=${userId}`);
+
+    const challenge = await this.findChallengeById(challengeId);
+    if (!challenge) {
+      throw new NotFoundException('Challenge not found');
+    }
+
+    // Use custom challenge id for consistent analytics
+    const trackingId = challenge.id || challengeId;
+
+    // Record tracking action
+    await this.trackingService.trackView(
       userId,
-      challengeId,
+      trackingId,
       TrackableContentType.CHALLENGE,
-      metadata,
+      metadata
     );
+
+    // Real-time rollup into AnalyticsDaily
+    if (challenge.creatorId) {
+      const todayUTC = new Date();
+      const dayStart = new Date(Date.UTC(todayUTC.getUTCFullYear(), todayUTC.getUTCMonth(), todayUTC.getUTCDate()));
+
+      try {
+        await this.analyticsDailyModel.updateOne(
+          {
+            creatorId: challenge.creatorId,
+            contentType: 'challenge',
+            contentId: trackingId,
+            communityId: challenge.communityId,
+            date: dayStart
+          },
+          {
+            $inc: { views: 1 },
+            $addToSet: { uniqueUsers: new Types.ObjectId(userId) },
+            $set: { contentTitle: challenge.title }
+          },
+          { upsert: true }
+        );
+      } catch (err) {
+        console.error('⚠️ [CHALLENGE-TRACKING] Failed view rollup:', err.message);
+      }
+    }
+
+    // GA4 Event with proper event name mapping
+    void this.ga4Service.sendEvent({
+      userId,
+      name: 'content_view',
+      params: {
+        content_type: 'challenge',
+        content_id: trackingId,
+        challenge_id: trackingId,
+        challenge_title: challenge.title,
+        community_id: challenge.communityId,
+        creator_id: challenge.creatorId?.toString(),
+        category: challenge.category,
+        difficulty: challenge.difficulty,
+        ...metadata
+      }
+    });
+
+    return { success: true, message: 'View tracked' };
   }
 
   /**
-   * Démarrer un défi
+   * Track challenge start (participant joins) with real-time analytics rollup and GA4
    */
-  async trackChallengeStart(challengeId: string, userId: string, metadata: Record<string, any> = {}) {
-    return await this.trackingService.trackStart(
+  async trackChallengeStart(challengeId: string, userId: string, metadata: Record<string, any> = {}): Promise<any> {
+    console.log(`🚀 [CHALLENGE-TRACKING] Start: challenge=${challengeId}, user=${userId}`);
+
+    const challenge = await this.findChallengeById(challengeId);
+    if (!challenge) {
+      throw new NotFoundException('Challenge not found');
+    }
+
+    // Use custom challenge id for consistent analytics
+    const trackingId = challenge.id || challengeId;
+
+    // Record tracking action
+    await this.trackingService.trackStart(
       userId,
-      challengeId,
+      trackingId,
       TrackableContentType.CHALLENGE,
-      metadata,
+      metadata
     );
+
+    // Real-time rollup into AnalyticsDaily
+    if (challenge.creatorId) {
+      const todayUTC = new Date();
+      const dayStart = new Date(Date.UTC(todayUTC.getUTCFullYear(), todayUTC.getUTCMonth(), todayUTC.getUTCDate()));
+
+      try {
+        await this.analyticsDailyModel.updateOne(
+          {
+            creatorId: challenge.creatorId,
+            contentType: 'challenge',
+            contentId: trackingId,
+            communityId: challenge.communityId,
+            date: dayStart
+          },
+          {
+            $inc: { starts: 1 },
+            $addToSet: { uniqueUsers: new Types.ObjectId(userId) },
+            $set: { contentTitle: challenge.title }
+          },
+          { upsert: true }
+        );
+      } catch (err) {
+        console.error('⚠️ [CHALLENGE-TRACKING] Failed start rollup:', err.message);
+      }
+    }
+
+    // GA4 Event with proper event name mapping
+    void this.ga4Service.sendEvent({
+      userId,
+      name: 'content_start',
+      params: {
+        content_type: 'challenge',
+        content_id: trackingId,
+        challenge_id: trackingId,
+        challenge_title: challenge.title,
+        community_id: challenge.communityId,
+        creator_id: challenge.creatorId?.toString(),
+        category: challenge.category,
+        difficulty: challenge.difficulty,
+        ...metadata
+      }
+    });
+
+    return { success: true, message: 'Start tracked' };
   }
 
   /**
-   * Marquer un défi comme terminé
+   * Track task completion (submission) with real-time analytics rollup and GA4
    */
-  async trackChallengeComplete(challengeId: string, userId: string, metadata: Record<string, any> = {}) {
-    return await this.trackingService.trackComplete(
-      userId,
-      challengeId,
-      TrackableContentType.CHALLENGE,
-      metadata,
+  async trackTaskComplete(challengeId: string, taskId: string, userId: string, metadata: Record<string, any> = {}): Promise<any> {
+    console.log(`✅ [CHALLENGE-TRACKING] Task Complete: challenge=${challengeId}, task=${taskId}, user=${userId}`);
+
+    const challenge = await this.findChallengeById(challengeId);
+    if (!challenge) {
+      throw new NotFoundException('Challenge not found');
+    }
+
+    // Use custom challenge id for consistent analytics
+    const trackingId = challenge.id || challengeId;
+
+    // Find task details
+    const task = challenge.tasks?.find(t =>
+      (t.id && String(t.id) === String(taskId)) ||
+      (t.day && String(t.day) === String(taskId))
     );
+
+    // Record tracking action
+    await this.trackingService.trackAction(
+      userId,
+      trackingId,
+      TrackableContentType.CHALLENGE,
+      TrackingActionType.COMPLETE,
+      {
+        taskId,
+        task_id: taskId,
+        day: task?.day,
+        actionSubType: 'task_complete',
+        ...metadata
+      }
+    );
+
+    // Real-time rollup into AnalyticsDaily (increments completes as submissions)
+    if (challenge.creatorId) {
+      const todayUTC = new Date();
+      const dayStart = new Date(Date.UTC(todayUTC.getUTCFullYear(), todayUTC.getUTCMonth(), todayUTC.getUTCDate()));
+
+      try {
+        await this.analyticsDailyModel.updateOne(
+          {
+            creatorId: challenge.creatorId,
+            contentType: 'challenge',
+            contentId: trackingId,
+            communityId: challenge.communityId,
+            date: dayStart
+          },
+          {
+            $inc: { completes: 1 },
+            $addToSet: { uniqueUsers: new Types.ObjectId(userId) },
+            $set: { contentTitle: challenge.title }
+          },
+          { upsert: true }
+        );
+      } catch (err) {
+        console.error('⚠️ [CHALLENGE-TRACKING] Failed task complete rollup:', err.message);
+      }
+    }
+
+    // GA4 Event with proper event name mapping
+    void this.ga4Service.sendEvent({
+      userId,
+      name: 'challenge_task_complete',
+      params: {
+        content_type: 'challenge',
+        content_id: trackingId,
+        challenge_id: trackingId,
+        task_id: taskId,
+        day: task?.day,
+        challenge_title: challenge.title,
+        community_id: challenge.communityId,
+        creator_id: challenge.creatorId?.toString(),
+        category: challenge.category,
+        difficulty: challenge.difficulty,
+        ...metadata
+      }
+    });
+
+    return { success: true, message: 'Task completion tracked' };
   }
 
   /**
-   * Mettre à jour le temps de visionnage d'un défi
+   * Track challenge complete (all tasks finished) with real-time analytics rollup and GA4
+   * Authoritative - only emits when all tasks are verified complete
    */
-  async updateChallengeWatchTime(
-    challengeId: string,
-    userId: string,
-    additionalTime: number,
-  ) {
-    return await this.trackingService.updateWatchTime(
-      userId,
-      challengeId,
-      TrackableContentType.CHALLENGE,
-      additionalTime,
+  async trackChallengeComplete(challengeId: string, userId: string, metadata: Record<string, any> = {}): Promise<any> {
+    console.log(`🏆 [CHALLENGE-TRACKING] Challenge Complete: challenge=${challengeId}, user=${userId}`);
+
+    const challenge = await this.findChallengeById(challengeId);
+    if (!challenge) {
+      throw new NotFoundException('Challenge not found');
+    }
+
+    // Verify all tasks are completed (authoritative check)
+    const participant = challenge.participants?.find(p =>
+      String(p.userId) === String(userId) ||
+      (p.userId as any)._id?.toString() === String(userId)
     );
+
+    if (!participant) {
+      throw new BadRequestException('User is not a participant of this challenge');
+    }
+
+    const totalTasks = challenge.tasks?.length || 0;
+    const completedTasks = participant.completedTasks?.length || 0;
+
+    // Guardrail: Only allow completion tracking if all tasks are done
+    if (completedTasks < totalTasks) {
+      throw new BadRequestException(
+        `Cannot mark challenge as complete. Only ${completedTasks}/${totalTasks} tasks completed.`
+      );
+    }
+
+    // Use custom challenge id for consistent analytics
+    const trackingId = challenge.id || challengeId;
+
+    // Record tracking action
+    await this.trackingService.trackComplete(
+      userId,
+      trackingId,
+      TrackableContentType.CHALLENGE,
+      {
+        completedTasks,
+        totalTasks,
+        progress: 100,
+        ...metadata
+      }
+    );
+
+    // Real-time rollup into AnalyticsDaily
+    if (challenge.creatorId) {
+      const todayUTC = new Date();
+      const dayStart = new Date(Date.UTC(todayUTC.getUTCFullYear(), todayUTC.getUTCMonth(), todayUTC.getUTCDate()));
+
+      try {
+        // Note: We don't increment completes here as it's already counted in task completion
+        // Instead, we track unique completers
+        await this.analyticsDailyModel.updateOne(
+          {
+            creatorId: challenge.creatorId,
+            contentType: 'challenge',
+            contentId: trackingId,
+            communityId: challenge.communityId,
+            date: dayStart
+          },
+          {
+            $addToSet: { completedUsers: new Types.ObjectId(userId) },
+            $set: { contentTitle: challenge.title }
+          },
+          { upsert: true }
+        );
+      } catch (err) {
+        console.error('⚠️ [CHALLENGE-TRACKING] Failed challenge complete rollup:', err.message);
+      }
+    }
+
+    // GA4 Event with proper event name mapping
+    void this.ga4Service.sendEvent({
+      userId,
+      name: 'content_complete',
+      params: {
+        content_type: 'challenge',
+        content_id: trackingId,
+        challenge_id: trackingId,
+        challenge_title: challenge.title,
+        community_id: challenge.communityId,
+        creator_id: challenge.creatorId?.toString(),
+        category: challenge.category,
+        difficulty: challenge.difficulty,
+        completed_tasks: completedTasks,
+        total_tasks: totalTasks,
+        completion_reward: challenge.completionReward || 0,
+        ...metadata
+      }
+    });
+
+    return {
+      success: true,
+      message: 'Challenge completion tracked',
+      data: {
+        completedTasks,
+        totalTasks,
+        progress: 100
+      }
+    };
   }
 
   /**
-   * Enregistrer un like sur un défi
+   * Track challenge like with real-time analytics rollup and GA4
    */
-  async trackChallengeLike(challengeId: string, userId: string, metadata: Record<string, any> = {}) {
-    return await this.trackingService.trackLike(
+  async trackChallengeLike(challengeId: string, userId: string, metadata: Record<string, any> = {}): Promise<any> {
+    console.log(`❤️ [CHALLENGE-TRACKING] Like: challenge=${challengeId}, user=${userId}`);
+
+    const challenge = await this.findChallengeById(challengeId);
+    if (!challenge) {
+      throw new NotFoundException('Challenge not found');
+    }
+
+    // Use custom challenge id for consistent analytics
+    const trackingId = challenge.id || challengeId;
+
+    // Record tracking action
+    await this.trackingService.trackLike(
       userId,
-      challengeId,
+      trackingId,
       TrackableContentType.CHALLENGE,
-      metadata,
+      metadata
     );
+
+    // Real-time rollup into AnalyticsDaily
+    if (challenge.creatorId) {
+      const todayUTC = new Date();
+      const dayStart = new Date(Date.UTC(todayUTC.getUTCFullYear(), todayUTC.getUTCMonth(), todayUTC.getUTCDate()));
+
+      try {
+        await this.analyticsDailyModel.updateOne(
+          {
+            creatorId: challenge.creatorId,
+            contentType: 'challenge',
+            contentId: trackingId,
+            communityId: challenge.communityId,
+            date: dayStart
+          },
+          { $inc: { likes: 1 } },
+          { upsert: true }
+        );
+      } catch (err) {
+        console.error('⚠️ [CHALLENGE-TRACKING] Failed like rollup:', err.message);
+      }
+    }
+
+    // GA4 Event
+    void this.ga4Service.sendEvent({
+      userId,
+      name: 'challenge_like',
+      params: {
+        content_type: 'challenge',
+        content_id: trackingId,
+        challenge_title: challenge.title,
+        community_id: challenge.communityId,
+        creator_id: challenge.creatorId?.toString(),
+        ...metadata
+      }
+    });
+
+    return { success: true, message: 'Like tracked' };
   }
 
   /**
-   * Enregistrer un partage d'un défi
+   * Track challenge share with real-time analytics rollup and GA4
    */
-  async trackChallengeShare(challengeId: string, userId: string, metadata: Record<string, any> = {}) {
-    return await this.trackingService.trackShare(
+  async trackChallengeShare(challengeId: string, userId: string, metadata: Record<string, any> = {}): Promise<any> {
+    console.log(`🔗 [CHALLENGE-TRACKING] Share: challenge=${challengeId}, user=${userId}`);
+
+    const challenge = await this.findChallengeById(challengeId);
+    if (!challenge) {
+      throw new NotFoundException('Challenge not found');
+    }
+
+    // Use custom challenge id for consistent analytics
+    const trackingId = challenge.id || challengeId;
+
+    // Record tracking action
+    await this.trackingService.trackShare(
       userId,
-      challengeId,
+      trackingId,
       TrackableContentType.CHALLENGE,
-      metadata,
+      metadata
     );
+
+    // Real-time rollup into AnalyticsDaily
+    if (challenge.creatorId) {
+      const todayUTC = new Date();
+      const dayStart = new Date(Date.UTC(todayUTC.getUTCFullYear(), todayUTC.getUTCMonth(), todayUTC.getUTCDate()));
+
+      try {
+        await this.analyticsDailyModel.updateOne(
+          {
+            creatorId: challenge.creatorId,
+            contentType: 'challenge',
+            contentId: trackingId,
+            communityId: challenge.communityId,
+            date: dayStart
+          },
+          { $inc: { shares: 1 } },
+          { upsert: true }
+        );
+      } catch (err) {
+        console.error('⚠️ [CHALLENGE-TRACKING] Failed share rollup:', err.message);
+      }
+    }
+
+    // GA4 Event
+    void this.ga4Service.sendEvent({
+      userId,
+      name: 'challenge_share',
+      params: {
+        content_type: 'challenge',
+        content_id: trackingId,
+        challenge_title: challenge.title,
+        community_id: challenge.communityId,
+        creator_id: challenge.creatorId?.toString(),
+        share_method: metadata.shareMethod || 'unknown',
+        ...metadata
+      }
+    });
+
+    return { success: true, message: 'Share tracked' };
   }
 
   /**
-   * Ajouter un bookmark d'un défi
+   * Track challenge bookmark with real-time analytics rollup and GA4
    */
-  async addChallengeBookmark(
-    challengeId: string,
-    userId: string,
-    bookmarkId: string,
-  ) {
-    return await this.trackingService.addBookmark(
+  async addChallengeBookmark(challengeId: string, userId: string, bookmarkId: string, metadata: Record<string, any> = {}): Promise<any> {
+    console.log(`🔖 [CHALLENGE-TRACKING] Bookmark: challenge=${challengeId}, user=${userId}`);
+
+    const challenge = await this.findChallengeById(challengeId);
+    if (!challenge) {
+      throw new NotFoundException('Challenge not found');
+    }
+
+    // Use custom challenge id for consistent analytics
+    const trackingId = challenge.id || challengeId;
+
+    // Record tracking action
+    await this.trackingService.addBookmark(
       userId,
-      challengeId,
+      trackingId,
       TrackableContentType.CHALLENGE,
-      bookmarkId,
+      bookmarkId
     );
+
+    // Real-time rollup into AnalyticsDaily
+    if (challenge.creatorId) {
+      const todayUTC = new Date();
+      const dayStart = new Date(Date.UTC(todayUTC.getUTCFullYear(), todayUTC.getUTCMonth(), todayUTC.getUTCDate()));
+
+      try {
+        await this.analyticsDailyModel.updateOne(
+          {
+            creatorId: challenge.creatorId,
+            contentType: 'challenge',
+            contentId: trackingId,
+            communityId: challenge.communityId,
+            date: dayStart
+          },
+          { $inc: { bookmarks: 1 } },
+          { upsert: true }
+        );
+      } catch (err) {
+        console.error('⚠️ [CHALLENGE-TRACKING] Failed bookmark rollup:', err.message);
+      }
+    }
+
+    // GA4 Event
+    void this.ga4Service.sendEvent({
+      userId,
+      name: 'challenge_bookmark',
+      params: {
+        content_type: 'challenge',
+        content_id: trackingId,
+        challenge_title: challenge.title,
+        community_id: challenge.communityId,
+        creator_id: challenge.creatorId?.toString(),
+        bookmark_id: bookmarkId,
+        ...metadata
+      }
+    });
+
+    return { success: true, message: 'Bookmark added' };
   }
 
   /**
@@ -2454,10 +2950,10 @@ export class ChallengeService {
         }
 
         // Calculer le progrès en pourcentage (uniquement pour les tâches qui existent encore)
-        const validCompletedTasks = participant.completedTasks.filter(taskId => 
+        const validCompletedTasks = participant.completedTasks.filter(taskId =>
           challenge.tasks?.some(t => t.id === taskId)
         );
-        
+
         participant.progress = Math.round(
           (validCompletedTasks.length / (challenge.tasks?.length || 1)) *
           100,

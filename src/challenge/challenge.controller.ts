@@ -529,6 +529,26 @@ export class ChallengeController {
     return this.challengeService.trackChallengeComplete(id, userId, enriched);
   }
 
+  @Post(':id/track/task-complete')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Marquer une tâche comme terminée' })
+  @ApiResponse({ status: 200, description: 'Tâche marquée comme terminée' })
+  @ApiBody({ schema: { type: 'object', properties: { taskId: { type: 'string' }, metadata: { type: 'object' } } } })
+  async trackTaskComplete(
+    @Param('id') id: string, 
+    @Body('taskId') taskId: string,
+    @Request() req: any, 
+    @Body('metadata') metadata?: any
+  ) {
+    const userId = req.user._id || req.user.userId;
+    const userAgent = req.headers?.['user-agent'];
+    const enriched = { ...(metadata || {}) };
+    if (typeof userAgent === 'string' && !enriched.userAgent) enriched.userAgent = userAgent;
+    return this.challengeService.trackTaskComplete(id, taskId, userId, enriched);
+  }
+
   @Post(':id/track/like')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()

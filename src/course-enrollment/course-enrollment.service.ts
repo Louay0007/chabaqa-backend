@@ -6,11 +6,14 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
+import { ContentTrackingService } from '../common/services/content-tracking.service';
+import { TrackableContentType } from '../schema/content-tracking.schema';
 import {
   CourseEnrollment,
   CourseEnrollmentDocument,
   CourseProgress,
 } from '../schema/course.schema';
+import { AnalyticsDaily, AnalyticsDailyDocument } from '../schema/analytics-daily.schema';
 import { Cours, CoursDocument } from '../schema/course.schema';
 import { User, UserDocument } from '../schema/user.schema';
 import {
@@ -35,8 +38,10 @@ export class CourseEnrollmentService {
     private courseEnrollmentModel: Model<CourseEnrollmentDocument>,
     @InjectModel(Cours.name) private coursModel: Model<CoursDocument>,
     @InjectModel(User.name) private userModel: Model<UserDocument>,
+    @InjectModel(AnalyticsDaily.name) private analyticsDailyModel: Model<AnalyticsDailyDocument>,
     private readonly notificationService: NotificationService,
     private readonly achievementService: AchievementService,
+    private readonly trackingService: ContentTrackingService,
   ) {}
 
   private async resolveCourse(courseId: string): Promise<CoursDocument> {
@@ -569,8 +574,31 @@ export class CourseEnrollmentService {
     // The High-Water Mark logic handles the `watchTime` value itself (line 567), but we must ensure `isCompleted` sticks.
     
     if (normalizedWatchTimeSeconds > currentProgression) {
+      const deltaSeconds = normalizedWatchTimeSeconds - currentProgression;
       progress.watchTime = normalizedWatchTimeSeconds;
-      console.log(`📈 [CourseEnrollmentService] Progress increased: ${currentProgression}s -> ${normalizedWatchTimeSeconds}s`);
+      console.log(`📈 [CourseEnrollmentService] Progress increased: ${currentProgression}s -> ${normalizedWatchTimeSeconds}s (delta: ${deltaSeconds}s)`);
+
+      // Real-time rollup of watchTime into AnalyticsDaily
+      if (deltaSeconds > 0 && course?.creatorId) {
+        const todayUTC = new Date();
+        const dayStart = new Date(Date.UTC(todayUTC.getUTCFullYear(), todayUTC.getUTCMonth(), todayUTC.getUTCDate()));
+        
+        try {
+          await this.analyticsDailyModel.updateOne(
+            {
+              creatorId: course.creatorId,
+              contentType: 'course',
+              contentId: String(course.id || courseId),
+              communityId: course.communityId,
+              date: dayStart
+            },
+            { $inc: { watchTime: deltaSeconds } },
+            { upsert: true }
+          );
+        } catch (err) {
+          console.error('⚠️ [CourseEnrollmentService] Failed real-time watchTime rollup:', err.message);
+        }
+      }
     } else {
       console.log(`ℹ️ [CourseEnrollmentService] Progress maintained at ${currentProgression}s (ignored smaller value ${normalizedWatchTimeSeconds}s)`);
     }
@@ -986,6 +1014,22 @@ export class CourseEnrollmentService {
     console.log(
       `✅ [CourseEnrollmentService] Cours "${course.titre}" marqué comme terminé`,
     );
+
+    // Authoritative analytics tracking: emit course COMPLETE only after full validation succeeds
+    // Use the course custom id (course.id) so analytics rollups can $lookup into cours.id
+    try {
+      if (course?.id) {
+        await this.trackingService.trackComplete(
+          userId,
+          String(course.id),
+          TrackableContentType.COURSE,
+          {},
+        );
+      }
+    } catch (e) {
+      // Tracking should not break completion
+      console.error('⚠️ [CourseEnrollmentService] Failed to track course completion:', (e as any)?.message || e);
+    }
 
     // Check for achievements
     if (course.communityId) {

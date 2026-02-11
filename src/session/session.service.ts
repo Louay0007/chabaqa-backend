@@ -58,21 +58,34 @@ export class SessionService {
     page: number = 1,
     limit: number = 10,
     type: 'booked' | 'created' | 'all' = 'all',
-    timeFilter: 'upcoming' | 'past' | 'all' = 'all'
+    timeFilter: 'upcoming' | 'past' | 'all' = 'all',
+    communityId?: string
   ) {
     console.log('🔧 DEBUG - getSessionsByUser');
     console.log(`   👤 User ID: ${userId}`);
     console.log(`   📄 Page: ${page}, Limit: ${limit}, Type: ${type}, TimeFilter: ${timeFilter}`);
+    if (communityId) {
+      console.log(`   🏢 Community filter: ${communityId}`);
+    }
 
     const skip = (page - 1) * limit;
     let allSessions: any[] = [];
     let totalCount = 0;
     const now = new Date();
 
+    // Build community filter
+    const communityFilter: any = {};
+    if (communityId) {
+      // communityId is stored as string in schema, so keep it as string
+      communityFilter.communityId = Types.ObjectId.isValid(communityId)
+        ? new Types.ObjectId(communityId).toString()
+        : communityId;
+    }
+
     // Get booked sessions
     if (type === 'booked' || type === 'all') {
       const bookedSessions = await this.sessionModel
-        .find({ 'bookings.userId': new Types.ObjectId(userId) })
+        .find({ 'bookings.userId': new Types.ObjectId(userId), ...communityFilter })
         .populate('creatorId', 'name email profile_picture photo_profil')
         .populate('communityId', 'name slug')
         .sort({ startTime: -1 })
@@ -119,7 +132,7 @@ export class SessionService {
     // Get created sessions
     if (type === 'created' || type === 'all') {
       const createdSessions = await this.sessionModel
-        .find({ creatorId: new Types.ObjectId(userId) })
+        .find({ creatorId: new Types.ObjectId(userId), ...communityFilter })
         .populate('creatorId', 'name email profile_picture photo_profil')
         .populate('communityId', 'name slug')
         .sort({ startTime: -1 })

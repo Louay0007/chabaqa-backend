@@ -23,6 +23,6 @@ import { AnalyticsScheduler } from './analytics.scheduler';
   providers: [AnalyticsService, AnalyticsScheduler],
   exports: [AnalyticsService],
 })
-export class AnalyticsModule {}
+export class AnalyticsModule { }
 
 

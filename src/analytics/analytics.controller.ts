@@ -1,4 +1,4 @@
-import { Controller, Get, Query, UseGuards, Req } from '@nestjs/common';
+import { Controller, Get, Post, Query, UseGuards, Req } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AnalyticsService } from './analytics.service';
@@ -208,6 +208,16 @@ export class AnalyticsController {
     const toDate = to ? new Date(to) : new Date();
     const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 30 * 24 * 3600 * 1000);
     return this.analyticsService.getPosts(creatorId, fromDate, toDate, communityId);
+  }
+
+  @Post('backfill')
+  @ApiOperation({ summary: 'Backfill analytics daily rollups for the creator (last N days)' })
+  @ApiQuery({ name: 'days', required: false, description: 'Number of days to backfill (default 90)' })
+  async backfillPost(@Req() req, @Query('days') days?: string) {
+    const user = req.user;
+    const creatorId = user.sub || user._id || user.userId;
+    const num = Math.max(1, Math.min(365, Number(days) || 90));
+    return this.analyticsService.backfillForCreator(creatorId, num);
   }
 
   @Get('backfill')

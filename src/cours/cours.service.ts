@@ -2346,6 +2346,37 @@ export class CoursService {
    */
   async trackCoursComplete(coursId: string, userId: string, metadata?: any) {
     const { trackingId, course } = await this.resolveCourseTrackingId(coursId);
+
+    // Guardrail: only allow completion tracking when the user has truly completed the course
+    // (all chapters completed in the active enrollment). This prevents premature COMPLETE events
+    // being sent directly from the client.
+    if (course?._id) {
+      const enrollment = await this.courseEnrollmentModel.findOne({
+        userId: new Types.ObjectId(userId),
+        courseId: course._id,
+        isActive: true,
+      }).lean();
+
+      if (!enrollment) {
+        throw new BadRequestException('Inscription au cours non trouvée');
+      }
+
+      const allChapters = Array.isArray((course as any).sections)
+        ? (course as any).sections.flatMap((section: any) => Array.isArray(section?.chapitres) ? section.chapitres : [])
+        : [];
+
+      if (allChapters.length > 0) {
+        const incompleteChapters = allChapters.filter((chapter: any) => {
+          const progress = (enrollment as any).progression?.find((p: any) => p?.chapterId === chapter?.id);
+          return !progress?.isCompleted;
+        });
+
+        if (incompleteChapters.length > 0) {
+          throw new BadRequestException('Vous devez terminer tous les chapitres avant de terminer le cours');
+        }
+      }
+    }
+
     const result = await this.trackingService.trackComplete(userId, trackingId, TrackableContentType.COURSE, metadata);
 
     // Check for achievements after completing a course

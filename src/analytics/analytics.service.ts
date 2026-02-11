@@ -95,9 +95,9 @@ export class AnalyticsService {
     let ga4Totals: any = null;
     try {
       const ga4Counts = await this.ga4ReportingService.getCreatorEventCounts(
-        creatorId, 
-        from.toISOString().slice(0, 10), 
-        to.toISOString().slice(0, 10), 
+        creatorId,
+        from.toISOString().slice(0, 10),
+        to.toISOString().slice(0, 10),
         communityId
       );
       if (ga4Counts) {
@@ -166,13 +166,13 @@ export class AnalyticsService {
 
     const hasMongoActivity =
       mongoTotals.views +
-        mongoTotals.starts +
-        mongoTotals.completes +
-        mongoTotals.likes +
-        mongoTotals.shares +
-        mongoTotals.downloads +
-        mongoTotals.bookmarks +
-        mongoTotals.ratingsCount >
+      mongoTotals.starts +
+      mongoTotals.completes +
+      mongoTotals.likes +
+      mongoTotals.shares +
+      mongoTotals.downloads +
+      mongoTotals.bookmarks +
+      mongoTotals.ratingsCount >
       0;
 
     let trackingTotals: any = null;
@@ -400,16 +400,16 @@ export class AnalyticsService {
     // Try GA4 and merge if available
     try {
       const ga4Stats = await this.ga4ReportingService.getCreatorContentStats(
-        creatorId, 
-        'course', 
-        from.toISOString().slice(0, 10), 
-        to.toISOString().slice(0, 10), 
+        creatorId,
+        'course',
+        from.toISOString().slice(0, 10),
+        to.toISOString().slice(0, 10),
         communityId
       );
-      
+
       if (ga4Stats.length > 0) {
         const mongoMap = new Map(byCourse.map(c => [c.contentId, c]));
-        
+
         // Use GA4 stats but preserve watchTime from Mongo
         byCourse = ga4Stats.map(s => {
           const m = mongoMap.get(s.contentId) || { watchTime: 0 };
@@ -497,6 +497,7 @@ export class AnalyticsService {
       match.communityId = communityId;
     }
 
+    // Aggregate from AnalyticsDaily for basic metrics
     const byChallenge = await this.dailyModel.aggregate([
       { $match: match },
       {
@@ -505,13 +506,62 @@ export class AnalyticsService {
           views: { $sum: '$views' },
           starts: { $sum: '$starts' },
           completes: { $sum: '$completes' },
+          likes: { $sum: '$likes' },
+          shares: { $sum: '$shares' },
+          bookmarks: { $sum: '$bookmarks' },
         },
       },
-      { $project: { _id: 0, contentId: '$_id', views: 1, starts: 1, completes: 1, completionRate: { $cond: [{ $gt: ['$starts', 0] }, { $divide: ['$completes', '$starts'] }, 0] } } },
+      {
+        $project: {
+          _id: 0,
+          contentId: '$_id',
+          views: 1,
+          starts: 1,
+          completes: 1,
+          likes: 1,
+          shares: 1,
+          bookmarks: 1,
+          participants: '$starts',
+          submissions: '$completes',
+          winners: { $floor: { $multiply: [{ $cond: [{ $gt: ['$starts', 0] }, { $divide: ['$completes', '$starts'] }, 0] }, 0.3] } },
+          completionRate: { $cond: [{ $gt: ['$starts', 0] }, { $multiply: [{ $divide: ['$completes', '$starts'] }, 100] }, 0] }
+        }
+      },
       { $sort: { completes: -1 } },
     ]);
 
-    // Step-level funnel using trackingactions metadata.taskId
+    // Get challenge titles
+    const challengeIds = byChallenge.map((c: any) => c.contentId).filter(Boolean);
+    if (challengeIds.length > 0) {
+      const challengeDocs =
+        (await this.dbConnection.db
+          ?.collection('challenges')
+          .find({ id: { $in: challengeIds } })
+          .project({ id: 1, title: 1, tasks: 1 })
+          .toArray()) || [];
+      const titleById = new Map(
+        challengeDocs.map((c: any) => [
+          c.id,
+          (c.title || c.id || '').toString(),
+        ]),
+      );
+      const tasksById = new Map(
+        challengeDocs.map((c: any) => [
+          c.id,
+          c.tasks?.length || 0,
+        ]),
+      );
+
+      // Update with titles and recalculate winners based on task completion
+      for (const c of byChallenge) {
+        c.title = titleById.get(c.contentId) || c.contentId;
+        const totalTasks = tasksById.get(c.contentId) || 1;
+        // Winners are users who completed all tasks (approximated by having completionRate >= 90%)
+        c.winners = c.completionRate >= 90 ? Math.max(1, Math.floor(c.completes * 0.3)) : 0;
+      }
+    }
+
+    // Task-level funnel using trackingactions metadata.taskId
     const tracking = this.dbConnection.collection('trackingactions');
     const funnelPipeline: any[] = [
       { $match: { timestamp: { $gte: from, $lte: to }, contentType: 'challenge' } },
@@ -525,20 +575,224 @@ export class AnalyticsService {
     }
 
     funnelPipeline.push(
-      { $project: { contentId: 1, actionType: 1, taskId: '$metadata.taskId' } },
+      { $project: { contentId: 1, actionType: 1, taskId: '$metadata.taskId', userId: 1, metadata: 1 } },
       { $match: { taskId: { $exists: true, $ne: null } } },
       {
         $group: {
           _id: { contentId: '$contentId', taskId: '$taskId' },
+          uniqueUsers: { $addToSet: '$userId' },
           starts: { $sum: { $cond: [{ $eq: ['$actionType', 'start'] }, 1, 0] } },
           completes: { $sum: { $cond: [{ $eq: ['$actionType', 'complete'] }, 1, 0] } },
         },
       },
-      { $project: { _id: 0, contentId: '$_id.contentId', taskId: '$_id.taskId', starts: 1, completes: 1, completionRate: { $cond: [{ $gt: ['$starts', 0] }, { $divide: ['$completes', '$starts'] }, 0] } } },
+      { $project: { _id: 0, contentId: '$_id.contentId', taskId: '$_id.taskId', starts: 1, completes: 1, uniqueUsers: { $size: '$uniqueUsers' }, completionRate: { $cond: [{ $gt: ['$starts', 0] }, { $divide: ['$completes', '$starts'] }, 0] } } },
       { $sort: { contentId: 1 } },
     );
 
     const stepFunnel = await tracking.aggregate(funnelPipeline).toArray();
+
+    // Get distinct participants per challenge from tracking
+    const participantsPipeline: any[] = [
+      { $match: { timestamp: { $gte: from, $lte: to }, contentType: 'challenge', actionType: 'start' } },
+      { $lookup: { from: 'challenges', localField: 'contentId', foreignField: 'id', as: 'challenge' } },
+      { $unwind: '$challenge' },
+      { $match: { 'challenge.creatorId': new Types.ObjectId(creatorId) } },
+    ];
+
+    if (communityId) {
+      participantsPipeline.push({ $match: { 'challenge.communityId': communityId } });
+    }
+
+    participantsPipeline.push(
+      { $group: { _id: { contentId: '$contentId', userId: '$userId' } } },
+      { $group: { _id: '$_id.contentId', participants: { $sum: 1 } } },
+      { $project: { _id: 0, contentId: '$_id', participants: 1 } }
+    );
+
+    const participantsData = await tracking.aggregate(participantsPipeline).toArray();
+    const participantsMap = new Map(participantsData.map(p => [p.contentId, p.participants]));
+
+    // Merge participants into byChallenge
+    for (const c of byChallenge) {
+      c.participants = participantsMap.get(c.contentId) || c.starts || 0;
+    }
+
+    // FALLBACK: If no rollup data, build challenge list from trackingactions directly
+    if (byChallenge.length === 0) {
+      const trackingAggPipeline: any[] = [
+        { $match: { timestamp: { $gte: from, $lte: to }, contentType: 'challenge' } },
+        { $lookup: { from: 'challenges', localField: 'contentId', foreignField: 'id', as: 'challenge' } },
+        { $unwind: '$challenge' },
+        { $match: { 'challenge.creatorId': new Types.ObjectId(creatorId) } },
+      ];
+
+      if (communityId) {
+        trackingAggPipeline.push({ $match: { 'challenge.communityId': communityId } });
+      }
+
+      trackingAggPipeline.push(
+        {
+          $group: {
+            _id: '$contentId',
+            views: { $sum: { $cond: [{ $eq: ['$actionType', 'view'] }, 1, 0] } },
+            starts: { $sum: { $cond: [{ $eq: ['$actionType', 'start'] }, 1, 0] } },
+            completes: { $sum: { $cond: [{ $eq: ['$actionType', 'complete'] }, 1, 0] } },
+            likes: { $sum: { $cond: [{ $eq: ['$actionType', 'like'] }, 1, 0] } },
+            shares: { $sum: { $cond: [{ $eq: ['$actionType', 'share'] }, 1, 0] } },
+            bookmarks: { $sum: { $cond: [{ $eq: ['$actionType', 'bookmark'] }, 1, 0] } },
+            challengeTitle: { $first: '$challenge.title' },
+            challengeTasks: { $first: '$challenge.tasks' },
+          },
+        },
+        {
+          $project: {
+            _id: 0,
+            contentId: '$_id',
+            views: 1,
+            starts: 1,
+            completes: 1,
+            likes: 1,
+            shares: 1,
+            bookmarks: 1,
+            participants: '$starts',
+            submissions: '$completes',
+            winners: { $floor: { $multiply: [{ $cond: [{ $gt: ['$starts', 0] }, { $divide: ['$completes', '$starts'] }, 0] }, 0.3] } },
+            completionRate: { $cond: [{ $gt: ['$starts', 0] }, { $multiply: [{ $divide: ['$completes', '$starts'] }, 100] }, 0] },
+            title: '$challengeTitle',
+            totalTasks: { $size: { $ifNull: ['$challengeTasks', []] } },
+          },
+        },
+        { $sort: { completes: -1 } },
+      );
+
+      const trackingResults = await tracking.aggregate(trackingAggPipeline).toArray();
+
+      // Recalculate winners based on completion rate
+      for (const c of trackingResults) {
+        c.winners = c.completionRate >= 90 ? Math.max(1, Math.floor(c.completes * 0.3)) : 0;
+        // Override participants with distinct count from participantsMap if available
+        c.participants = participantsMap.get(c.contentId) || c.starts || 0;
+      }
+
+      if (trackingResults.length > 0) {
+        this.setCache(key, { byChallenge: trackingResults, stepFunnel });
+        return { byChallenge: trackingResults, stepFunnel };
+      }
+    }
+
+    // FINAL FALLBACK: Query actual challenge documents + submissions collection directly
+    // This ensures data shows up even when no tracking events or rollup data exist
+    try {
+      const challengeQuery: any = { creatorId: new Types.ObjectId(creatorId) }; // removed isActive: true to show historical data
+      if (communityId) {
+        challengeQuery.communityId = communityId;
+      }
+
+      const challengeDocs = await this.dbConnection.db
+        ?.collection('challenges')
+        .find(challengeQuery)
+        .project({ id: 1, _id: 1, title: 1, tasks: 1, participants: 1, communityId: 1 })
+        .toArray() || [];
+
+      if (challengeDocs.length > 0) {
+        const challengeObjectIds = challengeDocs.map((c: any) => c._id);
+
+        // Count submissions within the date range
+        const submissionCounts = await this.dbConnection.db
+          ?.collection('challengesubmissions')
+          .aggregate([
+            {
+              $match: {
+                challengeId: { $in: challengeObjectIds },
+                createdAt: { $gte: from, $lte: to } // Filter by date range
+              }
+            },
+            { $group: { _id: '$challengeId', count: { $sum: 1 } } },
+          ])
+          .toArray() || [];
+
+        const submissionMap = new Map(
+          submissionCounts.map((s: any) => [s._id.toString(), s.count]),
+        );
+
+        if (byChallenge.length === 0) {
+          // No rollup or tracking data at all — build from challenge docs
+          const liveData = challengeDocs.map((c: any) => {
+            // Filter participants by joinedAt date range
+            const participantsList = Array.isArray(c.participants) ? c.participants : [];
+            const periodParticipants = participantsList.filter((p: any) => {
+              const joinedAt = new Date(p.joinedAt || p.createdAt || 0);
+              return joinedAt >= from && joinedAt <= to;
+            }).length;
+
+            const submissionCount = submissionMap.get(c._id.toString()) || 0;
+            const totalTasks = Array.isArray(c.tasks) ? c.tasks.length : 0;
+            const completionRate = periodParticipants > 0
+              ? (submissionCount / (periodParticipants * Math.max(totalTasks, 1))) * 100
+              : 0;
+
+            // Only include if there's activity or we really want to show valid challenges with 0 activity?
+            // Usually analytics shows items with 0 activity if they exist? 
+            // Better to show them.
+
+            return {
+              contentId: c.id || c._id.toString(),
+              title: c.title || c.id || 'Untitled Challenge',
+              views: periodParticipants, // Proxy views with starts for fallback
+              starts: periodParticipants,
+              completes: submissionCount > 0 ? Math.ceil(submissionCount / Math.max(totalTasks, 1)) : 0, // Approx
+              likes: 0,
+              shares: 0,
+              bookmarks: 0,
+              participants: periodParticipants, // Valid for the period
+              submissions: submissionCount,
+              winners: 0,
+              completionRate: Math.round(completionRate),
+              totalTasks,
+            };
+          });
+
+          // Sort by submissions or starts
+          liveData.sort((a: any, b: any) => b.submissions - a.submissions);
+
+          this.setCache(key, { byChallenge: liveData, stepFunnel });
+          return { byChallenge: liveData, stepFunnel };
+        } else {
+          // Enrich existing byChallenge entries
+          // Note: Rollup data is already date-filtered. 
+          // If we enrich, we should use the period-filtered fallback data too.
+          const liveMap = new Map(
+            challengeDocs.map((c: any) => {
+              const participantsList = Array.isArray(c.participants) ? c.participants : [];
+              const periodParticipants = participantsList.filter((p: any) => {
+                const joinedAt = new Date(p.joinedAt || p.createdAt || 0);
+                return joinedAt >= from && joinedAt <= to;
+              }).length;
+
+              return [
+                c.id || c._id.toString(),
+                {
+                  participants: periodParticipants,
+                  submissions: submissionMap.get(c._id.toString()) || 0,
+                },
+              ];
+            }),
+          );
+
+          for (const c of byChallenge) {
+            const live = liveMap.get(c.contentId);
+            if (live) {
+              // Only override if live data is greater (missing tracking)
+              // But wait, if rollup says 0 and live says 5, usage live.
+              c.participants = Math.max(c.participants || 0, live.participants);
+              c.submissions = Math.max(c.submissions || 0, live.submissions);
+            }
+          }
+        }
+      }
+    } catch (liveErr) {
+      console.warn('[AnalyticsService] Live challenge data fallback error:', liveErr);
+    }
 
     this.setCache(key, { byChallenge, stepFunnel });
     return { byChallenge, stepFunnel };
@@ -549,7 +803,7 @@ export class AnalyticsService {
     const cached = this.getCache<any>(key);
     if (cached) return cached;
     const match = { creatorId: new Types.ObjectId(creatorId), date: { $gte: from, $lte: to }, contentType: 'session' } as any;
-    
+
     if (communityId) {
       match.communityId = communityId;
     }
@@ -589,7 +843,7 @@ export class AnalyticsService {
     const cached = this.getCache<any>(key);
     if (cached) return cached;
     const match = { creatorId: new Types.ObjectId(creatorId), date: { $gte: from, $lte: to }, contentType: 'product' } as any;
-    
+
     if (communityId) {
       match.communityId = communityId;
     }
@@ -679,7 +933,7 @@ export class AnalyticsService {
         { upsert: true },
       );
     }
-    
+
     this.cache.clear();
     return { updated: docs.length, date: start.toISOString() };
   }
@@ -703,9 +957,9 @@ export class AnalyticsService {
     // Try GA4 first
     try {
       const ga4Devices = await this.ga4ReportingService.getCreatorDevices(
-        creatorId, 
-        from.toISOString().slice(0, 10), 
-        to.toISOString().slice(0, 10), 
+        creatorId,
+        from.toISOString().slice(0, 10),
+        to.toISOString().slice(0, 10),
         communityId
       );
       const isMeaningful = (device: string | undefined | null) => {
@@ -745,8 +999,10 @@ export class AnalyticsService {
 
       pipeline.push(
         { $addFields: { uaLower: { $toLower: { $ifNull: ['$metadata.userAgent', ''] } } } },
-        { $project: { device: { $ifNull: ['$metadata.device', { $cond: [ { $or: [ { $regexMatch: { input: '$uaLower', regex: 'ipad|tablet|playbook|silk' } }, { $and: [ { $regexMatch: { input: '$uaLower', regex: 'android' } }, { $not: [{ $regexMatch: { input: '$uaLower', regex: 'mobile' } }] } ] } ] }, 'tablet', { $cond: [ { $regexMatch: { input: '$uaLower', regex: 'mobi|iphone|ipod|iemobile|blackberry|kindle|opera mini|windows phone|android' } }, 'mobile', 'desktop' ] } ] }] }, os: { $ifNull: ['$metadata.os', 'unknown'] }, browser: { $ifNull: ['$metadata.browser', 'unknown'] } } },
-        { $group: { _id: { device: '$device', os: '$os', browser: '$browser' }, count: { $sum: 1 } } },
+        { $project: { userId: 1, device: { $ifNull: ['$metadata.device', { $cond: [{ $or: [{ $regexMatch: { input: '$uaLower', regex: 'ipad|tablet|playbook|silk' } }, { $and: [{ $regexMatch: { input: '$uaLower', regex: 'android' } }, { $not: [{ $regexMatch: { input: '$uaLower', regex: 'mobile' } }] }] }] }, 'tablet', { $cond: [{ $regexMatch: { input: '$uaLower', regex: 'mobi|iphone|ipod|iemobile|blackberry|kindle|opera mini|windows phone|android' } }, 'mobile', 'desktop'] }] }] }, os: { $ifNull: ['$metadata.os', 'unknown'] }, browser: { $ifNull: ['$metadata.browser', 'unknown'] } } },
+        // Count unique users per device bucket (Option A)
+        { $group: { _id: { device: '$device', os: '$os', browser: '$browser', userId: '$userId' } } },
+        { $group: { _id: { device: '$_id.device', os: '$_id.os', browser: '$_id.browser' }, count: { $sum: 1 } } },
         { $project: { _id: 0, device: '$_id.device', os: '$_id.os', browser: '$_id.browser', count: 1 } },
         { $sort: { count: -1 } },
       );
@@ -782,9 +1038,9 @@ export class AnalyticsService {
     // Try GA4 first
     try {
       const ga4Referrers = await this.ga4ReportingService.getCreatorReferrers(
-        creatorId, 
-        from.toISOString().slice(0, 10), 
-        to.toISOString().slice(0, 10), 
+        creatorId,
+        from.toISOString().slice(0, 10),
+        to.toISOString().slice(0, 10),
         communityId
       );
       if (ga4Referrers.length > 0) {
@@ -838,15 +1094,15 @@ export class AnalyticsService {
     return { rows };
   }
 
-  async exportCsv(creatorId: string, scope: 'overview'|'courses'|'challenges'|'sessions'|'events'|'products'|'posts', from: Date, to: Date, communityId?: string) {
+  async exportCsv(creatorId: string, scope: 'overview' | 'courses' | 'challenges' | 'sessions' | 'events' | 'products' | 'posts', from: Date, to: Date, communityId?: string) {
     // Restrictions removed: CSV export available for everyone
     // const sub = await this.subscriptionService.getMySubscription(creatorId);
     // const plan = (sub?.plan as PlanTier) || PlanTier.STARTER;
-    
+
     if (scope === 'overview') {
       const data = await this.getOverview(creatorId, from, to, PlanTier.PRO, communityId);
       const rows = [
-        ['metric','value'],
+        ['metric', 'value'],
         ['views', data.totals.views],
         ['starts', data.totals.starts],
         ['completes', data.totals.completes],
@@ -865,47 +1121,47 @@ export class AnalyticsService {
 
     if (scope === 'courses') {
       const res = await this.getCourses(creatorId, from, to, communityId);
-      const head = ['contentId','views','starts','completes','completionRate','watchTime','ratingsCount'];
+      const head = ['contentId', 'views', 'starts', 'completes', 'completionRate', 'watchTime', 'ratingsCount'];
       const rows = [head, ...res.byCourse.map((c: any) => [c.contentId, c.views, c.starts, c.completes, c.completionRate, c.watchTime, c.ratingsCount])];
       return { filename: 'courses.csv', csv: this.toCsv(rows) };
     }
 
     if (scope === 'challenges') {
       const res = await this.getChallenges(creatorId, from, to, communityId);
-      const head = ['contentId','views','starts','completes','completionRate'];
+      const head = ['contentId', 'views', 'starts', 'completes', 'completionRate'];
       const rows = [head, ...res.byChallenge.map((c: any) => [c.contentId, c.views, c.starts, c.completes, c.completionRate])];
       return { filename: 'challenges.csv', csv: this.toCsv(rows) };
     }
 
     if (scope === 'sessions') {
       const res = await this.getSessions(creatorId, from, to, communityId);
-      const head = ['contentId','views','starts','completes','completionRate'];
+      const head = ['contentId', 'views', 'starts', 'completes', 'completionRate'];
       const rows = [head, ...res.bySession.map((c: any) => [c.contentId, c.views, c.starts, c.completes, c.completionRate])];
       return { filename: 'sessions.csv', csv: this.toCsv(rows) };
     }
 
     if (scope === 'events') {
       const res = await this.getEvents(creatorId, from, to, communityId);
-      const head = ['contentId','views','starts','completes'];
+      const head = ['contentId', 'views', 'starts', 'completes'];
       const rows = [head, ...res.byEvent.map((c: any) => [c.contentId, c.views, c.starts, c.completes])];
       return { filename: 'events.csv', csv: this.toCsv(rows) };
     }
 
     if (scope === 'products') {
       const res = await this.getProducts(creatorId, from, to, communityId);
-      const head = ['contentId','views','likes','shares','downloads'];
+      const head = ['contentId', 'views', 'likes', 'shares', 'downloads'];
       const rows = [head, ...res.byProduct.map((c: any) => [c.contentId, c.views, c.likes, c.shares, c.downloads])];
       return { filename: 'products.csv', csv: this.toCsv(rows) };
     }
 
     // posts
     const res = await this.getPosts(creatorId, from, to, communityId);
-    const head = ['contentId','views','likes','shares','bookmarks','ratingsCount'];
+    const head = ['contentId', 'views', 'likes', 'shares', 'bookmarks', 'ratingsCount'];
     const rows = [head, ...res.byPost.map((c: any) => [c.contentId, c.views, c.likes, c.shares, c.bookmarks, c.ratingsCount])];
     return { filename: 'posts.csv', csv: this.toCsv(rows) };
   }
 
-  private toCsv(rows: (string|number)[][]) {
+  private toCsv(rows: (string | number)[][]) {
     return rows.map(r => r.map(v => (v === null || v === undefined) ? '' : String(v).replace(/"/g, '""')).map(v => /[",\n]/.test(v) ? `"${v}"` : v).join(',')).join('\n');
   }
 
@@ -920,6 +1176,23 @@ export class AnalyticsService {
     // Always return full data regardless of plan
     return {
       ...baseData,
+      views: Number(full?.totals?.views ?? 0) || 0,
+      viewsTotal: Number(full?.totals?.views ?? 0) || 0,
+      starts: Number(full?.totals?.starts ?? 0) || 0,
+      completes: Number(full?.totals?.completes ?? 0) || 0,
+      completions: Number(full?.totals?.completes ?? 0) || 0,
+      completionRate:
+        (Number(full?.totals?.starts ?? 0) || 0) > 0
+          ? ((Number(full?.totals?.completes ?? 0) || 0) / (Number(full?.totals?.starts ?? 0) || 0)) * 100
+          : 0,
+      avgDuration:
+        (Number(full?.totals?.starts ?? 0) || 0) > 0
+          ? Math.round((Number(full?.totals?.watchTime ?? 0) / (Number(full?.totals?.starts ?? 0) || 1)) / 60)
+          : 0,
+      averageDuration:
+        (Number(full?.totals?.starts ?? 0) || 0) > 0
+          ? Math.round((Number(full?.totals?.watchTime ?? 0) / (Number(full?.totals?.starts ?? 0) || 1)) / 60)
+          : 0,
       trend7d: full.trend.slice(-7),
       trend28d: full.trend.slice(-28),
       trendAll: full.trend,
@@ -948,8 +1221,8 @@ export class AnalyticsService {
     // Get tracking data for this specific course
     const tracking = this.dbConnection.collection('trackingactions');
     const courseTracking = await tracking.aggregate([
-      { 
-        $match: { 
+      {
+        $match: {
           timestamp: { $gte: from, $lte: to },
           contentType: 'course',
           contentId: courseId
@@ -967,8 +1240,8 @@ export class AnalyticsService {
 
     // Calculate completion rates
     const progress = await this.dbConnection.db?.collection('courseenrollments').aggregate([
-      { 
-        $match: { 
+      {
+        $match: {
           courseId: new Types.ObjectId(course._id)
         }
       },
@@ -985,8 +1258,8 @@ export class AnalyticsService {
     ]).toArray();
 
     const progressStats = progress?.[0] || { totalProgressItems: 0, completedItems: 0 };
-    const completionRate = progressStats.totalProgressItems > 0 
-      ? (progressStats.completedItems / progressStats.totalProgressItems) * 100 
+    const completionRate = progressStats.totalProgressItems > 0
+      ? (progressStats.completedItems / progressStats.totalProgressItems) * 100
       : 0;
 
     // Get revenue data
@@ -1042,8 +1315,8 @@ export class AnalyticsService {
 
     // Get chapter completion data
     const chapterStats = await this.dbConnection.db?.collection('courseenrollments').aggregate([
-      { 
-        $match: { 
+      {
+        $match: {
           courseId: new Types.ObjectId(course._id)
         }
       },
@@ -1096,8 +1369,8 @@ export class AnalyticsService {
         completedCount: stat.completedCount,
         completionRate: Math.round(stat.completionRate * 100) / 100
       })),
-      averageWatchTime: dailyTrend.length > 0 
-        ? dailyTrend.reduce((sum, day) => sum + (day.watchTime || 0), 0) / dailyTrend.length 
+      averageWatchTime: dailyTrend.length > 0
+        ? dailyTrend.reduce((sum, day) => sum + (day.watchTime || 0), 0) / dailyTrend.length
         : 0
     };
 
@@ -1108,23 +1381,27 @@ export class AnalyticsService {
   async debugCreatorStatus(creatorId: string, communityId?: string) {
     const tracking = this.dbConnection.collection('trackingactions');
     const coursesCol = this.dbConnection.collection('cours');
-    
+
     // 1. Check raw tracking actions for this creator's courses
     const trackingSummary = await tracking.aggregate([
       { $match: { contentType: 'course' } },
-      { $lookup: {
+      {
+        $lookup: {
           from: 'cours',
           localField: 'contentId',
           foreignField: 'id',
           as: 'courseInfo'
-      }},
+        }
+      },
       { $unwind: '$courseInfo' },
       { $match: { 'courseInfo.creatorId': new Types.ObjectId(creatorId) } },
-      { $group: {
+      {
+        $group: {
           _id: { action: '$actionType', contentId: '$contentId' },
           count: { $sum: 1 },
           communityId: { $first: '$courseInfo.communityId' }
-      }}
+        }
+      }
     ]).toArray();
 
     // 2. Count tracking actions for ALL content types
@@ -1135,7 +1412,7 @@ export class AnalyticsService {
     // 3. Check rollups in analytics_daily
     const match: any = { creatorId: new Types.ObjectId(creatorId) };
     if (communityId) match.communityId = communityId;
-    
+
     const rollupSummary = await this.dailyModel.aggregate([
       { $match: match },
       { $group: { _id: '$contentType', count: { $sum: 1 }, totalViews: { $sum: '$views' }, totalStarts: { $sum: '$starts' } } }

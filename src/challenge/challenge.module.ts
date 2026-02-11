@@ -13,6 +13,7 @@ import { PolicyModule } from '../common/modules/policy.module';
 import { UploadModule } from '../upload/upload.module';
 import { ContentProgressSchema } from '../schema/content-tracking.schema';
 import { ChallengeSubmission, ChallengeSubmissionSchema } from '../schema/challenge-submission.schema';
+import { AnalyticsDaily, AnalyticsDailySchema } from '../schema/analytics-daily.schema';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { ChallengeSubmission, ChallengeSubmissionSchema } from '../schema/challe
       { name: 'Order', schema: OrderSchema },
       { name: 'ContentProgress', schema: ContentProgressSchema },
       { name: ChallengeSubmission.name, schema: ChallengeSubmissionSchema },
+      { name: AnalyticsDaily.name, schema: AnalyticsDailySchema },
     ]),
     AuthModule,
     TrackingModule,
