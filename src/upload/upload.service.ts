@@ -27,10 +27,9 @@ export interface UploadResult {
 @Injectable()
 export class UploadService {
   private readonly uploadPath = 'uploads';
-  private readonly baseUrl =
-    process.env.SERVER_URL ||
-    process.env.BASE_URL ||
-    `http://localhost:${process.env.PORT || 3000}`;
+  // ALWAYS use production URL for file URLs, regardless of environment
+  // This ensures all uploads are accessible from api.chabaqa.io
+  private readonly baseUrl = 'https://api.chabaqa.io';
   private readonly storageUsageMap = new Map<string, number>(); // legacy in-memory (fallback)
 
   // Configuration des types de fichiers autorisés
@@ -165,7 +164,9 @@ export class UploadService {
   }
 
   /**
-   * S'assurer qu'une URL est absolue en utilisant la baseUrl actuelle
+   * S'assurer qu'une URL est absolue en utilisant la baseUrl de production (api.chabaqa.io)
+   * Cette méthode transforme TOUTES les URLs d'upload pour pointer vers api.chabaqa.io
+   * même en développement local, garantissant une cohérence totale.
    */
   ensureAbsoluteUrl(url: string | any): string {
     if (!url || typeof url !== 'string') return url;
@@ -175,28 +176,22 @@ export class UploadService {
 
     // Si l'URL est déjà absolue (starts with http)
     if (url.startsWith('http')) {
-      // Don't transform URLs that are already pointing to a valid server
-      // Only transform if it's pointing to localhost and we're in production
       try {
         const urlObj = new URL(url);
         
-        // If URL is already pointing to a production server (not localhost), keep it as is
-        if (!urlObj.hostname.includes('localhost') && !urlObj.hostname.includes('127.0.0.1')) {
+        // Si l'URL pointe déjà vers api.chabaqa.io, on la garde telle quelle
+        if (urlObj.hostname === 'api.chabaqa.io') {
           return url;
         }
         
-        // If we're in development (baseUrl is localhost), keep localhost URLs
-        if (this.baseUrl.includes('localhost') || this.baseUrl.includes('127.0.0.1')) {
-          return url;
-        }
-        
-        // Only transform localhost URLs to production URL if baseUrl is production
-        const currentOrigin = new URL(this.baseUrl).origin;
-        if (urlObj.pathname.includes('/uploads/') && urlObj.origin !== currentOrigin) {
-          result = `${this.baseUrl}${urlObj.pathname}${urlObj.search}`;
+        // Pour toute autre URL (localhost, 127.0.0.1, IP locale, etc.)
+        // on transforme vers api.chabaqa.io si c'est un chemin /uploads/
+        if (urlObj.pathname.includes('/uploads/')) {
+          result = `${this.baseUrl}${urlObj.pathname}${urlObj.search || ''}`;
         }
       } catch (e) {
         // En cas d'URL malformée, on retourne l'original
+        console.warn(`[UploadService] Invalid URL format: ${url}`);
       }
     } else if (url.startsWith('/uploads/') || url.startsWith('uploads/')) {
       // Si c'est un chemin relatif commençant par /uploads ou uploads
@@ -205,7 +200,7 @@ export class UploadService {
     }
 
     if (originalUrl !== result) {
-      console.log(`[UploadService] transformed: ${originalUrl} -> ${result}`);
+      console.log(`[UploadService] 🔄 URL transformed: ${originalUrl} -> ${result}`);
     }
     return result;
   }

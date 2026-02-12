@@ -152,7 +152,8 @@ export class WalletController {
       throw new BadRequestException('Invalid currency. Use DT, USD, or EUR');
     }
 
-    const baseUrl = process.env.SERVER_URL || process.env.BASE_URL || 'http://localhost:3000';
+    // Always use production URL for consistency
+    const baseUrl = 'https://api.chabaqa.io';
     const proofUrl = `${baseUrl}/uploads/topup-proofs/${file.filename}`;
 
     // Get user ID from either _id or sub (depending on JWT payload structure)
