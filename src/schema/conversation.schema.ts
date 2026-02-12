@@ -3,13 +3,13 @@ import { Document, Types } from 'mongoose';
 
 export type ConversationDocument = Conversation & Document;
 
-export type ConversationType = 'COMMUNITY_DM' | 'HELP_DM';
+export type ConversationType = 'COMMUNITY_DM' | 'HELP_DM' | 'PEER_DM';
 
 @Schema({ timestamps: true })
 export class Conversation {
   _id: Types.ObjectId;
 
-  @Prop({ type: String, required: true, enum: ['COMMUNITY_DM', 'HELP_DM'], index: true })
+  @Prop({ type: String, required: true, enum: ['COMMUNITY_DM', 'HELP_DM', 'PEER_DM'], index: true })
   type: ConversationType;
 
   @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })

@@ -21,6 +21,19 @@ export class DmController {
     return { conversation: conv };
   }
 
+  @Post('peer/start')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Démarrer une conversation avec un autre membre de la communauté' })
+  async startPeerConversation(@Body() body: { communityId: string; targetUserId: string }, @Request() req: any) {
+    const conv = await this.dmService.startPeerConversation(
+      req.user._id || req.user.userId,
+      body.targetUserId,
+      body.communityId
+    );
+    return { conversation: conv };
+  }
+
   @Post('help/start')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
@@ -34,7 +47,7 @@ export class DmController {
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Lister les conversations' })
-  async listInbox(@Query('type') type: 'community' | 'help', @Query('page') page = 1, @Query('limit') limit = 20, @Request() req: any) {
+  async listInbox(@Query('type') type: 'community' | 'help' | 'peer', @Query('page') page = 1, @Query('limit') limit = 20, @Request() req: any) {
     return this.dmService.listInbox(req.user._id || req.user.userId, type, Number(page), Number(limit));
   }
 

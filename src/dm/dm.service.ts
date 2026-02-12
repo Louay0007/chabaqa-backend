@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { Injectable, BadRequestException, ForbiddenException, NotFoundException, InternalServerErrorException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Conversation, ConversationDocument } from '../schema/conversation.schema';
@@ -28,13 +28,19 @@ export class DmService {
     const community = await this.communityModel.findById(communityId);
     if (!community) throw new NotFoundException('Communauté introuvable');
 
-    const isMember = community.isMember(new Types.ObjectId(userId));
+    const uid = new Types.ObjectId(userId);
+    const isMember = community.isMember(uid);
     if (!isMember) throw new ForbiddenException('Vous devez être membre de cette communauté');
 
     const creatorId = community.createur;
+    // Prevent starting a community DM with yourself if you are the creator
+    if (uid.equals(creatorId)) {
+      throw new BadRequestException('Vous ne pouvez pas démarrer une conversation avec vous-même');
+    }
+
     const existing = await this.conversationModel.findOne({
       type: 'COMMUNITY_DM',
-      participantA: new Types.ObjectId(userId),
+      participantA: uid,
       participantB: creatorId,
       communityId: community._id,
     });
@@ -42,14 +48,77 @@ export class DmService {
 
     const conv = await this.conversationModel.create({
       type: 'COMMUNITY_DM',
-      participantA: new Types.ObjectId(userId),
+      participantA: uid,
       participantB: creatorId,
       communityId: community._id,
       isOpen: true,
       unreadCountA: 0,
       unreadCountB: 0,
     });
-    return conv;
+    
+    const result = await this.conversationModel.findById(conv._id)
+      .populate('participantA', 'name firstName lastName email profile_picture photo_profil avatar photo username')
+      .populate('participantB', 'name firstName lastName email profile_picture photo_profil avatar photo username')
+      .populate('communityId', 'name slug logo');
+    
+    if (!result) throw new InternalServerErrorException('Error creating conversation');
+    return result;
+  }
+
+  async startPeerConversation(userId: string, targetUserId: string, communityId: string): Promise<ConversationDocument> {
+    if (userId === targetUserId) {
+      throw new BadRequestException('Vous ne pouvez pas démarrer une conversation avec vous-même');
+    }
+
+    const community = await this.communityModel.findById(communityId);
+    if (!community) throw new NotFoundException('Communauté introuvable');
+
+    const uid = new Types.ObjectId(userId);
+    const targetUid = new Types.ObjectId(targetUserId);
+
+    const isMemberA = community.isMember(uid);
+    const isMemberB = community.isMember(targetUid);
+
+    if (!isMemberA || !isMemberB) {
+      throw new ForbiddenException('Les deux utilisateurs doivent être membres de la même communauté');
+    }
+
+    // Check if this is actually a message to the creator, if so, redirect to startCommunityConversation logic
+    if (targetUid.equals(community.createur)) {
+      return this.startCommunityConversation(userId, communityId);
+    }
+
+    // Normal peer-to-peer conversation
+    const existing = await this.conversationModel.findOne({
+      type: 'PEER_DM',
+      communityId: community._id,
+      $or: [
+        { participantA: uid, participantB: targetUid },
+        { participantA: targetUid, participantB: uid },
+      ],
+    }).populate('participantA', 'name firstName lastName email profile_picture photo_profil avatar photo username')
+      .populate('participantB', 'name firstName lastName email profile_picture photo_profil avatar photo username')
+      .populate('communityId', 'name slug logo');
+
+    if (existing) return existing;
+
+    const conv = await this.conversationModel.create({
+      type: 'PEER_DM',
+      participantA: uid,
+      participantB: targetUid,
+      communityId: community._id,
+      isOpen: true,
+      unreadCountA: 0,
+      unreadCountB: 0,
+    });
+    
+    const result = await this.conversationModel.findById(conv._id)
+      .populate('participantA', 'name firstName lastName email profile_picture photo_profil avatar photo username')
+      .populate('participantB', 'name firstName lastName email profile_picture photo_profil avatar photo username')
+      .populate('communityId', 'name slug logo');
+
+    if (!result) throw new InternalServerErrorException('Error creating conversation');
+    return result;
   }
 
   async startHelpConversation(userId: string): Promise<ConversationDocument> {
@@ -91,16 +160,17 @@ export class DmService {
     return { items };
   }
 
-  async listInbox(userId: string, type?: 'community' | 'help', page = 1, limit = 20) {
+  async listInbox(userId: string, type?: 'community' | 'help' | 'peer', page = 1, limit = 20) {
     const filter: any = { $or: [{ participantA: new Types.ObjectId(userId) }, { participantB: new Types.ObjectId(userId) }] };
     if (type === 'community') filter.type = 'COMMUNITY_DM';
     if (type === 'help') filter.type = 'HELP_DM';
+    if (type === 'peer') filter.type = 'PEER_DM';
     const skip = (page - 1) * limit;
     const [items, total] = await Promise.all([
       this.conversationModel
         .find(filter)
-        .populate('participantA', 'name email profile_picture')
-        .populate('participantB', 'name email photo_profil poste departement')
+        .populate('participantA', 'name firstName lastName email profile_picture photo_profil avatar photo username role')
+        .populate('participantB', 'name firstName lastName email profile_picture photo_profil avatar photo username role')
         .populate('communityId', 'name slug logo')
         .sort({ lastMessageAt: -1 })
         .skip(skip)
@@ -120,8 +190,8 @@ export class DmService {
 
   async listMessages(conversationId: string, userId: string, page = 1, limit = 30, options?: { isAdmin?: boolean }) {
     const conv = await this.conversationModel.findById(conversationId)
-      .populate('participantA', 'name email profile_picture')
-      .populate('participantB', 'name email photo_profil poste departement');
+      .populate('participantA', 'name firstName lastName email profile_picture photo_profil avatar photo username role')
+      .populate('participantB', 'name firstName lastName email profile_picture photo_profil avatar photo username role');
     
     if (!conv) throw new NotFoundException('Conversation introuvable');
     
@@ -135,7 +205,6 @@ export class DmService {
     }
     
     // Check permissions: user must be participant or admin viewing help conversation
-    // When populated, participantA/B become documents; normalize to ObjectId before comparing.
     const participantAId = (conv as any)?.participantA?._id ? (conv as any).participantA._id : (conv as any).participantA;
     const participantBId = (conv as any)?.participantB?._id ? (conv as any).participantB._id : (conv as any).participantB;
 
@@ -144,26 +213,24 @@ export class DmService {
     const isParticipant = isParticipantA || isParticipantB;
     const isAdminViewingHelp = options?.isAdmin && conv.type === 'HELP_DM';
     
-    // Debug logging
     if (!isParticipant && !isAdminViewingHelp) {
-      console.log('🚫 [DM] Access denied:', {
-        userId: userId,
-        conversationId: conversationId,
-        conversationType: conv.type,
-        participantA: conv.participantA?.toString(),
-        participantB: conv.participantB?.toString(),
-        isParticipantA,
-        isParticipantB,
-        isAdmin: options?.isAdmin,
-      });
       throw new ForbiddenException('You do not have access to this conversation');
     }
+
+    // Membership check for COMMUNITY_DM and PEER_DM
+    if ((conv.type === 'COMMUNITY_DM' || conv.type === 'PEER_DM') && conv.communityId) {
+      const community = await this.communityModel.findById(conv.communityId);
+      if (!community || !community.isMember(uid)) {
+        throw new ForbiddenException('Vous n\'êtes plus membre de cette communauté');
+      }
+    }
+
     const skip = (page - 1) * limit;
     const [items, total] = await Promise.all([
       this.messageModel
         .find({ conversationId: conv._id })
-        .populate('senderId', 'name email profile_picture photo_profil poste departement role')
-        .populate('recipientId', 'name email profile_picture photo_profil poste departement role')
+        .populate('senderId', 'name firstName lastName email profile_picture photo_profil avatar photo username role')
+        .populate('recipientId', 'name firstName lastName email profile_picture photo_profil avatar photo username role')
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit),
@@ -199,6 +266,15 @@ export class DmService {
       }
       conv.participantB = sid; // auto-assign to this admin
     }
+
+    // Membership check for COMMUNITY_DM and PEER_DM
+    if ((conv.type === 'COMMUNITY_DM' || conv.type === 'PEER_DM') && conv.communityId) {
+      const community = await this.communityModel.findById(conv.communityId);
+      if (!community || !community.isMember(sid)) {
+        throw new ForbiddenException('Vous n\'êtes plus membre de cette communauté');
+      }
+    }
+
     if (!payload.text && (!payload.attachments || payload.attachments.length === 0)) {
       throw new BadRequestException('Message vide');
     }

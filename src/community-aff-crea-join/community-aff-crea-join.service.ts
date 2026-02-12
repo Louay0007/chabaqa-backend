@@ -12,6 +12,7 @@ import { FeeService } from '../common/services/fee.service';
 import { TrackableContentType, ContentProgressDocument } from '../schema/content-tracking.schema';
 import { NotificationService } from '../notification/notification.service';
 import { ContentTrackingService } from '../common/services/content-tracking.service';
+import { PaginatedResponseDto } from '../common/dto/paginated-response.dto';
 
 @Injectable()
 export class CommunityAffCreaJoinService {
@@ -578,19 +579,19 @@ export class CommunityAffCreaJoinService {
         // Query by ID
         community = await this.communityModel
           .findById(idOrSlug)
-          .populate('createur', 'name email profile_picture photo_profil bio')
-          .populate('members', 'name email avatar photo')
-          .populate('admins', 'name email avatar photo')
-          .populate('moderateurs', 'name email avatar photo')
+          .populate('createur', 'name firstName lastName email profile_picture photo_profil avatar photo bio username')
+          .populate('members', 'name firstName lastName email profile_picture photo_profil avatar photo username')
+          .populate('admins', 'name firstName lastName email profile_picture photo_profil avatar photo username')
+          .populate('moderateurs', 'name firstName lastName email profile_picture photo_profil avatar photo username')
           .exec();
       } else {
         // Query by slug
         community = await this.communityModel
           .findOne({ slug: idOrSlug })
-          .populate('createur', 'name email profile_picture photo_profil bio')
-          .populate('members', 'name email avatar photo')
-          .populate('admins', 'name email avatar photo')
-          .populate('moderateurs', 'name email avatar photo')
+          .populate('createur', 'name firstName lastName email profile_picture photo_profil avatar photo bio username')
+          .populate('members', 'name firstName lastName email profile_picture photo_profil avatar photo username')
+          .populate('admins', 'name firstName lastName email profile_picture photo_profil avatar photo username')
+          .populate('moderateurs', 'name firstName lastName email profile_picture photo_profil avatar photo username')
           .exec();
       }
 
@@ -608,6 +609,62 @@ export class CommunityAffCreaJoinService {
       console.error('Erreur lors de la récupération de la communauté:', error);
       throw new InternalServerErrorException('Erreur lors de la récupération de la communauté');
     }
+  }
+
+  async getCommunityMembers(
+    communityIdOrSlug: string,
+    requesterId: string,
+    page: number = 1,
+    limit: number = 20,
+  ): Promise<PaginatedResponseDto<any>> {
+    const community = await this.getCommunityById(communityIdOrSlug);
+
+    const requesterObjectId = new Types.ObjectId(requesterId);
+    if (!community.isMember(requesterObjectId)) {
+      throw new ForbiddenException('Vous devez être membre de cette communauté');
+    }
+
+    const members = (community as any).members || [];
+    const total = members.length;
+    const start = (page - 1) * limit;
+    const end = start + limit;
+
+    const creatorId = (community as any).createur?._id ? (community as any).createur._id : (community as any).createur;
+    const adminIds = ((community as any).admins || []).map((a: any) => (a?._id ? a._id : a));
+    const moderatorIds = ((community as any).moderateurs || []).map((m: any) => (m?._id ? m._id : m));
+
+    const items = members.slice(start, end).map((u: any) => {
+      const userId = u?._id ? u._id : u;
+      const isCreator = creatorId && userId && new Types.ObjectId(userId).equals(creatorId);
+      const isAdmin = adminIds.some((a: any) => a && new Types.ObjectId(a).equals(userId));
+      const isModerator = moderatorIds.some((m: any) => m && new Types.ObjectId(m).equals(userId));
+
+      const role = isCreator || isAdmin ? 'admin' : isModerator ? 'moderator' : 'member';
+
+      return {
+        id: `${community._id.toString()}-${userId.toString()}`,
+        userId: userId.toString(),
+        communityId: community._id.toString(),
+        role,
+        joinedAt: community.createdAt ? new Date(community.createdAt).toISOString() : new Date().toISOString(),
+        user: {
+          id: userId.toString(),
+          email: u?.email,
+          username: (u as any)?.username,
+          firstName: (u as any)?.firstName,
+          lastName: (u as any)?.lastName,
+          name: (u as any)?.name || ((u as any)?.firstName && (u as any)?.lastName ? `${(u as any).firstName} ${(u as any).lastName}` : (u as any)?.username),
+          avatar: (u as any)?.avatar || (u as any)?.profile_picture || (u as any)?.photo_profil || (u as any)?.photo,
+          bio: (u as any)?.bio,
+          role: (u as any)?.role,
+          verified: (u as any)?.verified,
+          createdAt: (u as any)?.createdAt,
+          updatedAt: (u as any)?.updatedAt,
+        },
+      };
+    });
+
+    return new PaginatedResponseDto(items, total, page, limit);
   }
 
   /**

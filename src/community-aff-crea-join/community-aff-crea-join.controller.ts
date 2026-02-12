@@ -34,6 +34,7 @@ import { JoinCommunityDto, JoinByInviteDto, GenerateInviteDto } from '../dto-com
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Query } from '@nestjs/common';
 import { FileType, UploadService } from '../upload/upload.service';
+import { PaginatedResponseDto } from '../common/dto/paginated-response.dto';
 
 @ApiTags('Community Management')
 @Controller('community-aff-crea-join')
@@ -877,6 +878,30 @@ export class CommunityAffCreaJoinController {
     } catch (error) {
       throw error;
     }
+  }
+
+  @Get(':id/members')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Obtenir les membres d\'une communauté',
+    description: 'Retourne les membres d\'une communauté avec leur rôle (admin/moderator/member) et pagination.'
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'ID MongoDB ou slug de la communauté',
+  })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  async getCommunityMembers(
+    @Param('id') id: string,
+    @Request() req: any,
+    @Query('page') page: number = 1,
+    @Query('limit') limit: number = 20,
+  ): Promise<PaginatedResponseDto<any>> {
+    const userId = req.user._id || req.user.userId;
+    return this.communityService.getCommunityMembers(id, userId, Number(page), Number(limit));
   }
 
   /**
