@@ -29,7 +29,7 @@ async function bootstrap() {
 
 
   app.use(express.static('public'));
-  app.use('/uploads', cors(), express.static('uploads'));
+  // app.use('/uploads', cors(), express.static('uploads')); // Handled by ServeStaticModule in AppModule
 
 
   app.use(express.json({ limit: '1gb' }));

@@ -86,8 +86,11 @@ import { ChallengeSubmission, ChallengeSubmissionSchema } from './schema/challen
 
     // 2) Configuration pour servir les fichiers statiques
     ServeStaticModule.forRoot({
-      rootPath: join(__dirname, '..', 'uploads'),
+      rootPath: join(process.cwd(), 'uploads'),
       serveRoot: '/uploads',
+      serveStaticOptions: {
+        index: false,
+      },
     }),
 
     // 3) connexion MongoDB + test immédiat

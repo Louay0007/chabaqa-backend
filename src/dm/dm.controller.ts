@@ -6,6 +6,9 @@ import { DmService } from './dm.service';
 import { AdminGuard } from '../auth/guards/admin.guard';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { UploadService, FileType } from '../upload/upload.service';
+import { diskStorage } from 'multer';
+import { extname } from 'path';
+import { v4 as uuidv4 } from 'uuid';
 
 @ApiTags('Direct Messages')
 @Controller('dm')
@@ -76,7 +79,34 @@ export class DmController {
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Uploader une pièce jointe et l\'envoyer dans la conversation' })
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(FileInterceptor('file', {
+    storage: diskStorage({
+      destination: (req, file, cb) => {
+        const extension = extname(file.originalname).toLowerCase();
+        let folder = 'uploads/document';
+
+        if (['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg'].includes(extension)) {
+          folder = 'uploads/image';
+        } else if (['.mp4', '.avi', '.mov', '.wmv', '.flv', '.webm'].includes(extension)) {
+          folder = 'uploads/video';
+        } else if (['.pdf', '.doc', '.docx', '.txt', '.rtf', '.odt'].includes(extension)) {
+          folder = 'uploads/document';
+        } else if (['.mp3', '.wav', '.ogg', '.aac', '.flac'].includes(extension)) {
+          folder = 'uploads/audio';
+        }
+
+        cb(null, folder);
+      },
+      filename: (req, file, cb) => {
+        const extension = extname(file.originalname);
+        const uniqueName = `${Date.now()}-${uuidv4()}${extension}`;
+        cb(null, uniqueName);
+      },
+    }),
+    limits: {
+      fileSize: 500 * 1024 * 1024,
+    },
+  }))
   async uploadAttachment(
     @Param('conversationId') conversationId: string,
     @UploadedFile() file: Express.Multer.File,
@@ -85,8 +115,7 @@ export class DmController {
     if (!file) {
       return { message: 'Aucun fichier' };
     }
-    const uniqueName = this.uploadService.generateFilename(file.originalname);
-    const processed = await this.uploadService.processUploadedFile(file, uniqueName, { userId: req.user._id || req.user.userId });
+    const processed = await this.uploadService.processUploadedFile(file, file.filename, { userId: req.user._id || req.user.userId });
     const attachmentType: 'image' | 'file' | 'video' =
       processed.type === FileType.IMAGE ? 'image' : processed.type === FileType.VIDEO ? 'video' : 'file';
     const isAdmin = req.user?.role === 'admin' || req.user?.isAdmin === true;
