@@ -13,12 +13,55 @@ import {
   NotFoundException,
   HttpStatus,
   HttpCode,
+  Request,
 } from '@nestjs/common';
 import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import { ApiTags, ApiOperation, ApiResponse, ApiBody, ApiBearerAuth, ApiParam, ApiQuery, ApiConsumes } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { UploadService, FileType } from './upload.service';
 import { UploadResponseDto, MultipleUploadResponseDto, DeleteFileResponseDto } from './dto/upload-response.dto';
+import { diskStorage } from 'multer';
+import { extname, join } from 'path';
+import { v4 as uuidv4 } from 'uuid';
+
+/**
+ * Shared logic for determining upload destination
+ */
+const getDestination = (req, file, cb) => {
+  const extension = extname(file.originalname).toLowerCase();
+  let folder = 'uploads/document';
+
+  if (['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg'].includes(extension)) {
+    folder = 'uploads/image';
+  } else if (['.mp4', '.avi', '.mov', '.wmv', '.flv', '.webm'].includes(extension)) {
+    folder = 'uploads/video';
+  } else if (['.pdf', '.doc', '.docx', '.txt', '.rtf', '.odt'].includes(extension)) {
+    folder = 'uploads/document';
+  } else if (['.mp3', '.wav', '.ogg', '.aac', '.flac'].includes(extension)) {
+    folder = 'uploads/audio';
+  }
+
+  cb(null, folder);
+};
+
+/**
+ * Shared logic for generating unique filename
+ */
+const getFilename = (req, file, cb) => {
+  const extension = extname(file.originalname);
+  const uniqueName = `${Date.now()}-${uuidv4()}${extension}`;
+  cb(null, uniqueName);
+};
+
+const commonMulterOptions = {
+  storage: diskStorage({
+    destination: getDestination,
+    filename: getFilename,
+  }),
+  limits: {
+    fileSize: 500 * 1024 * 1024, // 500MB
+  },
+};
 
 @ApiTags('Upload')
 @Controller('upload')
@@ -33,7 +76,7 @@ export class UploadController {
    */
   @Post('single')
   @HttpCode(HttpStatus.CREATED)
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(FileInterceptor('file', commonMulterOptions))
   @ApiOperation({
     summary: 'Upload Single File',
     description: 'Upload a single file with automatic type detection. Supports images, videos, documents, and audio.',
@@ -147,7 +190,13 @@ export class UploadController {
    */
   @Post('image')
   @HttpCode(HttpStatus.CREATED)
-  @UseInterceptors(FileInterceptor('image'))
+  @UseInterceptors(FileInterceptor('image', {
+    storage: diskStorage({
+      destination: (req, file, cb) => cb(null, 'uploads/image'),
+      filename: getFilename,
+    }),
+    limits: { fileSize: 10 * 1024 * 1024 }
+  }))
   async uploadImage(
     @UploadedFile() file: Express.Multer.File
   ): Promise<UploadResponseDto> {
@@ -181,7 +230,13 @@ export class UploadController {
    */
   @Post('video')
   @HttpCode(HttpStatus.CREATED)
-  @UseInterceptors(FileInterceptor('video'))
+  @UseInterceptors(FileInterceptor('video', {
+    storage: diskStorage({
+      destination: (req, file, cb) => cb(null, 'uploads/video'),
+      filename: getFilename,
+    }),
+    limits: { fileSize: 500 * 1024 * 1024 }
+  }))
   async uploadVideo(
     @UploadedFile() file: Express.Multer.File
   ): Promise<UploadResponseDto> {
@@ -228,7 +283,13 @@ export class UploadController {
    */
   @Post('document')
   @HttpCode(HttpStatus.CREATED)
-  @UseInterceptors(FileInterceptor('document'))
+  @UseInterceptors(FileInterceptor('document', {
+    storage: diskStorage({
+      destination: (req, file, cb) => cb(null, 'uploads/document'),
+      filename: getFilename,
+    }),
+    limits: { fileSize: 50 * 1024 * 1024 }
+  }))
   async uploadDocument(
     @UploadedFile() file: Express.Multer.File
   ): Promise<UploadResponseDto> {
@@ -262,7 +323,7 @@ export class UploadController {
    */
   @Post('multiple')
   @HttpCode(HttpStatus.CREATED)
-  @UseInterceptors(FilesInterceptor('files', 10)) // Maximum 10 fichiers
+  @UseInterceptors(FilesInterceptor('files', 10, commonMulterOptions)) // Maximum 10 fichiers
   async uploadMultiple(
     @UploadedFiles() files: Express.Multer.File[]
   ): Promise<MultipleUploadResponseDto> {

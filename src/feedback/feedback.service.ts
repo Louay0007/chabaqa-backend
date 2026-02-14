@@ -1,5 +1,5 @@
 
-import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Feedback } from '../schema/feedback.schema';
@@ -33,7 +33,23 @@ export class FeedbackService {
     });
 
     if (existingFeedback) {
-      throw new ConflictException('You have already submitted feedback for this item.');
+      existingFeedback.rating = rating;
+      existingFeedback.comment = comment;
+      await existingFeedback.save();
+
+      // Update average rating
+      await this.recalculateAverageRating(relatedTo, relatedModel);
+
+      const populatedFeedback = await this.feedbackModel
+        .findById(existingFeedback._id)
+        .populate('user', 'name email photo_profil')
+        .exec();
+
+      if (!populatedFeedback) {
+        throw new NotFoundException('Failed to retrieve updated feedback');
+      }
+
+      return populatedFeedback;
     }
 
     const newFeedback = new this.feedbackModel({
@@ -44,9 +60,9 @@ export class FeedbackService {
       user: new Types.ObjectId(userId),
     });
 
-    await this.updateAverageRating(relatedTo, relatedModel, rating);
-
     const savedFeedback = await newFeedback.save();
+
+    await this.recalculateAverageRating(relatedTo, relatedModel);
     
     // Populate user data before returning
     const populatedFeedback = await this.feedbackModel
@@ -73,11 +89,10 @@ export class FeedbackService {
 
     feedback.rating = rating;
     feedback.comment = comment;
+    await feedback.save();
 
     // Update average rating
     await this.recalculateAverageRating(feedback.relatedTo.toString(), feedback.relatedModel);
-
-    await feedback.save();
     
     // Populate user data before returning
     const populatedFeedback = await this.feedbackModel
@@ -141,24 +156,6 @@ export class FeedbackService {
       ratingCount: feedbacks.length,
       distribution,
     };
-  }
-
-  private async updateAverageRating(relatedTo: string, relatedModel: string, newRating: number): Promise<void> {
-    const model = this.getModel(relatedModel);
-    const item = await model.findById(relatedTo);
-
-    if (!item) {
-      throw new NotFoundException(`${relatedModel} not found`);
-    }
-
-    const oldRatingTotal = (item.averageRating || 0) * (item.ratingCount || 0);
-    const newRatingCount = (item.ratingCount || 0) + 1;
-    const newAverageRating = (oldRatingTotal + newRating) / newRatingCount;
-
-    item.averageRating = newAverageRating;
-    item.ratingCount = newRatingCount;
-
-    await item.save();
   }
 
   private async recalculateAverageRating(relatedTo: string, relatedModel: string): Promise<void> {

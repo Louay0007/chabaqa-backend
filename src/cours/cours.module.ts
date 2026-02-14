@@ -2,7 +2,7 @@ import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { MulterModule } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
-import { extname } from 'path';
+import { extname, join } from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { CoursController } from './cours.controller';
 import { CoursService } from './cours.service';
@@ -51,7 +51,8 @@ import { AchievementModule } from '../achievement/achievement.module';
           const extension = extname(file.originalname);
           const uuid = uuidv4();
           const timestamp = Date.now();
-          cb(null, `${timestamp}-${uuid}${extension}`);
+          const uniqueName = `${timestamp}-${uuid}${extension}`;
+          cb(null, uniqueName);
         }
       }),
       limits: {

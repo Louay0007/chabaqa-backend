@@ -41,7 +41,7 @@ export const ConversationSchema = SchemaFactory.createForClass(Conversation);
 
 ConversationSchema.index(
   { type: 1, participantA: 1, participantB: 1, communityId: 1 },
-  { unique: false }
+  { unique: true, sparse: true }
 );
 
 ConversationSchema.index({ lastMessageAt: -1 });

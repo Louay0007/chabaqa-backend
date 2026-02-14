@@ -497,7 +497,7 @@ export class CoursService {
     // Essayer de trouver par _id (MongoDB ID)
     if (Types.ObjectId.isValid(coursId)) {
       cours = await this.coursModel.findById(coursId)
-        .populate('creatorId', 'name email profile_picture photo_profil')
+        .populate('creatorId', 'name email profile_picture photo_profil bio')
         .exec();
     }
 
@@ -505,7 +505,7 @@ export class CoursService {
     if (!cours) {
       console.log(`   ⚠️ Non trouvé par _id, recherche par champ 'id': ${coursId}`);
       cours = await this.coursModel.findOne({ id: coursId })
-        .populate('creatorId', 'name email profile_picture photo_profil')
+        .populate('creatorId', 'name email profile_picture photo_profil bio')
         .exec();
     }
 
@@ -1049,7 +1049,7 @@ export class CoursService {
       });
 
       // Safely handle creator data
-      let creator: { id: string; name: string; email: string; avatar?: string } | undefined = undefined;
+      let creator: { id: string; name: string; email: string; avatar?: string; bio?: string } | undefined = undefined;
       if (cours.creatorId) {
         const creatorData = cours.creatorId as any;
         if (typeof creatorData === 'object' && creatorData.name) {
@@ -1057,7 +1057,8 @@ export class CoursService {
             id: creatorData._id?.toString() || '',
             name: creatorData.name,
             email: creatorData.email,
-            avatar: this.uploadService.ensureAbsoluteUrl(creatorData.profile_picture || creatorData.photo_profil)
+            avatar: this.uploadService.ensureAbsoluteUrl(creatorData.profile_picture || creatorData.photo_profil),
+            bio: creatorData.bio || ''
           };
         }
       }

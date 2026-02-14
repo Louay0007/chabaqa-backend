@@ -290,7 +290,10 @@ export class UserService {
     if (!updatedUser) {
       throw new NotFoundException(`User #${id} not found`);
     }
-    return updatedUser;
+    const u = updatedUser.toObject();
+    u.photo_profil = this.uploadService.ensureAbsoluteUrl(u.photo_profil);
+    u.profile_picture = this.uploadService.ensureAbsoluteUrl(u.profile_picture);
+    return u as IUser;
   }
 
   // update user password

@@ -8,6 +8,8 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import * as express from 'express';
 import { SecurityMiddleware } from './common/middleware/security.middleware';
 import { WAFMiddleware } from './common/middleware/waf.middleware';
+import { AbsoluteUploadsUrlInterceptor } from './common/interceptors/absolute-uploads-url.interceptor';
+import { UploadService } from './upload/upload.service';
 import os from 'os';
 
 const getLocalNetworkIp = (): string => {
@@ -61,6 +63,9 @@ async function bootstrap() {
 
 
   app.useGlobalFilters(new HttpExceptionFilter());
+
+  // Normalize any /uploads URLs in all API responses to HTTPS production domain
+  app.useGlobalInterceptors(new AbsoluteUploadsUrlInterceptor(app.get(UploadService)));
 
 
   app.setGlobalPrefix('api');

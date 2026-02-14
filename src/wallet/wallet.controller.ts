@@ -17,7 +17,7 @@ import { WalletService } from './wallet.service';
 import { TopUpCurrency } from '../schema/topup-request.schema';
 import { WalletTransactionType, WalletPurchaseContentType } from '../schema/wallet-transaction.schema';
 import { diskStorage } from 'multer';
-import { extname } from 'path';
+import { extname, join } from 'path';
 import { v4 as uuidv4 } from 'uuid';
 
 @Controller('wallet')
@@ -113,10 +113,11 @@ export class WalletController {
   @UseInterceptors(
     FileInterceptor('proof', {
       storage: diskStorage({
-        destination: './uploads/topup-proofs',
+        destination: join(process.cwd(), 'uploads/topup-proofs'),
         filename: (req, file, cb) => {
-          const uniqueSuffix = uuidv4();
-          cb(null, `${uniqueSuffix}${extname(file.originalname)}`);
+          const extension = extname(file.originalname);
+          const uniqueName = `${Date.now()}-${uuidv4()}${extension}`;
+          cb(null, uniqueName);
         },
       }),
       fileFilter: (req, file, cb) => {
@@ -152,9 +153,8 @@ export class WalletController {
       throw new BadRequestException('Invalid currency. Use DT, USD, or EUR');
     }
 
-    // Always use production URL for consistency
-    const baseUrl = 'https://api.chabaqa.io';
-    const proofUrl = `${baseUrl}/uploads/topup-proofs/${file.filename}`;
+    // Use UploadService to generate public URL for consistency
+    const proofUrl = `https://api.chabaqa.io/uploads/topup-proofs/${file.filename}`;
 
     // Get user ID from either _id or sub (depending on JWT payload structure)
     const userId = this.getUserId(req);

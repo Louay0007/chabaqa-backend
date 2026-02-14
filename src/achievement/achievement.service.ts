@@ -52,7 +52,7 @@ export class AchievementService {
    */
   private async calculateProgress(
     userId: string,
-    communityId: string,
+    communityId: string | undefined,
     achievement: AchievementResponseDto,
   ): Promise<{ current: number; target: number; percentage: number }> {
     const criteria = achievement.criteria;
@@ -80,24 +80,32 @@ export class AchievementService {
 
   private async calculateCountCreatedProgress(
     userId: string,
-    communityId: string,
+    communityId: string | undefined,
     criteria: any,
   ): Promise<{ current: number; target: number; percentage: number }> {
     const target = criteria.count || 1;
     let current = 0;
 
     if (criteria.contentType === 'post') {
-      current = await this.postModel.countDocuments({
+      const filter: any = {
         authorId: new Types.ObjectId(userId),
-        communityId: new Types.ObjectId(communityId),
-      });
+      };
+      if (communityId) {
+        filter.communityId = new Types.ObjectId(communityId);
+      }
+      current = await this.postModel.countDocuments(filter);
     } else if (criteria.contentType === 'comment') {
-      const result = await this.postModel.aggregate([
-        { $match: { communityId: new Types.ObjectId(communityId) } },
+      const pipeline: any[] = [];
+      if (communityId) {
+        pipeline.push({ $match: { communityId: new Types.ObjectId(communityId) } });
+      }
+      pipeline.push(
         { $unwind: '$comments' },
         { $match: { 'comments.userId': new Types.ObjectId(userId) } },
         { $count: 'total' }
-      ]);
+      );
+      
+      const result = await this.postModel.aggregate(pipeline);
       current = result.length > 0 ? result[0].total : 0;
     }
 
@@ -110,7 +118,7 @@ export class AchievementService {
 
   private async calculatePointsEarnedProgress(
     userId: string,
-    communityId: string,
+    communityId: string | undefined,
     criteria: any,
   ): Promise<{ current: number; target: number; percentage: number }> {
     const target = criteria.points || 100;
@@ -127,12 +135,16 @@ export class AchievementService {
 
   private async calculateCommunityJoinDateProgress(
     userId: string,
-    communityId: string,
+    communityId: string | undefined,
     criteria: any,
   ): Promise<{ current: number; target: number; percentage: number }> {
     const targetMonths = criteria.monthsSinceJoin || 1;
     const targetDays = criteria.days || (targetMonths * 30);
     
+    if (!communityId) {
+      return { current: 0, target: targetDays, percentage: 0 };
+    }
+
     const activity = await this.userLoginActivityModel.findOne({
       userId: new Types.ObjectId(userId),
       communityId: new Types.ObjectId(communityId)
@@ -156,7 +168,7 @@ export class AchievementService {
 
   private async calculateCountCompletedProgress(
     userId: string,
-    communityId: string,
+    communityId: string | undefined,
     criteria: any,
   ): Promise<{ current: number; target: number; percentage: number }> {
     const target = criteria.count || 1;
@@ -183,7 +195,7 @@ export class AchievementService {
 
   private async calculateTimeSpentProgress(
     userId: string,
-    communityId: string,
+    communityId: string | undefined,
     criteria: any,
   ): Promise<{ current: number; target: number; percentage: number }> {
     const target = criteria.timeMinutes || 60; // minutes
@@ -292,24 +304,31 @@ export class AchievementService {
    */
   async getUserAchievementsWithProgress(
     userId: string,
-    communitySlug: string,
+    communitySlug?: string,
   ): Promise<AchievementWithProgressDto[]> {
-    const community = await this.communityModel.findOne({ slug: communitySlug });
-    if (!community) {
-      throw new NotFoundException('Community not found');
+    let communityId: Types.ObjectId | undefined;
+
+    if (communitySlug) {
+      const community = await this.communityModel.findOne({ slug: communitySlug });
+      if (!community) {
+        throw new NotFoundException('Community not found');
+      }
+      communityId = community._id;
     }
 
-    const communityId = community._id;
-
-    // Get all achievements for this community
-    const achievements = await this.getAchievementsForCommunity(communitySlug);
+    // Get available achievements (Global if no community, or Community+Global if community)
+    const availableAchievements = await this.getAchievementsForCommunity(communitySlug);
 
     // Get user's earned achievements
+    const filter: any = {
+      userId: new Types.ObjectId(userId),
+    };
+    if (communityId) {
+      filter.communityId = communityId;
+    }
+
     const userAchievements = await this.userAchievementModel
-      .find({
-        userId: new Types.ObjectId(userId),
-        communityId,
-      })
+      .find(filter)
       .populate('achievementId')
       .exec();
 
@@ -317,10 +336,24 @@ export class AchievementService {
       userAchievements.map(ua => [ua.achievementId.toString(), ua])
     );
 
+    // Merge lists: Start with available achievements
+    const allAchievements = new Map<string, AchievementResponseDto>();
+    availableAchievements.forEach(a => allAchievements.set(a.id, a));
+
+    // Add any earned achievement that is NOT in the available list (e.g. if we are in global view but user earned a community achievement)
+    // Note: If communitySlug IS provided, availableAchievements should already cover everything relevant for that community.
+    // But if communitySlug is NOT provided, availableAchievements only has Global ones. We want to include earned community achievements too.
+    for (const ua of userAchievements) {
+      const achievementDef = ua.achievementId as unknown as AchievementDocument;
+      if (achievementDef && !allAchievements.has(achievementDef.id)) {
+        allAchievements.set(achievementDef.id, this.mapToResponseDto(achievementDef));
+      }
+    }
+
     // Calculate progress for each achievement
     const results: AchievementWithProgressDto[] = [];
 
-    for (const achievement of achievements) {
+    for (const achievement of allAchievements.values()) {
       const userAchievement = earnedMap.get(achievement.id);
 
       if (userAchievement) {
@@ -333,7 +366,10 @@ export class AchievementService {
         });
       } else {
         // Calculate progress
-        const progress = await this.calculateProgress(userId, communityId.toString(), achievement);
+        // Only calculate progress if it's in the available list (which implies it's relevant to current context)
+        // If it was added because it was earned, we wouldn't be in this branch.
+        
+        const progress = await this.calculateProgress(userId, communityId?.toString(), achievement);
         results.push({
           ...achievement,
           isUnlocked: false,

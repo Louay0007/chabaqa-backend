@@ -36,10 +36,10 @@ export class AchievementController {
     summary: 'Get user achievements with progress',
     description: 'Get all achievements for a community with user progress and unlock status',
   })
-  @ApiQuery({ name: 'communitySlug', required: true, description: 'Community slug' })
+  @ApiQuery({ name: 'communitySlug', required: false, description: 'Community slug' })
   async getUserAchievements(
     @Request() req: any,
-    @Query('communitySlug') communitySlug: string,
+    @Query('communitySlug') communitySlug?: string,
   ): Promise<AchievementWithProgressDto[]> {
     return this.achievementService.getUserAchievementsWithProgress(req.user.userId, communitySlug);
   }

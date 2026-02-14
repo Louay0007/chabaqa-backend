@@ -148,11 +148,20 @@ export class AuthService {
     
     // Transform the user data to match frontend expectations
     const userObject = user.toObject();
+
+    // Normalize upload URLs to HTTPS production domain to prevent mixed-content issues
+    const normalizedPhotoProfil = this.uploadService.ensureAbsoluteUrl(userObject.photo_profil || '');
+    const normalizedProfilePicture = this.uploadService.ensureAbsoluteUrl(userObject.profile_picture || '');
+    const normalizedAvatar = this.uploadService.ensureAbsoluteUrl(
+      userObject.profile_picture || userObject.photo_profil || ''
+    );
     
     // Map backend photo fields to frontend avatar field
     return {
       ...userObject,
-      avatar: userObject.photo_profil || userObject.profile_picture,
+      photo_profil: normalizedPhotoProfil,
+      profile_picture: normalizedProfilePicture,
+      avatar: normalizedAvatar,
       username: userObject.name, // Map name to username for frontend compatibility
       firstName: userObject.name, // Map name to firstName for frontend compatibility
     } as any;

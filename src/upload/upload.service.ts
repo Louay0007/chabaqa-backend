@@ -367,9 +367,9 @@ export class UploadService {
     }
 
     const relativePath = options?.folder
-      ? `${FileType.IMAGE}/${options.folder}/${filename}`
-      : `${FileType.IMAGE}/${filename}`;
-    const url = `${this.baseUrl}/uploads/${relativePath}`;
+      ? `${options.folder}/${filename}`
+      : filename;
+    const url = `${this.baseUrl}/uploads/${FileType.IMAGE}/${relativePath}`;
 
     return {
       filename,

@@ -7,6 +7,8 @@ export class DmGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   server: Server;
 
+  private onlineUsers = new Map<string, Set<string>>();
+
   constructor(private readonly jwtService: JwtService) {}
 
   async handleConnection(client: Socket) {
@@ -15,6 +17,18 @@ export class DmGateway implements OnGatewayConnection, OnGatewayDisconnect {
       const payload: any = this.jwtService.verify(token, { secret: process.env.JWT_SECRET });
       const userId = payload?.userId;
       if (!userId) return client.disconnect();
+
+      if (!this.onlineUsers.has(userId)) {
+        this.onlineUsers.set(userId, new Set());
+      }
+      const userSockets = this.onlineUsers.get(userId);
+      if (userSockets) {
+        if (userSockets.size === 0) {
+          this.server.emit('user:status', { userId, status: 'online' });
+        }
+        userSockets.add(client.id);
+      }
+
       (client as any).userId = userId;
       client.join(`user:${userId}`);
     } catch (e) {
@@ -22,7 +36,24 @@ export class DmGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
-  async handleDisconnect(client: Socket) {}
+  async handleDisconnect(client: Socket) {
+    const userId = (client as any).userId;
+    if (userId && this.onlineUsers.has(userId)) {
+      const userSockets = this.onlineUsers.get(userId);
+      if (userSockets) {
+        userSockets.delete(client.id);
+        if (userSockets.size === 0) {
+          this.server.emit('user:status', { userId, status: 'offline' });
+          this.onlineUsers.delete(userId);
+        }
+      }
+    }
+  }
+
+  @SubscribeMessage('dm:get-online-users')
+  handleGetOnlineUsers() {
+    return Array.from(this.onlineUsers.keys());
+  }
 
   @SubscribeMessage('dm:join')
   handleJoinRoom(client: Socket, data: { conversationId: string }) {

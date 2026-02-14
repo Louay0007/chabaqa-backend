@@ -143,6 +143,35 @@ export class ContentTrackingService {
     return {};
   }
 
+  private async getContentDetails(contentId: string, contentType: TrackableContentType): Promise<any> {
+    try {
+      let doc: any = null;
+      switch (contentType) {
+        case TrackableContentType.COURSE:
+          doc = await this.courseModel.findById(contentId).select('titre slug thumbnail').lean();
+          return doc ? { title: doc.titre, slug: doc.slug, thumbnail: doc.thumbnail } : null;
+        case TrackableContentType.CHALLENGE:
+          doc = await this.challengeModel.findById(contentId).select('title slug thumbnail').lean();
+          return doc ? { title: doc.title, slug: doc.slug, thumbnail: doc.thumbnail } : null;
+        case TrackableContentType.SESSION:
+          doc = await this.sessionModel.findById(contentId).select('title slug thumbnail').lean();
+          return doc ? { title: doc.title, slug: doc.slug, thumbnail: doc.thumbnail } : null;
+        case TrackableContentType.EVENT:
+          doc = await this.eventModel.findById(contentId).select('title slug thumbnail').lean();
+          return doc ? { title: doc.title, slug: doc.slug, thumbnail: doc.thumbnail } : null;
+        case TrackableContentType.PRODUCT:
+          doc = await this.productModel.findById(contentId).select('name slug images').lean();
+          return doc ? { title: doc.name, slug: doc.slug, thumbnail: doc.images?.[0] } : null;
+        case TrackableContentType.POST:
+          doc = await this.postModel.findById(contentId).select('content').lean();
+          return doc ? { title: doc.content?.substring(0, 50) + (doc.content?.length > 50 ? '...' : ''), slug: null, thumbnail: null } : null;
+      }
+    } catch (err) {
+      console.warn(`[ContentTracking] Failed to load details for ${contentType} ${contentId}`, err);
+    }
+    return null;
+  }
+
   /**
    * Obtenir ou créer un suivi de progression pour un contenu
    */
@@ -733,10 +762,22 @@ export class ContentTrackingService {
       filter.contentType = contentType;
     }
 
-    return await this.trackingActionModel
+    const actions = await this.trackingActionModel
       .find(filter)
       .sort({ timestamp: -1 })
       .limit(limit)
+      .lean()
       .exec();
+
+    // Enrich with content details
+    const enrichedActions = await Promise.all(actions.map(async (action) => {
+      const details = await this.getContentDetails(action.contentId, action.contentType);
+      return {
+        ...action,
+        contentDetails: details
+      };
+    }));
+
+    return enrichedActions;
   }
 }

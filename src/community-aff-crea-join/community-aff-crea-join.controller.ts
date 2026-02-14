@@ -35,6 +35,9 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { Query } from '@nestjs/common';
 import { FileType, UploadService } from '../upload/upload.service';
 import { PaginatedResponseDto } from '../common/dto/paginated-response.dto';
+import { diskStorage } from 'multer';
+import { extname } from 'path';
+import { v4 as uuidv4 } from 'uuid';
 
 @ApiTags('Community Management')
 @Controller('community-aff-crea-join')
@@ -53,7 +56,21 @@ export class CommunityAffCreaJoinController {
   @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.CREATED)
   @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))
-  @UseInterceptors(FileInterceptor('logo'))
+  @UseInterceptors(FileInterceptor('logo', {
+    storage: diskStorage({
+      destination: (req, file, cb) => {
+        cb(null, 'uploads/image');
+      },
+      filename: (req, file, cb) => {
+        const extension = extname(file.originalname);
+        const uniqueName = `${Date.now()}-${uuidv4()}${extension}`;
+        cb(null, uniqueName);
+      },
+    }),
+    limits: {
+      fileSize: 5 * 1024 * 1024,
+    },
+  }))
   @ApiConsumes('multipart/form-data')
   @ApiOperation({
     summary: 'Créer une nouvelle communauté',
@@ -167,23 +184,12 @@ export class CommunityAffCreaJoinController {
       const uploadedFiles: { logo?: string } = {};
 
       if (file) {
-        // ✅ Utiliser UploadService pour valider et générer une URL
-        const fileType = this.uploadService.validateFile(file);
-        const filename = this.uploadService.generateFilename(file.originalname);
-        const destinationPath = this.uploadService.getDestinationPath(fileType);
-
-        // Déplacer le fichier (Multer l'a mis dans un tmp, mais on garde la logique)
-        const fs = require('fs');
-        const finalPath = `${destinationPath}/${filename}`;
-        fs.renameSync(file.path, finalPath);
-
-        // Générer l’URL publique
         const result = await this.uploadService.processUploadedFile(
-          { ...file, path: finalPath },
-          filename
+          file,
+          file.filename,
+          { userId }
         );
-
-        uploadedFiles.logo = result.url; // ⚡ Ici on garde uniquement l’URL publique
+        uploadedFiles.logo = result.url;
         console.log('📸 Logo final enregistré:', uploadedFiles.logo);
       }
 

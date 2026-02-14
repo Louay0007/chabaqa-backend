@@ -22,7 +22,7 @@ export class DmService {
     private readonly policyService: PolicyService,
     private readonly dmGateway: DmGateway,
     private readonly notificationService: NotificationService,
-  ) {}
+  ) { }
 
   async startCommunityConversation(userId: string, communityId: string): Promise<ConversationDocument> {
     const community = await this.communityModel.findById(communityId);
@@ -46,23 +46,39 @@ export class DmService {
     });
     if (existing) return existing;
 
-    const conv = await this.conversationModel.create({
-      type: 'COMMUNITY_DM',
-      participantA: uid,
-      participantB: creatorId,
-      communityId: community._id,
-      isOpen: true,
-      unreadCountA: 0,
-      unreadCountB: 0,
-    });
-    
-    const result = await this.conversationModel.findById(conv._id)
-      .populate('participantA', 'name firstName lastName email profile_picture photo_profil avatar photo username')
-      .populate('participantB', 'name firstName lastName email profile_picture photo_profil avatar photo username')
-      .populate('communityId', 'name slug logo');
-    
-    if (!result) throw new InternalServerErrorException('Error creating conversation');
-    return result;
+    try {
+      const conv = await this.conversationModel.create({
+        type: 'COMMUNITY_DM',
+        participantA: uid,
+        participantB: creatorId,
+        communityId: community._id,
+        isOpen: true,
+        unreadCountA: 0,
+        unreadCountB: 0,
+      });
+
+      const result = await this.conversationModel.findById(conv._id)
+        .populate('participantA', 'name firstName lastName email profile_picture photo_profil avatar photo username')
+        .populate('participantB', 'name firstName lastName email profile_picture photo_profil avatar photo username')
+        .populate('communityId', 'name slug logo');
+
+      if (!result) throw new InternalServerErrorException('Error creating conversation');
+      return result;
+    } catch (err: any) {
+      // Handle duplicate key error (race condition) — fetch existing conversation
+      if (err?.code === 11000) {
+        const dup = await this.conversationModel.findOne({
+          type: 'COMMUNITY_DM',
+          participantA: uid,
+          participantB: creatorId,
+          communityId: community._id,
+        }).populate('participantA', 'name firstName lastName email profile_picture photo_profil avatar photo username')
+          .populate('participantB', 'name firstName lastName email profile_picture photo_profil avatar photo username')
+          .populate('communityId', 'name slug logo');
+        if (dup) return dup;
+      }
+      throw err;
+    }
   }
 
   async startPeerConversation(userId: string, targetUserId: string, communityId: string): Promise<ConversationDocument> {
@@ -102,23 +118,41 @@ export class DmService {
 
     if (existing) return existing;
 
-    const conv = await this.conversationModel.create({
-      type: 'PEER_DM',
-      participantA: uid,
-      participantB: targetUid,
-      communityId: community._id,
-      isOpen: true,
-      unreadCountA: 0,
-      unreadCountB: 0,
-    });
-    
-    const result = await this.conversationModel.findById(conv._id)
-      .populate('participantA', 'name firstName lastName email profile_picture photo_profil avatar photo username')
-      .populate('participantB', 'name firstName lastName email profile_picture photo_profil avatar photo username')
-      .populate('communityId', 'name slug logo');
+    try {
+      const conv = await this.conversationModel.create({
+        type: 'PEER_DM',
+        participantA: uid,
+        participantB: targetUid,
+        communityId: community._id,
+        isOpen: true,
+        unreadCountA: 0,
+        unreadCountB: 0,
+      });
 
-    if (!result) throw new InternalServerErrorException('Error creating conversation');
-    return result;
+      const result = await this.conversationModel.findById(conv._id)
+        .populate('participantA', 'name firstName lastName email profile_picture photo_profil avatar photo username')
+        .populate('participantB', 'name firstName lastName email profile_picture photo_profil avatar photo username')
+        .populate('communityId', 'name slug logo');
+
+      if (!result) throw new InternalServerErrorException('Error creating conversation');
+      return result;
+    } catch (err: any) {
+      // Handle duplicate key error (race condition) — fetch existing conversation
+      if (err?.code === 11000) {
+        const existing = await this.conversationModel.findOne({
+          type: 'PEER_DM',
+          communityId: community._id,
+          $or: [
+            { participantA: uid, participantB: targetUid },
+            { participantA: targetUid, participantB: uid },
+          ],
+        }).populate('participantA', 'name firstName lastName email profile_picture photo_profil avatar photo username')
+          .populate('participantB', 'name firstName lastName email profile_picture photo_profil avatar photo username')
+          .populate('communityId', 'name slug logo');
+        if (existing) return existing;
+      }
+      throw err;
+    }
   }
 
   async startHelpConversation(userId: string): Promise<ConversationDocument> {
@@ -127,7 +161,7 @@ export class DmService {
       participantA: new Types.ObjectId(userId),
       isOpen: true,
     }).populate('participantB', 'name email photo_profil poste departement');
-    
+
     if (existing) {
       // Auto-assign admin if not already assigned and send welcome message
       if (!existing.participantB) {
@@ -148,7 +182,7 @@ export class DmService {
 
     // Auto-assign admin and send welcome message
     await this.autoAssignAdminToHelp(conv._id.toString());
-    
+
     const finalConv = await this.conversationModel.findById(conv._id).populate('participantB', 'name email photo_profil poste departement');
     return finalConv || conv;
   }
@@ -178,13 +212,13 @@ export class DmService {
       this.conversationModel.countDocuments(filter),
     ]);
     const totalPages = Math.ceil(total / limit);
-    return { 
-      conversations: items, 
-      page, 
-      total, 
+    return {
+      conversations: items,
+      page,
+      total,
       totalPages,
       hasMore: page < totalPages,
-      limit 
+      limit
     };
   }
 
@@ -192,9 +226,9 @@ export class DmService {
     const conv = await this.conversationModel.findById(conversationId)
       .populate('participantA', 'name firstName lastName email profile_picture photo_profil avatar photo username role')
       .populate('participantB', 'name firstName lastName email profile_picture photo_profil avatar photo username role');
-    
+
     if (!conv) throw new NotFoundException('Conversation introuvable');
-    
+
     // Convert userId to ObjectId for comparison
     let uid: Types.ObjectId;
     try {
@@ -203,7 +237,7 @@ export class DmService {
       console.error('❌ [DM] Invalid userId format:', userId);
       throw new ForbiddenException('Invalid user ID format');
     }
-    
+
     // Check permissions: user must be participant or admin viewing help conversation
     const participantAId = (conv as any)?.participantA?._id ? (conv as any).participantA._id : (conv as any).participantA;
     const participantBId = (conv as any)?.participantB?._id ? (conv as any).participantB._id : (conv as any).participantB;
@@ -212,7 +246,7 @@ export class DmService {
     const isParticipantB = participantBId ? uid.equals(participantBId) : false;
     const isParticipant = isParticipantA || isParticipantB;
     const isAdminViewingHelp = options?.isAdmin && conv.type === 'HELP_DM';
-    
+
     if (!isParticipant && !isAdminViewingHelp) {
       throw new ForbiddenException('You do not have access to this conversation');
     }
@@ -237,14 +271,14 @@ export class DmService {
       this.messageModel.countDocuments({ conversationId: conv._id }),
     ]);
     const totalPages = Math.ceil(total / limit);
-    return { 
+    return {
       messages: items.reverse(),
       conversation: conv,
-      page, 
-      total, 
+      page,
+      total,
       totalPages,
       hasMore: page < totalPages,
-      limit 
+      limit
     };
   }
 
@@ -311,7 +345,7 @@ export class DmService {
       // Send notification
       let sender: any = null;
       let senderName = 'Unknown User';
-      
+
       // Check if sender is admin or regular user
       if (options?.isAdmin) {
         const adminSender = await this.adminModel.findById(senderId);
@@ -322,7 +356,7 @@ export class DmService {
         sender = userSender;
         senderName = userSender?.name || 'User';
       }
-      
+
       if (sender) {
         this.notificationService.createNotification({
           recipient: recipientId.toString(),
@@ -364,16 +398,16 @@ export class DmService {
     if (!conv) throw new NotFoundException('Conversation introuvable');
     if (conv.type !== 'HELP_DM') throw new BadRequestException('Non applicable');
     if (conv.participantB) return conv; // already assigned
-    
+
     const admin = await this.adminModel.findById(adminId);
     if (!admin) throw new NotFoundException('Admin introuvable');
-    
+
     conv.participantB = new Types.ObjectId(adminId);
     await conv.save();
-    
+
     // Send welcome message from admin
     await this.sendWelcomeMessage(conversationId, adminId, admin.name);
-    
+
     return await this.conversationModel.findById(conversationId)
       .populate('participantA', 'name email profile_picture')
       .populate('participantB', 'name email photo_profil poste departement');
@@ -385,7 +419,7 @@ export class DmService {
   private async autoAssignAdminToHelp(conversationId: string) {
     // Find an available admin (simple round-robin or least busy)
     const availableAdmin = await this.adminModel.findOne({ role: 'admin' }).sort({ createdAt: 1 });
-    
+
     if (availableAdmin) {
       await this.assignHelpThread(conversationId, availableAdmin._id.toString());
     }
@@ -399,7 +433,7 @@ export class DmService {
     if (!conv) return;
 
     const welcomeText = `Hello! I'm ${adminName}, your support agent. How can I help you today? 😊`;
-    
+
     const msg = await this.messageModel.create({
       conversationId: conv._id,
       senderId: new Types.ObjectId(adminId),
@@ -424,11 +458,11 @@ export class DmService {
   async getHelpConversationAdmin(conversationId: string) {
     const conv = await this.conversationModel.findById(conversationId)
       .populate('participantB', 'name email photo_profil poste departement');
-    
+
     if (conv?.type === 'HELP_DM' && conv.participantB) {
       return conv.participantB;
     }
-    
+
     return null;
   }
 }
