@@ -339,13 +339,23 @@ export class ProductService {
     const communityIds = [
       ...new Set(products.map((product) => product.communityId)),
     ];
+    
+    // Build flexible query to match by _id, id, or slug
     const communities = await this.communityModel.find({
-      id: { $in: communityIds },
+      $or: communityIds.flatMap(cid => [
+        { _id: Types.ObjectId.isValid(cid) ? new Types.ObjectId(cid) : null },
+        { id: cid },
+        { slug: cid }
+      ]).filter(condition => Object.values(condition)[0] !== null)
     });
 
     const productsWithCommunities = await Promise.all(
       products.map(async (product) => {
-        const community = communities.find((c) => c.id === product.communityId);
+        const community = communities.find((c) => 
+          c._id.toString() === product.communityId || 
+          (c as any).id === product.communityId || 
+          c.slug === product.communityId
+        );
         return await this.transformToResponseDto(product, community);
       }),
     );
@@ -397,7 +407,7 @@ export class ProductService {
   /**
    * Récupérer un produit par son ID
    */
-  async findOne(id: string): Promise<ProductResponseDto> {
+    async findOne(id: string): Promise<ProductResponseDto> {
     let product = await this.productModel
       .findOne({ id })
       .populate('creatorId', 'name email profile_picture photo_profil')
@@ -415,7 +425,11 @@ export class ProductService {
     }
 
     const community = await this.communityModel.findOne({
-      id: product.communityId,
+      $or: [
+        { _id: Types.ObjectId.isValid(product.communityId) ? new Types.ObjectId(product.communityId) : null },
+        { id: product.communityId },
+        { slug: product.communityId }
+      ].filter(condition => Object.values(condition)[0] !== null)
     });
     return await this.transformToResponseDto(product, community || undefined);
   }
@@ -463,7 +477,11 @@ export class ProductService {
       .exec();
 
     const community = await this.communityModel.findOne({
-      id: product.communityId,
+      $or: [
+        { _id: Types.ObjectId.isValid(product.communityId) ? new Types.ObjectId(product.communityId) : null },
+        { id: product.communityId },
+        { slug: product.communityId }
+      ].filter(condition => Object.values(condition)[0] !== null)
     });
     return await this.transformToResponseDto(
       populatedProduct!,
@@ -873,6 +891,7 @@ export class ProductService {
     return {
       id: product.id,
       title: product.title,
+      slug: product.slug || product.id,
       description: product.description,
       price: product.price,
       currency: product.currency,

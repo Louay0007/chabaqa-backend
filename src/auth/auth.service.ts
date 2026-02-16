@@ -108,7 +108,7 @@ export class AuthService {
     return user;
   }
 
-  private generateToken(user: UserDocument): string {
+  public generateToken(user: UserDocument): string {
     const payload = {
       sub: user._id,
       email: user.email,

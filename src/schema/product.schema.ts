@@ -151,6 +151,17 @@ export class Product {
   title: string;
 
   /**
+   * Slug unique pour l'URL du produit
+   */
+  @Prop({
+    trim: true,
+    lowercase: true,
+    unique: true,
+    sparse: true
+  })
+  slug?: string;
+
+  /**
    * Description du produit
    */
   @Prop({
@@ -407,6 +418,7 @@ export interface ProductDocument extends Document {
   _id: Types.ObjectId;
   id: string;
   title: string;
+  slug?: string;
   description: string;
   price: number;
   currency: string;
@@ -465,13 +477,21 @@ ProductSchema.index({ creatorId: 1, isPublished: 1 });
 ProductSchema.index({ category: 1, isPublished: 1 });
 ProductSchema.index({ price: 1 });
 ProductSchema.index({ sales: -1 });
-
+ProductSchema.index({ slug: 1 }, { unique: true, sparse: true });
 ProductSchema.index({ createdAt: -1 });
 
 // Middleware pour générer l'ID unique avant sauvegarde
 ProductSchema.pre('save', function(next) {
   if (this.isNew && !this.id) {
     this.id = new Types.ObjectId().toString();
+  }
+  
+  // Generate slug from title if not provided
+  if (!this.slug && this.title) {
+    this.slug = this.title
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
   }
   
   // Mettre à jour updatedAt

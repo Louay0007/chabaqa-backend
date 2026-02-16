@@ -8,7 +8,8 @@ import {
   Delete,
   Query,
   UseGuards,
-  Request
+  Request,
+  UseInterceptors
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { ProductService } from './product.service';
@@ -22,9 +23,11 @@ import {
   ProductFileResponseDto
 } from '../dto-product/product-response.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { HttpCacheInterceptor } from '../common/interceptors/cache.interceptor';
 
 @ApiTags('Products')
 @Controller('products')
+@UseInterceptors(HttpCacheInterceptor)
 export class ProductController {
   constructor(private readonly productService: ProductService) { }
 

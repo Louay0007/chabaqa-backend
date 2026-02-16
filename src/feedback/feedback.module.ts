@@ -11,6 +11,8 @@ import { Event, EventSchema } from '../schema/event.schema';
 import { Product, ProductSchema } from '../schema/product.schema';
 import { Session, SessionSchema } from '../schema/session.schema';
 import { AuthModule } from '../auth/auth.module';
+import { CacheModule } from '../common/modules/cache.module';
+import { CacheInvalidationService } from '../common/services/cache-invalidation.service';
 
 @Module({
   imports: [
@@ -24,8 +26,9 @@ import { AuthModule } from '../auth/auth.module';
       { name: Session.name, schema: SessionSchema },
     ]),
     AuthModule,
+    CacheModule,
   ],
   controllers: [FeedbackController],
-  providers: [FeedbackService],
+  providers: [FeedbackService, CacheInvalidationService],
 })
 export class FeedbackModule {}

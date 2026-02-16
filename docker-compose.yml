@@ -45,6 +45,7 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3000
+      HTTP_ACCESS_LOG: ${HTTP_ACCESS_LOG:-true}
       # MongoDB Atlas - uses MONGO_URI from .env
       # Redis Configuration
       REDIS_ENABLED: "true"
@@ -78,6 +79,33 @@ services:
       timeout: 10s
       retries: 3
       start_period: 90s
+    networks:
+      - chabaqa-network
+
+  # ================================
+  # Dozzle (Docker logs + container stats)
+  # ================================
+  dozzle:
+    image: amir20/dozzle:latest
+    container_name: chabaqa-dozzle
+    restart: always
+    ports:
+      - "${DOZZLE_PORT:-8088}:8080"
+    environment:
+      DOZZLE_LEVEL: ${DOZZLE_LEVEL:-info}
+      DOZZLE_TAILSIZE: ${DOZZLE_TAILSIZE:-500}
+      DOZZLE_FILTER: ${DOZZLE_FILTER:-name=chabaqa-}
+      DOZZLE_NO_ANALYTICS: "true"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/dozzle", "healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     networks:
       - chabaqa-network
 

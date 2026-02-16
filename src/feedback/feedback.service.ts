@@ -10,6 +10,7 @@ import { Challenge } from '../schema/challenge.schema';
 import { Event } from '../schema/event.schema';
 import { Product } from '../schema/product.schema';
 import { Session } from '../schema/session.schema';
+import { CacheInvalidationService } from '../common/services/cache-invalidation.service';
 
 @Injectable()
 export class FeedbackService {
@@ -21,24 +22,50 @@ export class FeedbackService {
     @InjectModel(Event.name) private eventModel: Model<Event>,
     @InjectModel(Product.name) private productModel: Model<Product>,
     @InjectModel(Session.name) private sessionModel: Model<Session>,
+    private cacheInvalidationService: CacheInvalidationService,
   ) {}
+
+  private normalizeRelatedModel(relatedModel: string): string {
+    const normalized = String(relatedModel || '').trim().toLowerCase();
+    const modelMap: Record<string, string> = {
+      community: 'Community',
+      cours: 'Cours',
+      challenge: 'Challenge',
+      event: 'Event',
+      product: 'Product',
+      session: 'Session',
+    };
+
+    return modelMap[normalized] || relatedModel;
+  }
+
+  private getRelatedModelVariants(canonicalModel: string): string[] {
+    const variants = new Set<string>([canonicalModel]);
+    if (canonicalModel) {
+      variants.add(canonicalModel.toLowerCase());
+    }
+    return Array.from(variants);
+  }
 
   async create(createFeedbackDto: CreateFeedbackDto, userId: string): Promise<Feedback> {
     const { relatedTo, relatedModel, rating, comment } = createFeedbackDto;
+    const canonicalRelatedModel = this.normalizeRelatedModel(relatedModel);
+    const relatedModelVariants = this.getRelatedModelVariants(canonicalRelatedModel);
 
     const existingFeedback = await this.feedbackModel.findOne({
       relatedTo,
-      relatedModel,
+      relatedModel: { $in: relatedModelVariants },
       user: new Types.ObjectId(userId),
     });
 
     if (existingFeedback) {
+      existingFeedback.relatedModel = canonicalRelatedModel;
       existingFeedback.rating = rating;
       existingFeedback.comment = comment;
       await existingFeedback.save();
 
       // Update average rating
-      await this.recalculateAverageRating(relatedTo, relatedModel);
+      await this.recalculateAverageRating(relatedTo, canonicalRelatedModel);
 
       const populatedFeedback = await this.feedbackModel
         .findById(existingFeedback._id)
@@ -54,7 +81,7 @@ export class FeedbackService {
 
     const newFeedback = new this.feedbackModel({
       relatedTo,
-      relatedModel,
+      relatedModel: canonicalRelatedModel,
       rating,
       comment,
       user: new Types.ObjectId(userId),
@@ -62,7 +89,10 @@ export class FeedbackService {
 
     const savedFeedback = await newFeedback.save();
 
-    await this.recalculateAverageRating(relatedTo, relatedModel);
+    await this.recalculateAverageRating(relatedTo, canonicalRelatedModel);
+    
+    // Invalidate cache
+    await this.cacheInvalidationService.invalidateFeedback(canonicalRelatedModel, relatedTo);
     
     // Populate user data before returning
     const populatedFeedback = await this.feedbackModel
@@ -87,12 +117,17 @@ export class FeedbackService {
       throw new NotFoundException('Feedback not found or you are not authorized to update it.');
     }
 
+    const canonicalRelatedModel = this.normalizeRelatedModel(feedback.relatedModel);
+    feedback.relatedModel = canonicalRelatedModel;
     feedback.rating = rating;
     feedback.comment = comment;
     await feedback.save();
 
     // Update average rating
-    await this.recalculateAverageRating(feedback.relatedTo.toString(), feedback.relatedModel);
+    await this.recalculateAverageRating(feedback.relatedTo.toString(), canonicalRelatedModel);
+    
+    // Invalidate cache
+    await this.cacheInvalidationService.invalidateFeedback(canonicalRelatedModel, feedback.relatedTo.toString());
     
     // Populate user data before returning
     const populatedFeedback = await this.feedbackModel
@@ -108,8 +143,10 @@ export class FeedbackService {
   }
 
   async findByRelated(relatedModel: string, relatedTo: string): Promise<any[]> {
+    const canonicalRelatedModel = this.normalizeRelatedModel(relatedModel);
+    const relatedModelVariants = this.getRelatedModelVariants(canonicalRelatedModel);
     const feedbacks = await this.feedbackModel
-      .find({ relatedModel, relatedTo })
+      .find({ relatedModel: { $in: relatedModelVariants }, relatedTo })
       .populate('user', 'name email photo_profil')
       .sort({ createdAt: -1 })
       .exec();
@@ -117,7 +154,7 @@ export class FeedbackService {
     return feedbacks.map(f => ({
       _id: f._id,
       relatedTo: f.relatedTo,
-      relatedModel: f.relatedModel,
+      relatedModel: canonicalRelatedModel,
       rating: f.rating,
       comment: f.comment,
       createdAt: (f as any).createdAt,
@@ -131,8 +168,10 @@ export class FeedbackService {
   }
 
   async findUserFeedback(relatedModel: string, relatedTo: string, userId: string): Promise<Feedback | null> {
+    const canonicalRelatedModel = this.normalizeRelatedModel(relatedModel);
+    const relatedModelVariants = this.getRelatedModelVariants(canonicalRelatedModel);
     return this.feedbackModel.findOne({
-      relatedModel,
+      relatedModel: { $in: relatedModelVariants },
       relatedTo,
       user: new Types.ObjectId(userId),
     })
@@ -141,7 +180,11 @@ export class FeedbackService {
   }
 
   async getStats(relatedModel: string, relatedTo: string): Promise<{ averageRating: number; ratingCount: number; distribution: Record<number, number> }> {
-    const feedbacks = await this.feedbackModel.find({ relatedModel, relatedTo }).exec();
+    const canonicalRelatedModel = this.normalizeRelatedModel(relatedModel);
+    const relatedModelVariants = this.getRelatedModelVariants(canonicalRelatedModel);
+    const feedbacks = await this.feedbackModel
+      .find({ relatedModel: { $in: relatedModelVariants }, relatedTo })
+      .exec();
     
     const distribution: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
     let totalRating = 0;
@@ -159,14 +202,22 @@ export class FeedbackService {
   }
 
   private async recalculateAverageRating(relatedTo: string, relatedModel: string): Promise<void> {
-    const model = this.getModel(relatedModel);
+    const canonicalRelatedModel = this.normalizeRelatedModel(relatedModel);
+    const model = this.getModel(canonicalRelatedModel);
     const item = await model.findById(relatedTo);
 
     if (!item) {
-      throw new NotFoundException(`${relatedModel} not found`);
+      throw new NotFoundException(`${canonicalRelatedModel} not found`);
     }
 
-    const feedbacks = await this.feedbackModel.find({ relatedModel, relatedTo }).exec();
+    const relatedModelVariants = this.getRelatedModelVariants(canonicalRelatedModel);
+    await this.feedbackModel.updateMany(
+      { relatedModel: { $in: relatedModelVariants.filter((value) => value !== canonicalRelatedModel) }, relatedTo },
+      { $set: { relatedModel: canonicalRelatedModel } },
+    );
+    const feedbacks = await this.feedbackModel
+      .find({ relatedModel: canonicalRelatedModel, relatedTo })
+      .exec();
     
     if (feedbacks.length === 0) {
       item.averageRating = 0;
@@ -181,7 +232,8 @@ export class FeedbackService {
   }
 
   private getModel(relatedModel: string): Model<any> {
-    switch (relatedModel) {
+    const canonicalRelatedModel = this.normalizeRelatedModel(relatedModel);
+    switch (canonicalRelatedModel) {
       case 'Community':
         return this.communityModel;
       case 'Cours':
@@ -195,7 +247,7 @@ export class FeedbackService {
       case 'Session':
         return this.sessionModel;
       default:
-        throw new NotFoundException(`Model ${relatedModel} not found`);
+        throw new NotFoundException(`Model ${canonicalRelatedModel} not found`);
     }
   }
 }

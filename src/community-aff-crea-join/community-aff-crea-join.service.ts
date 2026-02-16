@@ -5,6 +5,7 @@ import { Community, CommunityDocument } from '../schema/community.schema';
 import { User, UserDocument, UserRole } from '../schema/user.schema';
 import { CreateCommunityDto } from '../dto-community/create-community.dto';
 import { JoinCommunityDto, JoinByInviteDto, GenerateInviteDto } from '../dto-community/join-community.dto';
+import { UpdateCommunityCustomizationDto } from '../dto-community/update-community-customization.dto';
 import { UploadService } from '../upload/upload.service';
 import { PolicyService } from '../common/services/policy.service';
 import { PromoService } from '../common/services/promo.service';
@@ -34,9 +35,9 @@ export class CommunityAffCreaJoinService {
    * @param createCommunityDto - Données de la communauté à créer selon l'interface CommunityFormData
    * @param uploadedFiles - Fichiers uploadés traités
    * @param userId - ID de l'utilisateur créateur
-   * @returns La communauté créée
+   * @returns La communauté créée et l'utilisateur mis à jour
    */
-  async createCommunity(createCommunityDto: CreateCommunityDto, uploadedFiles: { logo?: string }, userId: string): Promise<CommunityDocument> {
+  async createCommunity(createCommunityDto: CreateCommunityDto, uploadedFiles: { logo?: string }, userId: string): Promise<{ community: any, user: UserDocument }> {
     try {
       // Debug: Log de l'ID utilisateur reçu
       console.log('🔍 Debug - ID utilisateur reçu:', userId, 'Type:', typeof userId);
@@ -140,8 +141,12 @@ export class CommunityAffCreaJoinService {
           borderRadius: 12,
           backgroundStyle: 'gradient',
           heroLayout: 'centered',
+          headerStyle: 'default',
+          contentWidth: 'normal',
           showStats: true,
+          showHero: true,
           showFeatures: true,
+          showBenefits: true,
           showTestimonials: true,
           showPosts: true,
           showFAQ: true,
@@ -156,6 +161,8 @@ export class CommunityAffCreaJoinService {
           customSections: [],
           metaTitle: `${communityDataAvecLogo.name} - Communauté`,
           metaDescription: communityDataAvecLogo.bio || `Rejoignez ${communityDataAvecLogo.name} pour apprendre et partager.`,
+          customDomain: '',
+          headerScripts: '',
         },
 
         // Relations utilisateur
@@ -223,7 +230,7 @@ export class CommunityAffCreaJoinService {
       console.log('🔄 Mise à jour du rôle utilisateur vers CREATOR...');
 
       const updateData: any = {
-        $push: {
+        $addToSet: {
           createdCommunities: savedCommunity._id,
           joinedCommunities: savedCommunity._id,
           adminCommunities: savedCommunity._id,
@@ -240,7 +247,11 @@ export class CommunityAffCreaJoinService {
         userId,
         updateData,
         { new: true }
-      );
+      ).exec();
+
+      if (!updatedUser) {
+        throw new InternalServerErrorException('Erreur lors de la mise à jour de l\'utilisateur');
+      }
 
       console.log('✅ Rôle utilisateur mis à jour:', {
         userId: updatedUser?._id,
@@ -256,7 +267,6 @@ export class CommunityAffCreaJoinService {
         .populate('admins', 'name email profile_picture photo_profil avatar photo')
         .exec();
 
-
       if (!populatedCommunity) {
         throw new InternalServerErrorException('Erreur lors de la récupération de la communauté créée');
       }
@@ -265,7 +275,12 @@ export class CommunityAffCreaJoinService {
       await this.updateCommunityRanks();
 
       // Transformer la réponse pour être 100% compatible avec le frontend
-      return this.transformCommunityForFrontend(populatedCommunity);
+      const transformedCommunity = this.transformCommunityForFrontend(populatedCommunity);
+      
+      return {
+        community: transformedCommunity,
+        user: updatedUser
+      };
 
     } catch (error) {
       if (error instanceof ConflictException || error instanceof NotFoundException || error instanceof BadRequestException) {
@@ -282,10 +297,139 @@ export class CommunityAffCreaJoinService {
    * @param community - Communauté à transformer
    * @returns Communauté transformée pour le frontend
    */
+  private normalizeStringList(
+    value: unknown,
+    maxItems: number,
+    maxItemLength: number,
+  ): string[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    const seen = new Set<string>();
+    const result: string[] = [];
+
+    for (const item of value) {
+      if (typeof item !== 'string') {
+        continue;
+      }
+      const trimmed = item.trim();
+      if (!trimmed) {
+        continue;
+      }
+
+      const normalized = trimmed.slice(0, maxItemLength);
+      const key = normalized.toLowerCase();
+      if (seen.has(key)) {
+        continue;
+      }
+
+      seen.add(key);
+      result.push(normalized);
+
+      if (result.length >= maxItems) {
+        break;
+      }
+    }
+
+    return result;
+  }
+
+  private normalizeCommunitySettings(communityName: string, rawSettings: any = {}) {
+    const settings = rawSettings || {};
+    const primaryColor = typeof settings.primaryColor === 'string' ? settings.primaryColor : '#3b82f6';
+    const secondaryColor =
+      typeof settings.secondaryColor === 'string' ? settings.secondaryColor : '#1e40af';
+    const normalizedDomain =
+      typeof settings.customDomain === 'string'
+        ? settings.customDomain.trim().toLowerCase()
+        : '';
+
+    return {
+      primaryColor,
+      secondaryColor,
+      welcomeMessage:
+        typeof settings.welcomeMessage === 'string' && settings.welcomeMessage.trim()
+          ? settings.welcomeMessage.trim().slice(0, 1000)
+          : `Bienvenue dans ${communityName} !`,
+      features: this.normalizeStringList(settings.features, 20, 160),
+      benefits: this.normalizeStringList(settings.benefits, 20, 220),
+      template: settings.template || 'modern',
+      fontFamily: settings.fontFamily || 'Inter',
+      borderRadius: typeof settings.borderRadius === 'number' ? settings.borderRadius : 12,
+      backgroundStyle: settings.backgroundStyle || 'gradient',
+      heroLayout: settings.heroLayout || 'centered',
+      headerStyle: settings.headerStyle || 'default',
+      contentWidth: settings.contentWidth || 'normal',
+      showStats: settings.showStats ?? true,
+      showHero: settings.showHero ?? true,
+      showFeatures: settings.showFeatures ?? true,
+      showBenefits: settings.showBenefits ?? true,
+      showTestimonials: settings.showTestimonials ?? true,
+      showPosts: settings.showPosts ?? true,
+      showFAQ: settings.showFAQ ?? true,
+      enableAnimations: settings.enableAnimations ?? true,
+      enableParallax: settings.enableParallax ?? false,
+      logo:
+        typeof settings.logo === 'string' && settings.logo.trim()
+          ? this.uploadService.ensureAbsoluteUrl(settings.logo)
+          : '',
+      heroBackground:
+        typeof settings.heroBackground === 'string' && settings.heroBackground.trim()
+          ? this.uploadService.ensureAbsoluteUrl(settings.heroBackground)
+          : '',
+      gallery: Array.isArray(settings.gallery)
+        ? settings.gallery
+            .filter((url: any) => typeof url === 'string' && url.trim() !== '')
+            .map((url: string) => this.uploadService.ensureAbsoluteUrl(url))
+        : [],
+      videoUrl: typeof settings.videoUrl === 'string' ? settings.videoUrl : '',
+      socialLinks: {
+        twitter: settings.socialLinks?.twitter || '',
+        instagram: settings.socialLinks?.instagram || '',
+        linkedin: settings.socialLinks?.linkedin || '',
+        discord: settings.socialLinks?.discord || '',
+        behance: settings.socialLinks?.behance || '',
+        github: settings.socialLinks?.github || '',
+        facebook: settings.socialLinks?.facebook || '',
+        youtube: settings.socialLinks?.youtube || '',
+        tiktok: settings.socialLinks?.tiktok || '',
+        website: settings.socialLinks?.website || '',
+      },
+      customSections: Array.isArray(settings.customSections) ? settings.customSections : [],
+      metaTitle:
+        typeof settings.metaTitle === 'string' && settings.metaTitle.trim()
+          ? settings.metaTitle
+          : `${communityName} - Communauté`,
+      metaDescription:
+        typeof settings.metaDescription === 'string' && settings.metaDescription.trim()
+          ? settings.metaDescription
+          : '',
+      customDomain: normalizedDomain,
+      headerScripts: typeof settings.headerScripts === 'string' ? settings.headerScripts : '',
+    };
+  }
+
   private transformCommunityForFrontend(community: CommunityDocument): any {
+    const normalizedSettings = this.normalizeCommunitySettings(community.name, community.settings || {});
+    const membersArrayCount = Array.isArray((community as any).members)
+      ? (community as any).members.length
+      : 0;
+    const storedMembersCount =
+      typeof (community as any).membersCount === 'number' ? (community as any).membersCount : 0;
+    const membersCount = Math.max(storedMembersCount, membersArrayCount, 0);
+    const averageRatingValue =
+      typeof (community as any).averageRating === 'number'
+        ? (community as any).averageRating
+        : typeof (community as any).rating === 'number'
+          ? (community as any).rating
+          : 0;
+    const ratingCountValue =
+      typeof (community as any).ratingCount === 'number' ? (community as any).ratingCount : 0;
+
     // Extract logo with proper fallback chain and ensure absolute URL
     const logoUrl = this.uploadService.ensureAbsoluteUrl(
-      community.settings?.logo ||
+      normalizedSettings.logo ||
       community.logo ||
       'https://via.placeholder.com/150?text=Community'
     );
@@ -318,7 +462,7 @@ export class CommunityAffCreaJoinService {
     console.log('🔍 [TRANSFORM] Final avatar URL:', finalAvatar);
 
     // Get cover image with proper fallback chain
-    const rawCoverImage = community.photo_de_couverture || community.coverImage || community.settings?.heroBackground || '';
+    const rawCoverImage = community.photo_de_couverture || community.coverImage || normalizedSettings.heroBackground || '';
     let coverImageUrl = '';
     
     if (rawCoverImage && rawCoverImage.trim() !== '') {
@@ -365,10 +509,11 @@ export class CommunityAffCreaJoinService {
       photo_de_couverture: coverImageUrl,
       image: this.uploadService.ensureAbsoluteUrl(community.image),
       category: community.category,
-      members: community.membersCount,
-      rating: (community as any).averageRating || 0,
-      averageRating: (community as any).averageRating || 0,
-      ratingCount: (community as any).ratingCount || 0,
+      members: membersCount,
+      membersCount,
+      rating: averageRatingValue,
+      averageRating: averageRatingValue,
+      ratingCount: ratingCountValue,
       price: community.price || community.fees_of_join,
       priceType: community.priceType,
       tags: community.tags,
@@ -377,44 +522,50 @@ export class CommunityAffCreaJoinService {
       createdDate: community.createdDate || community.createdAt.toISOString(),
       updatedDate: community.updatedDate || community.updatedAt.toISOString(),
       settings: {
-        primaryColor: community.settings?.primaryColor || '#3b82f6',
-        secondaryColor: community.settings?.secondaryColor || '#1e40af',
-        welcomeMessage: community.settings?.welcomeMessage || `Bienvenue dans ${community.name} !`,
-        features: community.settings?.features || [],
-        benefits: community.settings?.benefits || [],
-        template: community.settings?.template || 'modern',
-        fontFamily: community.settings?.fontFamily || 'Inter',
-        borderRadius: community.settings?.borderRadius || 12,
-        backgroundStyle: community.settings?.backgroundStyle || 'gradient',
-        heroLayout: community.settings?.heroLayout || 'centered',
-        showStats: community.settings?.showStats ?? true,
-        showFeatures: community.settings?.showFeatures ?? true,
-        showTestimonials: community.settings?.showTestimonials ?? true,
-        showPosts: community.settings?.showPosts ?? true,
-        showFAQ: community.settings?.showFAQ ?? true,
-        enableAnimations: community.settings?.enableAnimations ?? true,
-        enableParallax: community.settings?.enableParallax ?? false,
+        primaryColor: normalizedSettings.primaryColor,
+        secondaryColor: normalizedSettings.secondaryColor,
+        welcomeMessage: normalizedSettings.welcomeMessage,
+        features: normalizedSettings.features,
+        benefits: normalizedSettings.benefits,
+        template: normalizedSettings.template,
+        fontFamily: normalizedSettings.fontFamily,
+        borderRadius: normalizedSettings.borderRadius,
+        backgroundStyle: normalizedSettings.backgroundStyle,
+        heroLayout: normalizedSettings.heroLayout,
+        headerStyle: normalizedSettings.headerStyle,
+        contentWidth: normalizedSettings.contentWidth,
+        showStats: normalizedSettings.showStats,
+        showHero: normalizedSettings.showHero,
+        showFeatures: normalizedSettings.showFeatures,
+        showBenefits: normalizedSettings.showBenefits,
+        showTestimonials: normalizedSettings.showTestimonials,
+        showPosts: normalizedSettings.showPosts,
+        showFAQ: normalizedSettings.showFAQ,
+        enableAnimations: normalizedSettings.enableAnimations,
+        enableParallax: normalizedSettings.enableParallax,
         logo: logoUrl, // Use the same logo URL for consistency
         heroBackground: this.uploadService.ensureAbsoluteUrl(
-          community.settings?.heroBackground || 'https://via.placeholder.com/1200x600'
+          normalizedSettings.heroBackground || 'https://via.placeholder.com/1200x600'
         ),
-        gallery: (community.settings?.gallery || []).map(url => this.uploadService.ensureAbsoluteUrl(url)),
-        videoUrl: community.settings?.videoUrl || '',
+        gallery: (normalizedSettings.gallery || []).map(url => this.uploadService.ensureAbsoluteUrl(url)),
+        videoUrl: normalizedSettings.videoUrl || '',
         socialLinks: {
-          twitter: community.settings?.socialLinks?.twitter || '',
-          instagram: community.settings?.socialLinks?.instagram || '',
-          linkedin: community.settings?.socialLinks?.linkedin || '',
-          discord: community.settings?.socialLinks?.discord || '',
-          behance: community.settings?.socialLinks?.behance || '',
-          github: community.settings?.socialLinks?.github || '',
-          facebook: community.settings?.socialLinks?.facebook || '',
-          youtube: community.settings?.socialLinks?.youtube || '',
-          tiktok: community.settings?.socialLinks?.tiktok || '',
-          website: community.settings?.socialLinks?.website || '',
+          twitter: normalizedSettings.socialLinks?.twitter || '',
+          instagram: normalizedSettings.socialLinks?.instagram || '',
+          linkedin: normalizedSettings.socialLinks?.linkedin || '',
+          discord: normalizedSettings.socialLinks?.discord || '',
+          behance: normalizedSettings.socialLinks?.behance || '',
+          github: normalizedSettings.socialLinks?.github || '',
+          facebook: normalizedSettings.socialLinks?.facebook || '',
+          youtube: normalizedSettings.socialLinks?.youtube || '',
+          tiktok: normalizedSettings.socialLinks?.tiktok || '',
+          website: normalizedSettings.socialLinks?.website || '',
         },
-        customSections: community.settings?.customSections || [],
-        metaTitle: community.settings?.metaTitle || `${community.name} - Communauté`,
-        metaDescription: community.settings?.metaDescription || community.short_description,
+        customSections: normalizedSettings.customSections || [],
+        metaTitle: normalizedSettings.metaTitle || `${community.name} - Communauté`,
+        metaDescription: normalizedSettings.metaDescription || community.short_description,
+        customDomain: normalizedSettings.customDomain || '',
+        headerScripts: normalizedSettings.headerScripts || '',
       },
       stats: {
         totalRevenue: community.stats?.totalRevenue || 0,
@@ -426,7 +577,6 @@ export class CommunityAffCreaJoinService {
       isActive: community.isActive,
       isPrivate: community.isPrivate,
       isVerified: community.isVerified,
-      membersCount: community.membersCount,
       inviteCode: community.inviteCode,
       inviteLink: community.inviteLink,
       rank: community.rank,
@@ -608,6 +758,187 @@ export class CommunityAffCreaJoinService {
 
       console.error('Erreur lors de la récupération de la communauté:', error);
       throw new InternalServerErrorException('Erreur lors de la récupération de la communauté');
+    }
+  }
+
+  /**
+   * Update a community and its customization settings
+   * Only the community creator can update customization
+   */
+  async updateCommunity(
+    idOrSlug: string,
+    requesterId: string,
+    updateData: UpdateCommunityCustomizationDto,
+  ): Promise<any> {
+    try {
+      if (!requesterId || !/^[0-9a-fA-F]{24}$/.test(requesterId)) {
+        throw new ForbiddenException('Utilisateur non autorisé');
+      }
+
+      const community = await this.getCommunityById(idOrSlug);
+
+      const requesterObjectId = new Types.ObjectId(requesterId);
+      const getObjectId = (value: any): Types.ObjectId | null => {
+        if (!value) return null;
+        if (value instanceof Types.ObjectId) return value;
+        if (value._id instanceof Types.ObjectId) return value._id;
+        if (typeof value === 'string' && /^[0-9a-fA-F]{24}$/.test(value)) {
+          return new Types.ObjectId(value);
+        }
+        return null;
+      };
+
+      const creatorId = getObjectId(community.createur);
+      const isCreator = !!creatorId && creatorId.equals(requesterObjectId);
+
+      if (!isCreator) {
+        throw new ForbiddenException('Seul le créateur peut personnaliser cette communauté');
+      }
+
+      // Update top-level fields used by frontend customize page
+      if (typeof updateData.name === 'string') {
+        community.name = updateData.name.trim() || community.name;
+      }
+      if (typeof updateData.description === 'string') {
+        community.short_description = updateData.description;
+      }
+      if (typeof updateData.longDescription === 'string') {
+        community.longDescription = updateData.longDescription;
+      }
+      if (typeof updateData.category === 'string') {
+        community.category = updateData.category;
+      }
+      if (Array.isArray(updateData.tags)) {
+        community.tags = updateData.tags.filter((tag) => typeof tag === 'string');
+      }
+      if (typeof updateData.coverImage === 'string') {
+        const cover = updateData.coverImage.trim();
+        if (cover) {
+          const coverUrl = this.uploadService.ensureAbsoluteUrl(cover);
+          community.coverImage = coverUrl;
+          community.photo_de_couverture = coverUrl;
+        }
+      }
+      if (typeof updateData.logo === 'string') {
+        const logo = updateData.logo.trim();
+        if (logo) {
+          community.logo = this.uploadService.ensureAbsoluteUrl(logo);
+        }
+      }
+      if (typeof updateData.price === 'number' && Number.isFinite(updateData.price)) {
+        const normalizedPrice = Math.max(updateData.price, 0);
+        community.price = normalizedPrice;
+        community.fees_of_join = normalizedPrice;
+        // Keep pricing object in sync
+        if (!community.pricing) {
+          (community as any).pricing = {
+            price: normalizedPrice,
+            currency: community.currency || 'TND',
+            priceType: community.priceType || 'free',
+            isRecurring: false,
+            features: [],
+            limits: { maxMembers: 1000, maxCourses: 50, maxPosts: 1000, storageLimit: '10GB' },
+            paymentOptions: { allowInstallments: false }
+          };
+        } else {
+          community.pricing.price = normalizedPrice;
+        }
+      }
+      if (typeof updateData.priceType === 'string') {
+        community.priceType = updateData.priceType;
+        if (community.pricing) {
+          community.pricing.priceType = updateData.priceType as any;
+          community.pricing.isRecurring = ['monthly', 'yearly'].includes(updateData.priceType);
+        }
+      }
+      if (typeof updateData.type === 'string') {
+        (community as any).type = updateData.type;
+      }
+
+      // Merge settings object (design/layout/advanced options)
+      if (updateData.settings && typeof updateData.settings === 'object') {
+        const currentSettings = this.normalizeCommunitySettings(community.name, (community.settings || {}) as any);
+        const incomingSettings = updateData.settings as any;
+        const mergedSettings: any = {
+          ...currentSettings,
+          ...incomingSettings,
+        };
+
+        // Keep socialLinks safely merged
+        if (incomingSettings.socialLinks && typeof incomingSettings.socialLinks === 'object') {
+          mergedSettings.socialLinks = {
+            ...(currentSettings.socialLinks || {}),
+            ...incomingSettings.socialLinks,
+          };
+        }
+
+        // Normalize URL-like settings fields
+        if (typeof mergedSettings.logo === 'string' && mergedSettings.logo.trim()) {
+          mergedSettings.logo = this.uploadService.ensureAbsoluteUrl(mergedSettings.logo);
+          community.logo = mergedSettings.logo;
+        }
+        if (typeof mergedSettings.heroBackground === 'string' && mergedSettings.heroBackground.trim()) {
+          mergedSettings.heroBackground = this.uploadService.ensureAbsoluteUrl(mergedSettings.heroBackground);
+        }
+        if (Array.isArray(mergedSettings.gallery)) {
+          mergedSettings.gallery = mergedSettings.gallery
+            .filter((url: any) => typeof url === 'string')
+            .map((url: string) => this.uploadService.ensureAbsoluteUrl(url));
+        }
+        if (typeof mergedSettings.customDomain === 'string') {
+          const normalizedDomain = mergedSettings.customDomain.trim().toLowerCase();
+          mergedSettings.customDomain = normalizedDomain;
+          if (normalizedDomain) {
+            const existingDomain = await this.communityModel
+              .findOne({
+                _id: { $ne: community._id },
+                'settings.customDomain': normalizedDomain,
+              })
+              .collation({ locale: 'en', strength: 2 })
+              .select('_id name slug')
+              .lean()
+              .exec();
+            if (existingDomain) {
+              throw new ConflictException('Ce domaine personnalisé est déjà utilisé');
+            }
+          }
+        }
+
+        community.settings = this.normalizeCommunitySettings(community.name, mergedSettings);
+      } else {
+        // Auto-backfill defaults for older communities even when no settings update is sent
+        community.settings = this.normalizeCommunitySettings(community.name, (community.settings || {}) as any);
+      }
+
+      // Keep pricing sub-document consistent when available
+      if ((community as any).pricing && typeof (community as any).pricing === 'object') {
+        const pricing = (community as any).pricing;
+        if (typeof community.fees_of_join === 'number') {
+          pricing.price = community.fees_of_join;
+        }
+        if (typeof community.currency === 'string') {
+          pricing.currency = community.currency;
+        }
+        if (typeof community.priceType === 'string') {
+          pricing.priceType = community.priceType;
+        }
+      }
+
+      await community.save();
+
+      const refreshed = await this.getCommunityById(community._id.toString());
+      return this.transformCommunityForFrontend(refreshed);
+    } catch (error) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof ForbiddenException ||
+        error instanceof ConflictException ||
+        error instanceof BadRequestException
+      ) {
+        throw error;
+      }
+      console.error('Erreur lors de la mise à jour de la communauté:', error);
+      throw new InternalServerErrorException('Erreur lors de la mise à jour de la communauté');
     }
   }
 

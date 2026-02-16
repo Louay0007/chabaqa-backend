@@ -11,6 +11,7 @@ import { PromoModule } from '../common/modules/promo.module';
 import { OrderSchema } from '../schema/order.schema';
 import { TrackingModule } from '../common/modules/tracking.module';
 import { NotificationModule } from '../notification/notification.module';
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
   imports: [
@@ -24,10 +25,11 @@ import { NotificationModule } from '../notification/notification.module';
     FeeModule,
     PromoModule,
     TrackingModule,
-    NotificationModule
+    NotificationModule,
+    AuthModule
   ],
   controllers: [CommunityAffCreaJoinController],
   providers: [CommunityAffCreaJoinService],
   exports: [CommunityAffCreaJoinService]
 })
-export class CommunityAffCreaJoinModule {} 
+export class CommunityAffCreaJoinModule {}

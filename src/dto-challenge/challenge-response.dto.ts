@@ -199,6 +199,21 @@ export class ChallengeResponseDto {
   @ApiProperty({ description: 'Slug de la communauté', example: 'web-dev-community' })
   communitySlug: string;
 
+  @ApiPropertyOptional({ 
+    description: 'Informations de la communauté', 
+    type: 'object',
+    properties: {
+      id: { type: 'string' },
+      name: { type: 'string' },
+      slug: { type: 'string' }
+    }
+  })
+  community?: {
+    id: string;
+    name: string;
+    slug: string;
+  };
+
   @ApiProperty({ description: 'ID du créateur', example: 'user_789' })
   creatorId: string;
 

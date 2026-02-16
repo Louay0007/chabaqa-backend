@@ -2,6 +2,8 @@ import {
   Controller,
   Post,
   Get,
+  Patch,
+  Put,
   Delete,
   Body,
   UseGuards,
@@ -28,9 +30,11 @@ import {
   ApiQuery
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { AuthService } from '../auth/auth.service';
 import { CommunityAffCreaJoinService } from './community-aff-crea-join.service';
 import { CreateCommunityDto } from '../dto-community/create-community.dto';
 import { JoinCommunityDto, JoinByInviteDto, GenerateInviteDto } from '../dto-community/join-community.dto';
+import { UpdateCommunityCustomizationDto } from '../dto-community/update-community-customization.dto';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Query } from '@nestjs/common';
 import { FileType, UploadService } from '../upload/upload.service';
@@ -45,6 +49,7 @@ export class CommunityAffCreaJoinController {
   constructor(
     private readonly communityService: CommunityAffCreaJoinService,
     private readonly uploadService: UploadService,
+    private readonly authService: AuthService,
   ) { }
 
   /**
@@ -193,23 +198,34 @@ export class CommunityAffCreaJoinController {
         console.log('📸 Logo final enregistré:', uploadedFiles.logo);
       }
 
-      const community = await this.communityService.createCommunity(
+      const { community, user } = await this.communityService.createCommunity(
         createCommunityDto,
         uploadedFiles,
         userId
       );
 
+      // Generate a new JWT token for the user with the potentially updated role
+      const accessToken = this.authService.generateToken(user);
+
       console.log('✅ [CREATE COMMUNITY] Communauté créée avec succès:', {
         id: community._id,
         name: community.name,
-        slug: community.slug
+        slug: community.slug,
+        newRole: user.role
       });
 
       return {
         success: true,
         message: 'Communauté créée avec succès',
         data: community,
-        communityId: community._id
+        communityId: community._id,
+        accessToken, // Return new token so frontend role updates immediately
+        user: {
+          _id: user._id,
+          name: user.name,
+          email: user.email,
+          role: user.role
+        }
       };
     } catch (error) {
       console.error('❌ [CREATE COMMUNITY] Error:', error);
@@ -908,6 +924,148 @@ export class CommunityAffCreaJoinController {
   ): Promise<PaginatedResponseDto<any>> {
     const userId = req.user._id || req.user.userId;
     return this.communityService.getCommunityMembers(id, userId, Number(page), Number(limit));
+  }
+
+  /**
+   * Update community customization/settings
+   * Route: PATCH /community-aff-crea-join/:id
+   */
+  @Patch(':id')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }))
+  @ApiOperation({
+    summary: 'Mettre à jour une communauté',
+    description: 'Met à jour les options de personnalisation de la communauté (contenu, design, layout, paramètres avancés).'
+  })
+  @ApiBody({
+    type: UpdateCommunityCustomizationDto,
+    description: 'Payload de personnalisation de communauté',
+  })
+  async updateCommunity(
+    @Param('id') communityIdOrSlug: string,
+    @Body() updateData: UpdateCommunityCustomizationDto,
+    @Request() req: any
+  ) {
+    return this.performCommunityUpdate(communityIdOrSlug, updateData, req);
+  }
+
+  /**
+   * Backward-compatible aliases for update customization route
+   * Some frontend deployments may call PUT and/or /update/:id variants.
+   */
+  @Put(':id')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }))
+  async updateCommunityPut(
+    @Param('id') communityIdOrSlug: string,
+    @Body() updateData: UpdateCommunityCustomizationDto,
+    @Request() req: any
+  ) {
+    return this.performCommunityUpdate(communityIdOrSlug, updateData, req);
+  }
+
+  @Patch('update/:id')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }))
+  async updateCommunityLegacyPatch(
+    @Param('id') communityIdOrSlug: string,
+    @Body() updateData: UpdateCommunityCustomizationDto,
+    @Request() req: any
+  ) {
+    return this.performCommunityUpdate(communityIdOrSlug, updateData, req);
+  }
+
+  @Put('update/:id')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }))
+  async updateCommunityLegacyPut(
+    @Param('id') communityIdOrSlug: string,
+    @Body() updateData: UpdateCommunityCustomizationDto,
+    @Request() req: any
+  ) {
+    return this.performCommunityUpdate(communityIdOrSlug, updateData, req);
+  }
+
+  /**
+   * Settings-only update route (main)
+   * Route: PATCH /community-aff-crea-join/:id/settings
+   */
+  @Patch(':id/settings')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }))
+  async updateCommunitySettings(
+    @Param('id') communityIdOrSlug: string,
+    @Body() settings: Record<string, any>,
+    @Request() req: any
+  ) {
+    return this.performCommunityUpdate(communityIdOrSlug, { settings } as any, req);
+  }
+
+  /**
+   * Settings-only update route (compat alias)
+   * Route: PUT /community-aff-crea-join/:id/settings
+   */
+  @Put(':id/settings')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }))
+  async updateCommunitySettingsPut(
+    @Param('id') communityIdOrSlug: string,
+    @Body() settings: Record<string, any>,
+    @Request() req: any
+  ) {
+    return this.performCommunityUpdate(communityIdOrSlug, { settings } as any, req);
+  }
+
+  /**
+   * Diagnostics endpoint to verify route availability on deployed environment.
+   */
+  @Get('health/routes')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  async getCustomizationRoutesHealth() {
+    return {
+      success: true,
+      data: {
+        patchMain: true,
+        putMain: true,
+        patchLegacy: true,
+        putLegacy: true,
+        patchSettings: true,
+        putSettings: true,
+      },
+    };
+  }
+
+  private async performCommunityUpdate(
+    communityIdOrSlug: string,
+    updateData: UpdateCommunityCustomizationDto,
+    req: any,
+  ) {
+    const userId = req.user?._id || req.user?.id || req.user?.userId;
+    const community = await this.communityService.updateCommunity(
+      communityIdOrSlug,
+      userId,
+      updateData || {},
+    );
+
+    return {
+      success: true,
+      message: 'Communauté mise à jour avec succès',
+      data: community,
+    };
   }
 
   /**

@@ -9,6 +9,8 @@ import { AddSectionDto } from '../dto-cours/add-section.dto';
 import { AddChapitreToSectionDto } from '../dto-cours/add-chapitre-to-section.dto';
 import { UpdateSequentialProgressionDto, ChapterAccessResponseDto, UnlockedChaptersResponseDto } from '../dto-cours/sequential-progression.dto';
 import { UpdateCoursDto, UpdateSectionDto, UpdateChapitreDto } from '../dto-cours/update-cours.dto';
+import { HttpCacheInterceptor } from '../common/interceptors/cache.interceptor';
+import { CacheTTL, CacheDuration } from '../common/decorators/cache-ttl.decorator';
 
 interface AuthenticatedUser {
 	_id: string;
@@ -17,6 +19,7 @@ interface AuthenticatedUser {
 
 @ApiTags('Cours')
 @Controller('cours')
+@UseInterceptors(HttpCacheInterceptor)
 export class CoursController {
 	constructor(private readonly coursService: CoursService) { }
 

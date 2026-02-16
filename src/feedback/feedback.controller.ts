@@ -1,14 +1,17 @@
 
-import { Controller, Post, Body, Get, Param, UseGuards, Req, Put } from '@nestjs/common';
+import { Controller, Post, Body, Get, Param, UseGuards, Req, Put, UseInterceptors } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { FeedbackService } from './feedback.service';
 import { CreateFeedbackDto } from '../dto-feedback/create-feedback.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { FeedbackResponseDto } from '../dto-feedback/feedback-response.dto';
 import { Request } from 'express';
+import { HttpCacheInterceptor } from '../common/interceptors/cache.interceptor';
+import { CacheTTL, CacheDuration } from '../common/decorators/cache-ttl.decorator';
 
 @ApiTags('feedback')
 @Controller('feedback')
+@UseInterceptors(HttpCacheInterceptor)
 export class FeedbackController {
   constructor(private readonly feedbackService: FeedbackService) {}
 
@@ -63,6 +66,7 @@ export class FeedbackController {
   }
 
   @Get('/:relatedModel/:relatedTo/stats')
+  @CacheTTL(CacheDuration.FIVE_MINUTES)
   @ApiOperation({ summary: 'Get feedback statistics for an item' })
   @ApiResponse({ status: 200, description: 'The feedback statistics.' })
   getStats(@Param('relatedModel') relatedModel: string, @Param('relatedTo') relatedTo: string) {

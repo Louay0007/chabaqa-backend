@@ -10,7 +10,8 @@ import {
   UseGuards,
   Request,
   ParseIntPipe,
-  DefaultValuePipe
+  DefaultValuePipe,
+  UseInterceptors
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { EventService } from './event.service';
@@ -18,9 +19,11 @@ import { CreateEventDto, CreateEventSessionDto, CreateEventTicketDto, CreateEven
 import { UpdateEventDto } from '../dto-event/update-event.dto';
 import { EventResponseDto, EventListResponseDto, EventStatsResponseDto } from '../dto-event/event-response.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { HttpCacheInterceptor } from '../common/interceptors/cache.interceptor';
 
 @ApiTags('Events')
 @Controller('events')
+@UseInterceptors(HttpCacheInterceptor)
 export class EventController {
   constructor(private readonly eventService: EventService) {}
 

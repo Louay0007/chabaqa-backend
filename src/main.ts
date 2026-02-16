@@ -1,6 +1,6 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
-import { ValidationPipe } from '@nestjs/common';
+import { BadRequestException, ValidationPipe } from '@nestjs/common';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
@@ -57,7 +57,11 @@ async function bootstrap() {
         messages: Object.values(error.constraints || {}),
       }));
       console.error('❌ Validation Error:', JSON.stringify(formattedErrors, null, 2));
-      return new Error(`Validation failed: ${JSON.stringify(formattedErrors)}`);
+      return new BadRequestException({
+        code: 'VALIDATION_FAILED',
+        message: 'Validation failed',
+        details: formattedErrors,
+      });
     },
   }));
 
@@ -103,11 +107,30 @@ async function bootstrap() {
     console.log('✅ CORS enabled - Accepting all origins in development mode');
   }
 
-  // Request logging middleware (development only)
-  if (!isProduction) {
+  // Access log middleware (production-friendly). This feeds Dozzle with request/response stats.
+  const enableAccessLog = process.env.HTTP_ACCESS_LOG !== 'false';
+  if (enableAccessLog) {
     app.use((req, res, next) => {
-      const timestamp = new Date().toISOString();
-      console.log(`📥 [${timestamp}] ${req.method} ${req.url} - Origin: ${req.get('origin') || 'No origin'}`);
+      const startedAt = process.hrtime.bigint();
+      const startedIso = new Date().toISOString();
+      const url = req.originalUrl || req.url;
+
+      res.on('finish', () => {
+        if (url.startsWith('/api/health')) {
+          return;
+        }
+
+        const elapsedMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+        const status = res.statusCode;
+        const icon = status >= 500 ? '❌' : status >= 400 ? '⚠️' : '✅';
+        const contentLength = res.getHeader('content-length') || '-';
+        const ip = req.ip || req.socket?.remoteAddress || '-';
+
+        console.log(
+          `${icon} [HTTP] ${startedIso} ${req.method} ${url} ${status} ${elapsedMs.toFixed(1)}ms size=${contentLength} ip=${ip}`,
+        );
+      });
+
       next();
     });
   }

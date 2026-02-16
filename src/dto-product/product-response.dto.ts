@@ -116,6 +116,12 @@ export class ProductResponseDto {
   })
   title: string;
 
+  @ApiPropertyOptional({
+    description: 'Slug unique du produit',
+    example: 'cours-de-react-avance'
+  })
+  slug?: string;
+
   @ApiProperty({
     description: 'Description du produit',
     example: 'Apprenez les concepts avancés de React avec des projets pratiques'

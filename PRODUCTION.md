@@ -34,6 +34,11 @@ docker compose up -d --build
 │  ┌─────────────────┐       ┌─────────────────┐          │
 │  │   Backend:3000  │──────▶│   Redis:6379    │          │
 │  └────────┬────────┘       └─────────────────┘          │
+│           │                                             │
+│           ▼                                             │
+│  ┌─────────────────┐                                    │
+│  │   Dozzle:8080   │                                    │
+│  └─────────────────┘                                    │
 └───────────┼─────────────────────────────────────────────┘
             │
             ▼
@@ -53,12 +58,27 @@ Key variables in `.env`:
 | `NODE_ENV` | Set to `production` |
 | `PORT` | Backend port (default: 3000) |
 | `REDIS_PASSWORD` | Redis authentication password |
+| `HTTP_ACCESS_LOG` | Enable request/response access logs (default: `true`) |
+| `DOZZLE_PORT` | Local bind port for Dozzle UI (default: `8088`) |
+| `DOZZLE_FILTER` | Docker filter used by Dozzle (`name=chabaqa-`) |
 
 ## Health Check
 
 ```bash
 curl http://localhost:3000/api/health
 ```
+
+## Dozzle (Backend Inspection UI)
+
+Dozzle is included in `docker-compose.yml` to inspect container logs and runtime stats.
+
+- Public URL: `http://api.chabaqa.io:8088`
+
+### What to inspect
+
+- **Backend responses/statuses**: stream `chabaqa-backend` logs (enabled by `HTTP_ACCESS_LOG=true`)
+- **Container stats**: CPU/memory in Dozzle container view
+- **App metrics endpoint**: `GET /api/metrics` and `GET /api/metrics/system`
 
 ## Logs
 

@@ -6,7 +6,8 @@ import {
   HttpCode, 
   HttpStatus,
   ValidationPipe,
-  UsePipes
+  UsePipes,
+  UseInterceptors
 } from '@nestjs/common';
 import { 
   ApiTags, 
@@ -17,9 +18,12 @@ import {
 } from '@nestjs/swagger';
 import { CommunitiesService } from './communities.service';
 import { CommunityPageContentService } from '../community-page-content/community-page-content.service';
+import { HttpCacheInterceptor } from '../common/interceptors/cache.interceptor';
+import { CacheTTL, CacheDuration } from '../common/decorators/cache-ttl.decorator';
 
 @ApiTags('Communities Discovery')
 @Controller('communities')
+@UseInterceptors(HttpCacheInterceptor)
 export class CommunitiesController {
   constructor(
     private readonly communitiesService: CommunitiesService,

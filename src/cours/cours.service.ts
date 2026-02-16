@@ -184,6 +184,7 @@ export class CoursService {
       this.coursModel
         .find(query)
         .populate('creatorId', 'name email profile_picture photo_profil')
+        .populate('communityId', 'name slug')
         .select('-sections -learningObjectives -requirements')
         .sort({ createdAt: -1 })
         .skip(skip)
@@ -214,6 +215,8 @@ export class CoursService {
       const finalRating = attachedRating !== undefined ? Number(attachedRating) : Number(course.averageRating || 0);
       const finalCount = attachedCount !== undefined ? Number(attachedCount) : Number(course.ratingCount || 0);
 
+      const community = (course as any).communityId;
+
       return {
         id: course._id.toString(),
         titre: course.titre,
@@ -225,6 +228,8 @@ export class CoursService {
         duree: course.duree,
         averageRating: finalRating,
         ratingCount: finalCount,
+        communityName: community?.name || 'Unknown Community',
+        communitySlug: community?.slug || course._id.toString(),
         creator: {
           name: (course.creatorId as any)?.name || 'Unknown',
           avatar: this.uploadService.ensureAbsoluteUrl((course.creatorId as any)?.profile_picture || (course.creatorId as any)?.photo_profil) || 'https://placehold.co/64x64?text=MM'

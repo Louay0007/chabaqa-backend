@@ -129,11 +129,23 @@ export class CommunitySettings {
   @Prop({ default: 'centered' })
   heroLayout: string;
 
+  @Prop({ default: 'default' })
+  headerStyle: string;
+
+  @Prop({ default: 'normal' })
+  contentWidth: string;
+
   @Prop({ type: Boolean, default: true })
   showStats: boolean;
 
   @Prop({ type: Boolean, default: true })
+  showHero: boolean;
+
+  @Prop({ type: Boolean, default: true })
   showFeatures: boolean;
+
+  @Prop({ type: Boolean, default: true })
+  showBenefits: boolean;
 
   @Prop({ type: Boolean, default: true })
   showTestimonials: boolean;
@@ -173,6 +185,12 @@ export class CommunitySettings {
 
   @Prop()
   metaDescription: string;
+
+  @Prop()
+  customDomain?: string;
+
+  @Prop()
+  headerScripts?: string;
 }
 
 export const CommunitySettingsSchema = SchemaFactory.createForClass(CommunitySettings);
@@ -823,11 +841,26 @@ CommunitySchema.index({ cours: 1 });
 CommunitySchema.index({ category: 1, featured: 1 });
 CommunitySchema.index({ rating: -1, membersCount: -1 });
 CommunitySchema.index({ isActive: 1, isPrivate: 1 });
+CommunitySchema.index(
+  { 'settings.customDomain': 1 },
+  {
+    unique: true,
+    sparse: true,
+    partialFilterExpression: {
+      'settings.customDomain': { $exists: true, $type: 'string', $ne: '' },
+    },
+    collation: { locale: 'en', strength: 2 },
+  },
+);
 
 // Middleware pour mettre à jour le nombre de membres
 CommunitySchema.pre('save', function (next) {
   if (this.isModified('members')) {
     this.membersCount = this.members.length;
+  }
+
+  if (this.settings && typeof this.settings.customDomain === 'string') {
+    this.settings.customDomain = this.settings.customDomain.trim().toLowerCase();
   }
 
   // Génération automatique du slug à partir du nom si pas défini

@@ -11,6 +11,7 @@ import {
   Request,
   HttpCode,
   HttpStatus,
+  UseInterceptors
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery, ApiParam, ApiBody } from '@nestjs/swagger';
 import { ChallengeService } from './challenge.service';
@@ -39,9 +40,11 @@ import {
   UnlockedTasksResponseDto
 } from '../dto-challenge/sequential-progression.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { HttpCacheInterceptor } from '../common/interceptors/cache.interceptor';
 
 @ApiTags('Challenges')
 @Controller('challenges')
+@UseInterceptors(HttpCacheInterceptor)
 export class ChallengeController {
   constructor(private readonly challengeService: ChallengeService) {}
 

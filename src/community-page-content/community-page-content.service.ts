@@ -456,112 +456,86 @@ export class CommunityPageContentService {
    * @returns Default content structure
    */
   private getDefaultContent(community: CommunityDocument) {
+    const settings: any = community.settings || {};
+    const longDescription =
+      community.longDescription ||
+      community.short_description ||
+      `Bienvenue dans ${community.name}, une communauté dédiée à l'apprentissage et au partage.`;
+    const banner = community.coverImage || community.photo_de_couverture || settings.heroBackground || '';
+    const showStats = settings.showStats ?? true;
+    const primaryColor = typeof settings.primaryColor === 'string' ? settings.primaryColor : '#8B5CF6';
+    const features = Array.isArray(settings.features)
+      ? settings.features.filter((feature: any) => typeof feature === 'string' && feature.trim() !== '')
+      : [];
+    const benefits = Array.isArray(settings.benefits)
+      ? settings.benefits.filter((benefit: any) => typeof benefit === 'string' && benefit.trim() !== '')
+      : [];
+    const defaultOverviewCards = [
+      'Access to exclusive community discussions and forums',
+      'Weekly live Q&A sessions with industry experts',
+      'Premium resources, templates, and learning materials',
+      'Networking opportunities with like-minded professionals',
+    ];
+    const defaultBenefits = [
+      'Expert-Led Content',
+      'Proven Results',
+      'Lifetime Access',
+      'Continuous Growth',
+    ];
+
+    const overviewCards = (features.length > 0 ? features : defaultOverviewCards).slice(0, 6).map((title, index) => ({
+      id: String(index + 1),
+      title,
+      description: `Discover how ${community.name} helps you with ${title.toLowerCase()}.`,
+      icon: ['💬', '🎥', '📚', '🤝', '🚀', '⭐'][index] || '✨',
+      iconColor: primaryColor,
+      order: index,
+      visible: true,
+    }));
+
+    const benefitItems = (benefits.length > 0 ? benefits : defaultBenefits).slice(0, 6).map((title, index) => ({
+      id: String(index + 1),
+      title,
+      description: `Members of ${community.name} benefit from ${title.toLowerCase()}.`,
+      icon: ['🎓', '📈', '♾️', '🚀', '🤝', '✨'][index] || '✨',
+      iconColor: primaryColor,
+      order: index,
+      visible: true,
+    }));
+
     return {
       communityId: community._id.toString(),
       communitySlug: community.slug,
       communityName: community.name,
+      source: 'generated',
       hero: {
-        customTitle: '',
-        customSubtitle: '',
-        customBanner: '',
+        customTitle: community.name,
+        customSubtitle: longDescription,
+        customBanner: banner,
         ctaButtonText: 'Join Community',
-        showMemberCount: true,
-        showRating: true,
+        showMemberCount: showStats,
+        showRating: showStats,
         showCreator: true
       },
       overview: {
         title: 'Community Overview',
         subtitle: 'Everything you need to succeed is included in this community.',
-        visible: true,
-        cards: [
-          {
-            id: '1',
-            title: 'Access to exclusive community discussions and forums',
-            description: 'Connect with like-minded individuals',
-            icon: '💬',
-            iconColor: '#3B82F6',
-            order: 0,
-            visible: true
-          },
-          {
-            id: '2',
-            title: 'Weekly live Q&A sessions with industry experts',
-            description: 'Get your questions answered directly',
-            icon: '🎥',
-            iconColor: '#8B5CF6',
-            order: 1,
-            visible: true
-          },
-          {
-            id: '3',
-            title: 'Premium resources, templates, and learning materials',
-            description: 'Everything you need to succeed',
-            icon: '📚',
-            iconColor: '#10B981',
-            order: 2,
-            visible: true
-          },
-          {
-            id: '4',
-            title: 'Networking opportunities with like-minded professionals',
-            description: 'Build meaningful connections',
-            icon: '🤝',
-            iconColor: '#F59E0B',
-            order: 3,
-            visible: true
-          }
-        ]
+        visible: settings.showFeatures ?? true,
+        cards: overviewCards
       },
       benefits: {
         titlePrefix: 'Transform Your Skills with',
-        titleSuffix: '',
-        subtitle: '',
-        visible: true,
+        titleSuffix: community.name,
+        subtitle: settings.welcomeMessage || '',
+        visible: settings.showBenefits ?? true,
         ctaTitle: 'Ready to get started?',
         ctaSubtitle: 'Join this community today',
-        benefits: [
-          {
-            id: '1',
-            title: 'Expert-Led Content',
-            description: 'Learn from industry professionals who coach teams, develop courses, and share real-world insights.',
-            icon: '🎓',
-            iconColor: '#8B5CF6',
-            order: 0,
-            visible: true
-          },
-          {
-            id: '2',
-            title: 'Proven Results',
-            description: 'Join members who have significantly improved their skills through our structured learning approach.',
-            icon: '📈',
-            iconColor: '#8B5CF6',
-            order: 1,
-            visible: true
-          },
-          {
-            id: '3',
-            title: 'Lifetime Access',
-            description: 'Get unlimited access to all current and future courses, resources, and community features.',
-            icon: '♾️',
-            iconColor: '#8B5CF6',
-            order: 2,
-            visible: true
-          },
-          {
-            id: '4',
-            title: 'Continuous Growth',
-            description: 'Regular updates with new content and resources tailored to help you stay ahead in your field.',
-            icon: '🚀',
-            iconColor: '#8B5CF6',
-            order: 3,
-            visible: true
-          }
-        ]
+        benefits: benefitItems
       },
       testimonials: {
         title: 'What Members Are Saying',
         subtitle: 'Join thousands of satisfied members who have achieved amazing results.',
-        visible: true,
+        visible: settings.showTestimonials ?? true,
         showRatings: true,
         testimonials: []
       },
@@ -597,6 +571,7 @@ export class CommunityPageContentService {
       benefits: content.benefits,
       testimonials: content.testimonials,
       cta: content.cta,
+      source: 'published',
       isPublished: content.isPublished,
       version: content.version,
       createdAt: content.createdAt,

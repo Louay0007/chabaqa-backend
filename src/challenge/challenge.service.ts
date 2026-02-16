@@ -704,13 +704,13 @@ export class ChallengeService {
     // Récupérer les communautés pour chaque défi
     const communityIds = [...new Set(challenges.map((c) => c.communityId))];
     const communities = await this.communityModel.find({
-      id: { $in: communityIds },
+      _id: { $in: communityIds.map(id => Types.ObjectId.isValid(id) ? new Types.ObjectId(id) : id) },
     });
 
     const challengeResponses = await Promise.all(
       challenges.map((challenge) => {
         const community = communities.find(
-          (c) => c.id === challenge.communityId,
+          (c) => c._id.toString() === challenge.communityId.toString(),
         );
         return this.transformToResponseDto(challenge, community || undefined);
       }),
@@ -1509,6 +1509,11 @@ export class ChallengeService {
       description: challenge.description,
       communityId: challenge.communityId,
       communitySlug: community?.slug || '',
+      community: community ? {
+        id: community.id,
+        name: community.name,
+        slug: community.slug,
+      } : undefined,
       creatorId: challenge.creatorId.toString(),
       creatorName: creator?.name || 'Créateur inconnu',
       creatorAvatar: this.uploadService.ensureAbsoluteUrl(creator?.profile_picture || creator?.photo_profil) || undefined,
@@ -1863,13 +1868,13 @@ export class ChallengeService {
 
     const communityIds = [...new Set(challenges.map((c) => c.communityId))];
     const communities = await this.communityModel.find({
-      id: { $in: communityIds },
+      _id: { $in: communityIds.map(id => Types.ObjectId.isValid(id) ? new Types.ObjectId(id) : id) },
     });
 
     const challengeResponses = await Promise.all(
       challenges.map((challenge) => {
         const community = communities.find(
-          (c) => c.id === challenge.communityId,
+          (c) => c._id.toString() === challenge.communityId.toString(),
         );
         return this.transformToResponseDto(challenge, community || undefined);
       }),
@@ -1920,13 +1925,13 @@ export class ChallengeService {
 
     const communityIds = [...new Set(challenges.map((c) => c.communityId))];
     const communities = await this.communityModel.find({
-      id: { $in: communityIds },
+      _id: { $in: communityIds.map(id => Types.ObjectId.isValid(id) ? new Types.ObjectId(id) : id) },
     });
 
     const challengeResponses = await Promise.all(
       challenges.map((challenge) => {
         const community = communities.find(
-          (c) => c.id === challenge.communityId,
+          (c) => c._id.toString() === challenge.communityId.toString(),
         );
         return this.transformToResponseDto(challenge, community || undefined);
       }),

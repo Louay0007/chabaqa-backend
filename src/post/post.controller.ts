@@ -9,6 +9,7 @@ import {
   Query,
   UseGuards,
   Request,
+  UseInterceptors
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -28,9 +29,11 @@ import {
   PostStatsResponseDto,
 } from '../dto-post/post-response.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { HttpCacheInterceptor } from '../common/interceptors/cache.interceptor';
 
 @ApiTags('Posts')
 @Controller('posts')
+@UseInterceptors(HttpCacheInterceptor)
 export class PostController {
   constructor(private readonly postService: PostService) {}
 

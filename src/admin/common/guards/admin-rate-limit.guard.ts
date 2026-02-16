@@ -65,6 +65,12 @@ export class AdminRateLimitGuard extends ThrottlerGuard {
       return true;
     }
 
+    // IMPORTANT: Only apply rate limiting to admin endpoints
+    // Skip all non-admin routes
+    if (!request.url.startsWith('/api/admin')) {
+      return true;
+    }
+
     // Skip rate limiting for super admins (optional - can be configured)
     if (request.user?.isSuperAdmin) {
       return false; // Set to true to skip for super admins
