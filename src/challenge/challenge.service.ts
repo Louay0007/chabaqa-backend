@@ -18,6 +18,7 @@ import {
 } from '../dto-challenge/join-challenge.dto';
 import { CreateChallengeDto } from '../dto-challenge/create-challenge.dto';
 import { UpdateChallengeDto } from '../dto-challenge/update-challenge.dto';
+import { UpdateChallengeTasksDto } from '../dto-challenge/update-challenge-tasks.dto';
 import { ChallengeSubmission, ChallengeSubmissionDocument } from '../schema/challenge-submission.schema';
 import { CreateSubmissionDto, ReviewSubmissionDto } from '../dto-challenge/challenge-submission.dto';
 import {
@@ -73,29 +74,135 @@ export class ChallengeService {
       challenge = await this.challengeModel.findOne({ id });
     }
 
-    // Self-healing: Ensure all tasks have an ID
-    // This fixes issues where tasks created or migrated might lack IDs, causing issues on mobile
-    if (challenge && challenge.tasks) {
-      let hasChanges = false;
-      challenge.tasks.forEach(task => {
-        if (!task.id || !Types.ObjectId.isValid(task.id)) {
-          task.id = new Types.ObjectId().toString();
-          hasChanges = true;
-          console.log(`🔧 [CHALLENGE-SERVICE] Self-healing: generated ID for task in challenge ${challenge.id}`);
-        }
-      });
-
-      if (hasChanges) {
-        // Use non-blocking save to avoid delaying the response
-        challenge.save().then(() => {
-          console.log(`✅ [CHALLENGE-SERVICE] Saved repaired challenge ${challenge.id}`);
-        }).catch(err => {
-          console.error(`❌ [CHALLENGE-SERVICE] Failed to save repaired challenge:`, err);
-        });
-      }
+    if (challenge) {
+      await this.ensureTaskAndResourceIds(challenge);
     }
 
     return challenge;
+  }
+
+  private isNonEmptyString(value: unknown): value is string {
+    return typeof value === 'string' && value.trim().length > 0;
+  }
+
+  private sanitizeChallengeResources(resources: any[] = []): any[] {
+    const allowedTypes = new Set(['video', 'article', 'code', 'tool', 'pdf', 'link']);
+    return resources
+      .filter((resource) =>
+        this.isNonEmptyString(resource?.title) &&
+        this.isNonEmptyString(resource?.url) &&
+        this.isNonEmptyString(resource?.type) &&
+        allowedTypes.has(resource.type.trim().toLowerCase()),
+      )
+      .map((resource) => ({
+        ...resource,
+        title: resource.title.trim(),
+        url: resource.url.trim(),
+        type: resource.type.trim().toLowerCase(),
+        description: this.isNonEmptyString(resource?.description)
+          ? resource.description.trim()
+          : undefined,
+      }));
+  }
+
+  private sanitizeTaskResources(resources: any[] = []): any[] {
+    const allowedTypes = new Set(['video', 'article', 'code', 'tool']);
+    return resources
+      .filter((resource) =>
+        this.isNonEmptyString(resource?.title) &&
+        this.isNonEmptyString(resource?.url) &&
+        this.isNonEmptyString(resource?.type) &&
+        allowedTypes.has(resource.type.trim().toLowerCase()),
+      )
+      .map((resource) => ({
+        ...resource,
+        title: resource.title.trim(),
+        url: resource.url.trim(),
+        type: resource.type.trim().toLowerCase(),
+        description: this.isNonEmptyString(resource?.description)
+          ? resource.description.trim()
+          : undefined,
+      }));
+  }
+
+  private normalizeTaskInput(tasks: any[] = []): any[] {
+    const normalizedTasks = (tasks || []).map((task) => ({
+      ...task,
+      id: this.isNonEmptyString(task?.id) ? task.id.trim() : new Types.ObjectId().toString(),
+      day: Number(task?.day),
+      title: this.isNonEmptyString(task?.title) ? task.title.trim() : task?.title,
+      description: this.isNonEmptyString(task?.description) ? task.description.trim() : task?.description,
+      deliverable: this.isNonEmptyString(task?.deliverable) ? task.deliverable.trim() : task?.deliverable,
+      instructions: this.isNonEmptyString(task?.instructions) ? task.instructions.trim() : undefined,
+      notes: this.isNonEmptyString(task?.notes) ? task.notes.trim() : undefined,
+      points: Number(task?.points || 0),
+      isActive: typeof task?.isActive === 'boolean' ? task.isActive : true,
+      resources: this.sanitizeTaskResources(task?.resources || []).map((resource: any) => ({
+        ...resource,
+        id: this.isNonEmptyString(resource?.id)
+          ? resource.id.trim()
+          : new Types.ObjectId().toString(),
+      })),
+    }));
+
+    const invalidDay = normalizedTasks.find((task) => !Number.isInteger(task.day) || task.day < 1);
+    if (invalidDay) {
+      throw new BadRequestException('Chaque tâche doit avoir un numéro de jour valide (>= 1)');
+    }
+
+    const uniqueDays = new Set(normalizedTasks.map((task) => task.day));
+    if (uniqueDays.size !== normalizedTasks.length) {
+      throw new BadRequestException('Chaque tâche doit avoir un numéro de jour unique');
+    }
+
+    normalizedTasks.sort((a, b) => a.day - b.day);
+    return normalizedTasks;
+  }
+
+  private async ensureTaskAndResourceIds(challenge: ChallengeDocument): Promise<void> {
+    if (!challenge?.tasks) return;
+
+    let hasChanges = false;
+    for (const task of challenge.tasks) {
+      if (!this.isNonEmptyString(task.id)) {
+        task.id = new Types.ObjectId().toString();
+        hasChanges = true;
+      }
+
+      task.resources = (task.resources || []).map((resource: any) => {
+        if (this.isNonEmptyString(resource?.id)) return resource;
+        hasChanges = true;
+        return { ...resource, id: new Types.ObjectId().toString() };
+      });
+    }
+
+    if (hasChanges) {
+      await challenge.save();
+    }
+  }
+
+  private isAdminUser(user: any): boolean {
+    const role = String(user?.role || user?.userRole || '').toLowerCase();
+    return role === 'admin' || role === 'super_admin' || user?.isAdmin === true;
+  }
+
+  private assertCreatorOrAdmin(challenge: ChallengeDocument, userId: string, user?: any): void {
+    if (challenge.creatorId?.toString() === String(userId)) return;
+    if (this.isAdminUser(user)) return;
+    throw new ForbiddenException('Accès non autorisé');
+  }
+
+  private resolveChallengeTask(challenge: ChallengeDocument, taskId: string): any | null {
+    if (!challenge?.tasks?.length) return null;
+    const directTask = challenge.tasks.find((task: any) => String(task.id) === String(taskId));
+    if (directTask) return directTask;
+
+    const numericTaskId = Number(taskId);
+    if (Number.isInteger(numericTaskId) && numericTaskId > 0) {
+      return challenge.tasks.find((task: any) => Number(task.day) === numericTaskId) || null;
+    }
+
+    return null;
   }
 
   /**
@@ -230,11 +337,7 @@ export class ChallengeService {
     const challenge = await this.findChallengeById(dto.challengeId);
     if (!challenge) throw new NotFoundException('Challenge not found');
 
-    const task = challenge.tasks?.find(t =>
-      (t.id && String(t.id) === String(dto.taskId)) ||
-      (t.day && String(t.day) === String(dto.taskId)) ||
-      ((t as any)._id && (t as any)._id?.toString() === String(dto.taskId))
-    );
+    const task = challenge.tasks?.find((t) => t.id && String(t.id) === String(dto.taskId));
 
     // Log the challenge tasks to debug if not found
     if (!task) {
@@ -244,29 +347,12 @@ export class ChallengeService {
       );
     }
 
-    // Fallback: Check if we can find it by loose title match or day in a more flexible way
+    // Temporary compatibility fallback: allow day-based taskId during migration window
     let finalTask = task;
     if (!finalTask) {
-      // Try to find by day number specifically if taskId is just a number
       if (/^\d+$/.test(String(dto.taskId))) {
         const dayNum = parseInt(String(dto.taskId), 10);
         finalTask = challenge.tasks?.find(t => t.day === dayNum);
-      }
-
-      // SUPER EXTREME FALLBACK: The user provided a log where taskId is "07d7d5b4-5cb6-433d-9550-8e04f28b296c"
-      // but the only task has id "6988d2df9d7bff79aa9d42ab".
-      // This is a common case during migration/sync. Let's map any single-task submission to the only task.
-      if (!finalTask && challenge.tasks?.length === 1) {
-        console.log(`[CHALLENGE-SERVICE] Super extreme fallback - Single task challenge, mapping any ID to the only task available`);
-        finalTask = challenge.tasks[0];
-      }
-    }
-
-    // Last Resort Fallback: If still not found, check if it's an index (0-based)
-    if (!finalTask && /^\d+$/.test(String(dto.taskId))) {
-      const index = parseInt(String(dto.taskId), 10);
-      if (challenge.tasks && challenge.tasks[index]) {
-        finalTask = challenge.tasks[index];
       }
     }
 
@@ -298,7 +384,10 @@ export class ChallengeService {
       }
     }
 
-    const canonicalTaskId = finalTask.id || (finalTask as any)._id?.toString() || dto.taskId;
+    if (!finalTask.id) {
+      throw new BadRequestException('Task has no canonical ID');
+    }
+    const canonicalTaskId = String(finalTask.id);
 
     // Check if submission already exists using the CANONICAL taskId
     const existingSubmission = await this.submissionModel.findOne({
@@ -371,10 +460,114 @@ export class ChallengeService {
 
     console.log(`🔍 [CHALLENGE-SERVICE] Querying submissions with:`, query);
 
-    const submissions = await this.submissionModel.find(query).sort({ createdAt: -1 });
+    const submissions = await this.submissionModel.find(query).sort({ createdAt: -1 }).lean();
     console.log(`✅ [CHALLENGE-SERVICE] Found ${submissions.length} submissions`);
 
-    return submissions;
+    const tasksById = new Map((challenge.tasks || []).map((task: any) => [String(task.id), task]));
+
+    return submissions.map((submission: any) => {
+      const task = tasksById.get(String(submission.taskId));
+      return {
+        ...submission,
+        challengeId: challenge.id,
+        taskId: String(submission.taskId),
+        taskDay: task?.day ?? null,
+        taskTitle: task?.title ?? null,
+      };
+    });
+  }
+
+  async getAllSubmissionsForCreator(challengeId: string, userId: string, user?: any): Promise<any> {
+    const challenge = await this.findChallengeById(challengeId);
+    if (!challenge) {
+      throw new NotFoundException('Challenge not found');
+    }
+    this.assertCreatorOrAdmin(challenge, userId, user);
+
+    const submissions = await this.submissionModel
+      .find({ challengeId: challenge._id })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const userIds = [...new Set(submissions.map((s: any) => String(s.userId)))];
+    const users = await this.userModel
+      .find({ _id: { $in: userIds.map((id) => new Types.ObjectId(id)) } })
+      .select('name profile_picture photo_profil email')
+      .lean();
+    const userMap = new Map(users.map((u: any) => [String(u._id), u]));
+
+    const enriched = submissions.map((submission: any) => {
+      const submissionUser = userMap.get(String(submission.userId));
+      const task = this.resolveChallengeTask(challenge as any, String(submission.taskId));
+      const canonicalTaskId = task?.id ? String(task.id) : String(submission.taskId);
+      return {
+        ...submission,
+        challengeId: challenge.id,
+        taskId: canonicalTaskId,
+        files: Array.isArray(submission.files)
+          ? submission.files.map((file: string) => this.uploadService.ensureAbsoluteUrl(file)).filter(Boolean)
+          : [],
+        links: Array.isArray(submission.links)
+          ? submission.links.filter((link: string) => typeof link === 'string' && link.trim().length > 0)
+          : [],
+        taskTitle: task?.title || null,
+        taskDay: task?.day || null,
+        taskPoints: Number(task?.points || 0),
+        user: {
+          id: String(submission.userId),
+          name: submissionUser?.name || 'Unknown user',
+          email: submissionUser?.email || '',
+          avatar: this.uploadService.ensureAbsoluteUrl(submissionUser?.profile_picture || submissionUser?.photo_profil),
+        },
+      };
+    });
+
+    const byParticipantMap = new Map<string, any>();
+    const byTaskMap = new Map<string, any>();
+    for (const item of enriched) {
+      const u = item.user.id;
+      const t = String(item.taskId);
+      if (!byParticipantMap.has(u)) {
+        byParticipantMap.set(u, {
+          user: item.user,
+          totalSubmissions: 0,
+          pendingCount: 0,
+          reviewedCount: 0,
+          submissions: [],
+        });
+      }
+      const participantGroup = byParticipantMap.get(u);
+      participantGroup.totalSubmissions += 1;
+      if (item.status === 'pending') participantGroup.pendingCount += 1;
+      if (item.status !== 'pending') participantGroup.reviewedCount += 1;
+      participantGroup.submissions.push(item);
+
+      if (!byTaskMap.has(t)) {
+        byTaskMap.set(t, {
+          taskId: item.taskId,
+          taskTitle: item.taskTitle,
+          taskDay: item.taskDay,
+          totalSubmissions: 0,
+          pendingCount: 0,
+          reviewedCount: 0,
+          submissions: [],
+        });
+      }
+      const taskGroup = byTaskMap.get(t);
+      taskGroup.totalSubmissions += 1;
+      if (item.status === 'pending') taskGroup.pendingCount += 1;
+      if (item.status !== 'pending') taskGroup.reviewedCount += 1;
+      taskGroup.submissions.push(item);
+    }
+
+    return {
+      challengeId: challenge.id,
+      challengeTitle: challenge.title,
+      totalSubmissions: enriched.length,
+      byParticipant: Array.from(byParticipantMap.values()),
+      byTask: Array.from(byTaskMap.values()),
+      submissions: enriched,
+    };
   }
 
   /**
@@ -394,31 +587,206 @@ export class ChallengeService {
   /**
    * Review a project submission
    */
-  async reviewSubmission(submissionId: string, dto: ReviewSubmissionDto, adminId: string): Promise<any> {
+  async reviewSubmission(submissionId: string, dto: ReviewSubmissionDto, reviewerId: string, reviewerUser?: any): Promise<any> {
     const submission = await this.submissionModel.findById(submissionId);
     if (!submission) throw new NotFoundException('Submission not found');
 
+    const challenge = await this.findChallengeById(submission.challengeId.toString());
+    if (!challenge) throw new NotFoundException('Challenge not found');
+    this.assertCreatorOrAdmin(challenge, reviewerId, reviewerUser);
+
+    const previousStatus = submission.status;
+    const resolvedTask = this.resolveChallengeTask(challenge as any, String(submission.taskId));
+    const canonicalTaskId = resolvedTask?.id ? String(resolvedTask.id) : String(submission.taskId);
+
+    if (previousStatus === 'approved') {
+      throw new BadRequestException('Approved submissions are locked and cannot be reviewed again.');
+    }
+
+    // Auto-heal legacy day-based task IDs so review/progress points are always tied to canonical task IDs.
+    if (canonicalTaskId !== String(submission.taskId)) {
+      submission.taskId = canonicalTaskId;
+    }
+
     submission.status = dto.status;
     submission.feedback = dto.feedback;
-    submission.reviewedBy = new Types.ObjectId(adminId);
+    submission.reviewedBy = new Types.ObjectId(reviewerId);
     submission.reviewedAt = new Date();
 
-    if (dto.pointsAwarded !== undefined) {
-      submission.pointsAwarded = dto.pointsAwarded;
+    if (dto.status === 'approved') {
+      const autoPoints = Number(resolvedTask?.points || 0);
+      const requestedPoints = Number(dto.pointsAwarded);
+      submission.pointsAwarded =
+        Number.isFinite(requestedPoints) && requestedPoints >= 0
+          ? requestedPoints
+          : autoPoints;
+    } else {
+      submission.pointsAwarded = 0;
     }
 
     await submission.save();
 
-    // If approved, ensure progress is marked as completed
+    // If approved, ensure progress is marked as completed (only on first approval transition).
     if (dto.status === 'approved') {
       await this.updateProgress({
         challengeId: submission.challengeId.toString(),
-        taskId: submission.taskId,
+        taskId: canonicalTaskId,
         status: 'completed'
       }, submission.userId.toString());
     }
 
     return submission;
+  }
+
+  async publishChallenge(challengeId: string, userId: string): Promise<ChallengeResponseDto> {
+    const challenge = await this.findChallengeById(challengeId);
+    if (!challenge) throw new NotFoundException('Challenge not found');
+
+    if (challenge.creatorId.toString() !== String(userId)) {
+      throw new ForbiddenException('Seul le créateur du défi peut publier ce défi');
+    }
+
+    const hasSub = await this.policyService.hasActiveSubscription(userId);
+    if (!hasSub) {
+      throw new ForbiddenException('Un abonnement actif est requis pour publier ce défi');
+    }
+
+    if (!this.isNonEmptyString(challenge.title) || !this.isNonEmptyString(challenge.description)) {
+      throw new BadRequestException('Le titre et la description sont requis avant publication');
+    }
+    if (!challenge.tasks || challenge.tasks.length === 0) {
+      throw new BadRequestException('Au moins une tâche est requise avant publication');
+    }
+    if (!challenge.startDate || !challenge.endDate || challenge.startDate >= challenge.endDate) {
+      throw new BadRequestException('Les dates de début et fin sont invalides');
+    }
+
+    challenge.isActive = true;
+    await challenge.save();
+
+    const community = await this.communityModel.findOne({ id: challenge.communityId });
+    return this.transformToResponseDto(challenge, community || undefined);
+  }
+
+  async getRewardEligibility(challengeId: string, userId: string, user?: any): Promise<any> {
+    const challenge = await this.findChallengeById(challengeId);
+    if (!challenge) throw new NotFoundException('Challenge not found');
+    this.assertCreatorOrAdmin(challenge, userId, user);
+
+    const participants = [...(challenge.participants || [])].filter((p: any) => p.isActive !== false);
+    const totalTasks = challenge.tasks?.length || 0;
+    const withMetrics = participants.map((participant: any) => ({
+      userId: String(participant.userId),
+      totalPoints: Number(participant.totalPoints || 0),
+      progress: Number(participant.progress || 0),
+      joinedAt: participant.joinedAt,
+      completedTasks: participant.completedTasks || [],
+      isCompleter: totalTasks > 0 && (participant.completedTasks || []).length >= totalTasks,
+    }));
+
+    const completionRecipients = withMetrics
+      .filter((p) => p.isCompleter)
+      .map((p) => ({ userId: p.userId, amount: Number(challenge.completionReward || 0), reason: 'completed_all_tasks' }));
+
+    const topPerformerSorted = [...withMetrics].sort((a, b) => {
+      if (b.totalPoints !== a.totalPoints) return b.totalPoints - a.totalPoints;
+      if (b.progress !== a.progress) return b.progress - a.progress;
+      return new Date(a.joinedAt).getTime() - new Date(b.joinedAt).getTime();
+    });
+    const topPerformerWinner = topPerformerSorted[0]
+      ? [{ userId: topPerformerSorted[0].userId, amount: Number(challenge.topPerformerBonus || 0), reason: 'highest_points_tiebreak_progress_joinedAt' }]
+      : [];
+
+    const streakRecipients = withMetrics
+      .filter((p) => p.progress >= 100)
+      .map((p) => ({ userId: p.userId, amount: Number(challenge.streakBonus || 0), reason: 'fallback_full_progress' }));
+
+    return {
+      challengeId: challenge.id,
+      challengeTitle: challenge.title,
+      completionReward: Number(challenge.completionReward || 0),
+      topPerformerBonus: Number(challenge.topPerformerBonus || 0),
+      streakBonus: Number(challenge.streakBonus || 0),
+      totalParticipants: participants.length,
+      completionRecipients,
+      topPerformerWinner,
+      streakRecipients,
+      latestDistribution: challenge.rewardDistributions?.[challenge.rewardDistributions.length - 1] || null,
+    };
+  }
+
+  async distributeRewards(
+    challengeId: string,
+    userId: string,
+    user: any,
+    payload: {
+      idempotencyKey: string;
+      payouts?: Array<{ userId: string; rewardType: 'completion' | 'top_performer' | 'streak'; amount: number }>;
+    },
+  ): Promise<any> {
+    const challenge = await this.findChallengeById(challengeId);
+    if (!challenge) throw new NotFoundException('Challenge not found');
+    this.assertCreatorOrAdmin(challenge, userId, user);
+
+    if (!this.isNonEmptyString(payload?.idempotencyKey)) {
+      throw new BadRequestException('idempotencyKey is required');
+    }
+
+    const existing = (challenge.rewardDistributions || []).find(
+      (distribution: any) => distribution.idempotencyKey === payload.idempotencyKey,
+    );
+    if (existing) {
+      return {
+        success: true,
+        idempotent: true,
+        message: 'Reward distribution already processed for this idempotency key',
+        data: existing,
+      };
+    }
+
+    let payouts = payload.payouts || [];
+    if (payouts.length === 0) {
+      const eligibility = await this.getRewardEligibility(challengeId, userId, user);
+      payouts = [
+        ...eligibility.completionRecipients.map((item: any) => ({ userId: item.userId, rewardType: 'completion', amount: item.amount })),
+        ...eligibility.topPerformerWinner.map((item: any) => ({ userId: item.userId, rewardType: 'top_performer', amount: item.amount })),
+        ...eligibility.streakRecipients.map((item: any) => ({ userId: item.userId, rewardType: 'streak', amount: item.amount })),
+      ];
+    }
+
+    const normalizedPayouts = payouts
+      .filter((payout) => this.isNonEmptyString(payout.userId) && Number(payout.amount) > 0)
+      .map((payout) => ({
+        userId: new Types.ObjectId(payout.userId),
+        rewardType: payout.rewardType,
+        amount: Number(payout.amount),
+        status: 'processed' as const,
+      }));
+
+    const summary = {
+      completionCount: normalizedPayouts.filter((payout) => payout.rewardType === 'completion').length,
+      topPerformerCount: normalizedPayouts.filter((payout) => payout.rewardType === 'top_performer').length,
+      streakCount: normalizedPayouts.filter((payout) => payout.rewardType === 'streak').length,
+      totalAmount: normalizedPayouts.reduce((total, payout) => total + Number(payout.amount || 0), 0),
+    };
+
+    const distribution = {
+      idempotencyKey: payload.idempotencyKey,
+      status: 'processed' as const,
+      distributedAt: new Date(),
+      distributedBy: new Types.ObjectId(userId),
+      summary,
+      payouts: normalizedPayouts,
+    };
+
+    challenge.rewardDistributions = [...(challenge.rewardDistributions || []), distribution];
+    await challenge.save();
+
+    return {
+      success: true,
+      message: 'Rewards distributed successfully',
+      data: distribution,
+    };
   }
 
   /**
@@ -441,7 +809,7 @@ export class ChallengeService {
           slug: communitySlug,
         });
         if (community) {
-          query.communityId = community._id;
+          query.communityId = community.id;
         }
       }
 
@@ -573,17 +941,14 @@ export class ChallengeService {
     }
 
     // Ensure all tasks have IDs and their resources have IDs
-    const tasksWithIds = (createChallengeDto.tasks || []).map((task, index) => ({
-      ...task,
-      id: task.id || new Types.ObjectId().toString(),
-      resources: (task.resources || []).map((res) => ({
-        ...res,
-        id: res.id || new Types.ObjectId().toString(),
-      })),
-    }));
+    const incomingTasks =
+      (createChallengeDto.tasks && createChallengeDto.tasks.length > 0)
+        ? createChallengeDto.tasks
+        : (createChallengeDto.steps || []);
+    const tasksWithIds = this.normalizeTaskInput(incomingTasks);
 
     // Ensure all challenge resources have IDs
-    const resourcesWithIds = (createChallengeDto.resources || []).map((res, index) => ({
+    const resourcesWithIds = this.sanitizeChallengeResources(createChallengeDto.resources || []).map((res, index) => ({
       ...res,
       id: res.id || new Types.ObjectId().toString(),
       order: res.order ?? index + 1,
@@ -611,6 +976,8 @@ export class ChallengeService {
       notes: createChallengeDto.notes,
       resources: resourcesWithIds,
       tasks: tasksWithIds,
+      sequentialProgression: createChallengeDto.sequentialProgression ?? false,
+      unlockMessage: createChallengeDto.unlockMessage,
       // Configuration de prix
       pricing: {
         participationFee: createChallengeDto.participationFee || 0,
@@ -750,29 +1117,7 @@ export class ChallengeService {
       throw new NotFoundException('Défi non trouvé');
     }
 
-    if (challenge.tasks?.length) {
-      let hasChanges = false;
-      challenge.tasks.forEach((task) => {
-        if (!task.id) {
-          task.id = new Types.ObjectId().toString();
-          hasChanges = true;
-        }
-      });
-
-      if (hasChanges) {
-        try {
-          await challenge.save();
-          console.log(
-            `✅ [CHALLENGE-SERVICE] Saved repaired challenge ${challenge.id}`,
-          );
-        } catch (err) {
-          console.error(
-            `❌ [CHALLENGE-SERVICE] Failed to save repaired challenge ${challenge.id}`,
-            err,
-          );
-        }
-      }
-    }
+    await this.ensureTaskAndResourceIds(challenge);
 
     // Look up community by _id (convert string to ObjectId if needed)
     let community;
@@ -875,20 +1220,17 @@ export class ChallengeService {
     }
 
     // Ensure all tasks have IDs and their resources have IDs
+    if ((!updateChallengeDto.tasks || updateChallengeDto.tasks.length === 0) && (updateChallengeDto as any).steps?.length) {
+      updateChallengeDto.tasks = (updateChallengeDto as any).steps;
+    }
+
     if (updateChallengeDto.tasks) {
-      updateChallengeDto.tasks = updateChallengeDto.tasks.map((task) => ({
-        ...task,
-        id: task.id || new Types.ObjectId().toString(),
-        resources: (task.resources || []).map((res) => ({
-          ...res,
-          id: res.id || new Types.ObjectId().toString(),
-        })),
-      }));
+      updateChallengeDto.tasks = this.normalizeTaskInput(updateChallengeDto.tasks);
     }
 
     // Ensure all challenge resources have IDs
     if (updateChallengeDto.resources) {
-      updateChallengeDto.resources = updateChallengeDto.resources.map((res, index) => ({
+      updateChallengeDto.resources = this.sanitizeChallengeResources(updateChallengeDto.resources).map((res, index) => ({
         ...res,
         id: res.id || new Types.ObjectId().toString(),
         order: res.order ?? index + 1,
@@ -958,8 +1300,17 @@ export class ChallengeService {
       if (updateChallengeDto.trialFeatures !== undefined) challenge.pricing.trialFeatures = updateChallengeDto.trialFeatures;
     }
 
-    // Mettre à jour le défi
-    Object.assign(challenge, updateChallengeDto);
+    // Mettre à jour le défi en évitant d'écraser les champs existants avec undefined
+    const safeUpdatePayload = Object.fromEntries(
+      Object.entries(updateChallengeDto as Record<string, unknown>).filter(
+        ([, value]) => value !== undefined,
+      ),
+    ) as Record<string, unknown>;
+
+    // steps est un alias legacy et ne doit jamais être persisté sur le document
+    delete (safeUpdatePayload as any).steps;
+
+    Object.assign(challenge, safeUpdatePayload);
 
     if (updateChallengeDto.startDate) {
       challenge.startDate = new Date(updateChallengeDto.startDate);
@@ -974,6 +1325,26 @@ export class ChallengeService {
       id: challenge.communityId,
     });
     return this.transformToResponseDto(updatedChallenge, community);
+  }
+
+  async updateTasks(
+    id: string,
+    updateTasksDto: UpdateChallengeTasksDto,
+    userId: string,
+  ): Promise<ChallengeResponseDto> {
+    const challenge = await this.findChallengeById(id);
+    if (!challenge) {
+      throw new NotFoundException('Défi non trouvé');
+    }
+
+    if (challenge.creatorId.toString() !== String(userId)) {
+      throw new ForbiddenException('Seul le créateur du défi peut modifier ses tâches');
+    }
+
+    challenge.tasks = this.normalizeTaskInput(updateTasksDto.tasks || []);
+    const updatedChallenge = await challenge.save();
+    const community = await this.communityModel.findOne({ id: challenge.communityId });
+    return this.transformToResponseDto(updatedChallenge, community || undefined);
   }
 
   /**
@@ -1520,6 +1891,8 @@ export class ChallengeService {
       startDate: challenge.startDate.toISOString(),
       endDate: challenge.endDate.toISOString(),
       isActive: challenge.isActive,
+      sequentialProgression: challenge.sequentialProgression ?? false,
+      unlockMessage: challenge.unlockMessage,
       participants: participants,
       posts: posts,
       createdAt: challenge.createdAt.toISOString(),
@@ -1537,7 +1910,7 @@ export class ChallengeService {
       resources: challenge.resources || [],
       tasks: (challenge.tasks || []).map((task) => {
         const taskIdRaw = (task as any).id || (task as any)._id;
-        const taskId = taskIdRaw ? String(taskIdRaw) : new Types.ObjectId().toString();
+        const taskId = taskIdRaw ? String(taskIdRaw) : '';
         return {
           id: taskId,
           day: task.day,
@@ -2717,18 +3090,14 @@ export class ChallengeService {
         throw new NotFoundException('Défi non trouvé');
       }
 
-      // 2. Vérifier que l'utilisateur est participant
-      if (!challenge.isParticipant(new Types.ObjectId(userId))) {
-        throw new NotFoundException('Utilisateur non participant à ce défi');
-      }
-
-      // 3. Récupérer les tâches complétées par l'utilisateur
+      // 2. Récupérer le participant si l'utilisateur est connecté
+      const userIdStr = String(userId);
       const participant = challenge.participants.find(
-        (p) => p.userId.toString() === userId,
+        (p) => p.userId.toString() === userIdStr,
       );
-      if (!participant) {
-        throw new NotFoundException('Participant non trouvé');
-      }
+
+      // 3. Extraire les tâches complétées (vide si non participant)
+      const completedTaskIds = participant ? participant.completedTasks : [];
 
       // 4. Construire la liste des tâches avec leur statut
       const unlockedTasks: Array<{
@@ -2746,14 +3115,14 @@ export class ChallengeService {
 
       for (const task of tasksTriees) {
         // Vérifier si la tâche est complétée
-        const isCompleted = participant.completedTasks.includes(task.id);
+        const isCompleted = completedTaskIds.includes(task.id);
 
         // Vérifier si la tâche est déverrouillée
         let isUnlocked = true;
         if (challenge.sequentialProgression) {
           const accessCheck = challenge.verifierAccesTache(
             task.id,
-            participant.completedTasks,
+            completedTaskIds,
           );
           isUnlocked = accessCheck.hasAccess;
         }

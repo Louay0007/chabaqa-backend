@@ -1,6 +1,6 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
-import { BadRequestException, ValidationPipe } from '@nestjs/common';
+import { BadRequestException, ValidationPipe, ValidationError } from '@nestjs/common';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
@@ -52,10 +52,33 @@ async function bootstrap() {
       enableImplicitConversion: true,
     },
     exceptionFactory: (errors) => {
-      const formattedErrors = errors.map(error => ({
-        field: error.property,
-        messages: Object.values(error.constraints || {}),
-      }));
+      const flattenValidationErrors = (
+        validationErrors: ValidationError[],
+        parentPath = '',
+      ): Array<{ field: string; messages: string[] }> => {
+        const flattened: Array<{ field: string; messages: string[] }> = [];
+
+        for (const error of validationErrors) {
+          const currentPath = parentPath
+            ? `${parentPath}.${error.property}`
+            : error.property;
+
+          if (error.constraints && Object.keys(error.constraints).length > 0) {
+            flattened.push({
+              field: currentPath,
+              messages: Object.values(error.constraints),
+            });
+          }
+
+          if (error.children && error.children.length > 0) {
+            flattened.push(...flattenValidationErrors(error.children, currentPath));
+          }
+        }
+
+        return flattened;
+      };
+
+      const formattedErrors = flattenValidationErrors(errors);
       console.error('❌ Validation Error:', JSON.stringify(formattedErrors, null, 2));
       return new BadRequestException({
         code: 'VALIDATION_FAILED',

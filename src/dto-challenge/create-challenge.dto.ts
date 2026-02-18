@@ -101,6 +101,7 @@ export class CreateChallengeTaskDto {
   @ApiProperty({ description: 'Description de la tâche', example: 'Créer une page HTML avec les éléments sémantiques' })
   @IsString()
   @IsNotEmpty()
+  @MinLength(10)
   @MaxLength(2000)
   description: string;
 
@@ -114,6 +115,11 @@ export class CreateChallengeTaskDto {
   @IsNumber()
   @Min(0)
   points: number;
+
+  @ApiPropertyOptional({ description: 'Si la tâche est active', example: true })
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
 
   @ApiPropertyOptional({ description: 'Instructions détaillées', example: 'Utilisez les balises sémantiques HTML5...' })
   @IsOptional()
@@ -228,15 +234,41 @@ export class CreateChallengeDto {
   @IsBoolean()
   isActive?: boolean;
 
+  @ApiPropertyOptional({ description: 'Si la progression séquentielle est activée', example: false })
+  @IsOptional()
+  @IsBoolean()
+  sequentialProgression?: boolean;
+
+  @ApiPropertyOptional({ description: 'Message personnalisé pour les tâches verrouillées' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  unlockMessage?: string;
+
   @ApiPropertyOptional({ description: 'Ressources du défi', type: [CreateChallengeResourceDto], default: [] })
   @IsOptional()
   @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreateChallengeResourceDto)
   resources?: CreateChallengeResourceDto[] = [];
 
   @ApiPropertyOptional({ description: 'Tâches du défi', type: [CreateChallengeTaskDto], default: [] })
   @IsOptional()
   @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreateChallengeTaskDto)
   tasks?: CreateChallengeTaskDto[] = [];
+
+  @ApiPropertyOptional({
+    description: 'Alias rétrocompatible pour tasks (frontend legacy)',
+    type: [CreateChallengeTaskDto],
+    default: [],
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreateChallengeTaskDto)
+  steps?: CreateChallengeTaskDto[] = [];
 
   // ============= PRICING FIELDS =============
 

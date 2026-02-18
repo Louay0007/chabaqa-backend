@@ -232,6 +232,12 @@ export class ChallengeResponseDto {
   @ApiProperty({ description: 'Si le défi est actif', example: true })
   isActive: boolean;
 
+  @ApiProperty({ description: 'Si la progression séquentielle est activée', example: false })
+  sequentialProgression: boolean;
+
+  @ApiPropertyOptional({ description: 'Message personnalisé affiché quand une tâche est verrouillée' })
+  unlockMessage?: string;
+
   @ApiProperty({ description: 'Participants du défi', type: [ChallengeParticipantResponseDto] })
   participants: ChallengeParticipantResponseDto[];
 

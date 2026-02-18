@@ -424,6 +424,60 @@ export class Ga4ReportingService {
     }
   }
 
+  async getCreatorDailyTrend(creatorId: string, from: string, to: string, communityId?: string) {
+    const client = await this.getClient();
+    if (!client || !this.propertyId) return [];
+
+    try {
+      const expressions: any[] = [
+        { filter: { fieldName: 'customEvent:creator_id', stringFilter: { value: creatorId } } }
+      ];
+      if (communityId) {
+        expressions.push({ filter: { fieldName: 'customEvent:community_id', stringFilter: { value: communityId } } });
+      }
+
+      const [response] = await client.properties.runReport({
+        property: `properties/${this.propertyId}`,
+        requestBody: {
+          dateRanges: [{ startDate: from, endDate: to }],
+          dimensions: [{ name: 'date' }, { name: 'eventName' }],
+          metrics: [{ name: 'eventCount' }],
+          dimensionFilter: { andGroup: { expressions } },
+        },
+      });
+
+      const byDate = new Map<string, { date: string; views: number; starts: number; completes: number; watchTime: number }>();
+
+      for (const row of response.rows || []) {
+        const rawDate = row.dimensionValues?.[0]?.value || '';
+        const eventName = row.dimensionValues?.[1]?.value || '';
+        const count = Number(row.metricValues?.[0]?.value ?? 0);
+        if (!rawDate) continue;
+
+        const normalizedDate = `${rawDate.slice(0, 4)}-${rawDate.slice(4, 6)}-${rawDate.slice(6, 8)}T00:00:00.000Z`;
+        if (!byDate.has(normalizedDate)) {
+          byDate.set(normalizedDate, {
+            date: normalizedDate,
+            views: 0,
+            starts: 0,
+            completes: 0,
+            watchTime: 0,
+          });
+        }
+
+        const bucket = byDate.get(normalizedDate)!;
+        if (eventName === 'content_view') bucket.views += count;
+        else if (eventName === 'content_start') bucket.starts += count;
+        else if (eventName === 'content_complete') bucket.completes += count;
+      }
+
+      return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
+    } catch (err) {
+      this.logger.warn(`Failed to query GA4 creator daily trend: ${err}`);
+      return [];
+    }
+  }
+
   async getCreatorDevices(creatorId: string, from: string, to: string, communityId?: string) {
     const client = await this.getClient();
     if (!client || !this.propertyId) return [];
@@ -488,4 +542,3 @@ export class Ga4ReportingService {
     }
   }
 }
-

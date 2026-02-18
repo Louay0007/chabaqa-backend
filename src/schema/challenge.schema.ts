@@ -366,6 +366,25 @@ export interface ChallengeDocument extends Document {
   tasks?: ChallengeTask[];
   sequentialProgression: boolean;
   unlockMessage?: string;
+  rewardDistributions?: Array<{
+    idempotencyKey: string;
+    status: 'pending' | 'processed' | 'failed';
+    distributedAt: Date;
+    distributedBy: Types.ObjectId;
+    summary: {
+      completionCount: number;
+      topPerformerCount: number;
+      streakCount: number;
+      totalAmount: number;
+    };
+    payouts: Array<{
+      userId: Types.ObjectId;
+      rewardType: 'completion' | 'top_performer' | 'streak';
+      amount: number;
+      status: 'pending' | 'processed' | 'failed';
+      reason?: string;
+    }>;
+  }>;
   pricing?: {
     price: number;
     priceType: 'free' | 'one-time' | 'monthly' | 'yearly';
@@ -656,6 +675,33 @@ export class Challenge {
     maxlength: 500
   })
   unlockMessage?: string;
+
+  /**
+   * Historique des distributions de récompenses (audit)
+   */
+  @Prop({
+    type: [Object],
+    default: []
+  })
+  rewardDistributions?: Array<{
+    idempotencyKey: string;
+    status: 'pending' | 'processed' | 'failed';
+    distributedAt: Date;
+    distributedBy: Types.ObjectId;
+    summary: {
+      completionCount: number;
+      topPerformerCount: number;
+      streakCount: number;
+      totalAmount: number;
+    };
+    payouts: Array<{
+      userId: Types.ObjectId;
+      rewardType: 'completion' | 'top_performer' | 'streak';
+      amount: number;
+      status: 'pending' | 'processed' | 'failed';
+      reason?: string;
+    }>;
+  }>;
 
   /**
    * Configuration de prix du défi

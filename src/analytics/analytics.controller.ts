@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Query, UseGuards, Req } from '@nestjs/common';
+import { BadRequestException, Controller, Get, Post, Query, UseGuards, Req } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AnalyticsService } from './analytics.service';
@@ -11,16 +11,50 @@ import { PlanTier } from '../schema/plan.schema';
 export class AnalyticsController {
   constructor(private readonly analyticsService: AnalyticsService) {}
 
+  private parseDateRange(from?: string, to?: string) {
+    const toDate = to ? new Date(to) : new Date();
+    if (Number.isNaN(toDate.getTime())) {
+      throw new BadRequestException('Invalid "to" date parameter');
+    }
+
+    const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 30 * 24 * 3600 * 1000);
+    if (Number.isNaN(fromDate.getTime())) {
+      throw new BadRequestException('Invalid "from" date parameter');
+    }
+
+    if (fromDate > toDate) {
+      throw new BadRequestException('"from" date must be before "to" date');
+    }
+
+    return { fromDate, toDate };
+  }
+
+  private parseCommunityFilters(communityId?: string, communitySlug?: string) {
+    const normalizedId = communityId?.trim() || undefined;
+    const normalizedSlug = communitySlug?.trim() || undefined;
+
+    if (normalizedId && normalizedId.length > 128) {
+      throw new BadRequestException('Invalid "communityId" parameter');
+    }
+    if (normalizedSlug && normalizedSlug.length > 128) {
+      throw new BadRequestException('Invalid "communitySlug" parameter');
+    }
+
+    return { communityId: normalizedId, communitySlug: normalizedSlug };
+  }
+
   @Get('overview')
   @ApiOperation({ summary: 'Overview analytics for creator (plan-gated)' })
   @ApiQuery({ name: 'from', required: false, description: 'ISO date (inclusive)' })
   @ApiQuery({ name: 'to', required: false, description: 'ISO date (inclusive)' })
   @ApiQuery({ name: 'communityId', required: false, description: 'Community ID to filter by' })
+  @ApiQuery({ name: 'communitySlug', required: false, description: 'Community slug to filter by' })
   async getOverview(
     @Req() req,
     @Query('from') from?: string,
     @Query('to') to?: string,
     @Query('communityId') communityId?: string,
+    @Query('communitySlug') communitySlug?: string,
   ) {
     const user = req.user;
     const creatorId = user.sub || user._id || user.userId;
@@ -29,9 +63,9 @@ export class AnalyticsController {
     const plan: PlanTier | undefined = planHint
       ? (planHint === 'pro' ? PlanTier.PRO : planHint === 'growth' ? PlanTier.GROWTH : PlanTier.STARTER)
       : undefined;
-    const toDate = to ? new Date(to) : new Date();
-    const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 30 * 24 * 3600 * 1000);
-    return this.analyticsService.getOverview(creatorId, fromDate, toDate, plan, communityId);
+    const { fromDate, toDate } = this.parseDateRange(from, to);
+    const filters = this.parseCommunityFilters(communityId, communitySlug);
+    return this.analyticsService.getOverview(creatorId, fromDate, toDate, plan, filters.communityId, filters.communitySlug);
   }
 
   @Get('devices')
@@ -39,17 +73,19 @@ export class AnalyticsController {
   @ApiQuery({ name: 'from', required: false })
   @ApiQuery({ name: 'to', required: false })
   @ApiQuery({ name: 'communityId', required: false })
+  @ApiQuery({ name: 'communitySlug', required: false })
   async getDevices(
     @Req() req, 
     @Query('from') from?: string, 
     @Query('to') to?: string,
-    @Query('communityId') communityId?: string
+    @Query('communityId') communityId?: string,
+    @Query('communitySlug') communitySlug?: string,
   ) {
     const user = req.user;
     const creatorId = user.sub || user._id || user.userId;
-    const toDate = to ? new Date(to) : new Date();
-    const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 30 * 24 * 3600 * 1000);
-    return this.analyticsService.getDevices(creatorId, fromDate, toDate, communityId);
+    const { fromDate, toDate } = this.parseDateRange(from, to);
+    const filters = this.parseCommunityFilters(communityId, communitySlug);
+    return this.analyticsService.getDevices(creatorId, fromDate, toDate, filters.communityId, filters.communitySlug);
   }
 
   @Get('referrers')
@@ -57,17 +93,19 @@ export class AnalyticsController {
   @ApiQuery({ name: 'from', required: false })
   @ApiQuery({ name: 'to', required: false })
   @ApiQuery({ name: 'communityId', required: false })
+  @ApiQuery({ name: 'communitySlug', required: false })
   async getReferrers(
     @Req() req, 
     @Query('from') from?: string, 
     @Query('to') to?: string,
-    @Query('communityId') communityId?: string
+    @Query('communityId') communityId?: string,
+    @Query('communitySlug') communitySlug?: string,
   ) {
     const user = req.user;
     const creatorId = user.sub || user._id || user.userId;
-    const toDate = to ? new Date(to) : new Date();
-    const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 30 * 24 * 3600 * 1000);
-    return this.analyticsService.getReferrers(creatorId, fromDate, toDate, communityId);
+    const { fromDate, toDate } = this.parseDateRange(from, to);
+    const filters = this.parseCommunityFilters(communityId, communitySlug);
+    return this.analyticsService.getReferrers(creatorId, fromDate, toDate, filters.communityId, filters.communitySlug);
   }
 
   @Get('export')
@@ -76,18 +114,20 @@ export class AnalyticsController {
   @ApiQuery({ name: 'from', required: false })
   @ApiQuery({ name: 'to', required: false })
   @ApiQuery({ name: 'communityId', required: false })
+  @ApiQuery({ name: 'communitySlug', required: false })
   async exportCsv(
     @Req() req,
     @Query('scope') scope: 'overview'|'courses'|'challenges'|'sessions'|'events'|'products'|'posts',
     @Query('from') from?: string,
     @Query('to') to?: string,
     @Query('communityId') communityId?: string,
+    @Query('communitySlug') communitySlug?: string,
   ) {
     const user = req.user;
     const creatorId = user.sub || user._id || user.userId;
-    const toDate = to ? new Date(to) : new Date();
-    const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 30 * 24 * 3600 * 1000);
-    return this.analyticsService.exportCsv(creatorId, scope, fromDate, toDate, communityId);
+    const { fromDate, toDate } = this.parseDateRange(from, to);
+    const filters = this.parseCommunityFilters(communityId, communitySlug);
+    return this.analyticsService.exportCsv(creatorId, scope, fromDate, toDate, filters.communityId, filters.communitySlug);
   }
 
   @Get('communities')
@@ -107,17 +147,19 @@ export class AnalyticsController {
   @ApiQuery({ name: 'from', required: false })
   @ApiQuery({ name: 'to', required: false })
   @ApiQuery({ name: 'communityId', required: false })
+  @ApiQuery({ name: 'communitySlug', required: false })
   async getCourses(
     @Req() req, 
     @Query('from') from?: string, 
     @Query('to') to?: string,
-    @Query('communityId') communityId?: string
+    @Query('communityId') communityId?: string,
+    @Query('communitySlug') communitySlug?: string,
   ) {
     const user = req.user;
     const creatorId = user.sub || user._id || user.userId;
-    const toDate = to ? new Date(to) : new Date();
-    const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 30 * 24 * 3600 * 1000);
-    return this.analyticsService.getCourses(creatorId, fromDate, toDate, communityId);
+    const { fromDate, toDate } = this.parseDateRange(from, to);
+    const filters = this.parseCommunityFilters(communityId, communitySlug);
+    return this.analyticsService.getCourses(creatorId, fromDate, toDate, filters.communityId, filters.communitySlug);
   }
 
   @Get('challenges')
@@ -125,17 +167,19 @@ export class AnalyticsController {
   @ApiQuery({ name: 'from', required: false })
   @ApiQuery({ name: 'to', required: false })
   @ApiQuery({ name: 'communityId', required: false })
+  @ApiQuery({ name: 'communitySlug', required: false })
   async getChallenges(
     @Req() req, 
     @Query('from') from?: string, 
     @Query('to') to?: string,
-    @Query('communityId') communityId?: string
+    @Query('communityId') communityId?: string,
+    @Query('communitySlug') communitySlug?: string,
   ) {
     const user = req.user;
     const creatorId = user.sub || user._id || user.userId;
-    const toDate = to ? new Date(to) : new Date();
-    const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 30 * 24 * 3600 * 1000);
-    return this.analyticsService.getChallenges(creatorId, fromDate, toDate, communityId);
+    const { fromDate, toDate } = this.parseDateRange(from, to);
+    const filters = this.parseCommunityFilters(communityId, communitySlug);
+    return this.analyticsService.getChallenges(creatorId, fromDate, toDate, filters.communityId, filters.communitySlug);
   }
 
   @Get('sessions')
@@ -143,17 +187,19 @@ export class AnalyticsController {
   @ApiQuery({ name: 'from', required: false })
   @ApiQuery({ name: 'to', required: false })
   @ApiQuery({ name: 'communityId', required: false })
+  @ApiQuery({ name: 'communitySlug', required: false })
   async getSessions(
     @Req() req, 
     @Query('from') from?: string, 
     @Query('to') to?: string,
-    @Query('communityId') communityId?: string
+    @Query('communityId') communityId?: string,
+    @Query('communitySlug') communitySlug?: string,
   ) {
     const user = req.user;
     const creatorId = user.sub || user._id || user.userId;
-    const toDate = to ? new Date(to) : new Date();
-    const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 30 * 24 * 3600 * 1000);
-    return this.analyticsService.getSessions(creatorId, fromDate, toDate, communityId);
+    const { fromDate, toDate } = this.parseDateRange(from, to);
+    const filters = this.parseCommunityFilters(communityId, communitySlug);
+    return this.analyticsService.getSessions(creatorId, fromDate, toDate, filters.communityId, filters.communitySlug);
   }
 
   @Get('events')
@@ -161,17 +207,19 @@ export class AnalyticsController {
   @ApiQuery({ name: 'from', required: false })
   @ApiQuery({ name: 'to', required: false })
   @ApiQuery({ name: 'communityId', required: false })
+  @ApiQuery({ name: 'communitySlug', required: false })
   async getEvents(
     @Req() req, 
     @Query('from') from?: string, 
     @Query('to') to?: string,
-    @Query('communityId') communityId?: string
+    @Query('communityId') communityId?: string,
+    @Query('communitySlug') communitySlug?: string,
   ) {
     const user = req.user;
     const creatorId = user.sub || user._id || user.userId;
-    const toDate = to ? new Date(to) : new Date();
-    const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 30 * 24 * 3600 * 1000);
-    return this.analyticsService.getEvents(creatorId, fromDate, toDate, communityId);
+    const { fromDate, toDate } = this.parseDateRange(from, to);
+    const filters = this.parseCommunityFilters(communityId, communitySlug);
+    return this.analyticsService.getEvents(creatorId, fromDate, toDate, filters.communityId, filters.communitySlug);
   }
 
   @Get('products')
@@ -179,17 +227,19 @@ export class AnalyticsController {
   @ApiQuery({ name: 'from', required: false })
   @ApiQuery({ name: 'to', required: false })
   @ApiQuery({ name: 'communityId', required: false })
+  @ApiQuery({ name: 'communitySlug', required: false })
   async getProducts(
     @Req() req, 
     @Query('from') from?: string, 
     @Query('to') to?: string,
-    @Query('communityId') communityId?: string
+    @Query('communityId') communityId?: string,
+    @Query('communitySlug') communitySlug?: string,
   ) {
     const user = req.user;
     const creatorId = user.sub || user._id || user.userId;
-    const toDate = to ? new Date(to) : new Date();
-    const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 30 * 24 * 3600 * 1000);
-    return this.analyticsService.getProducts(creatorId, fromDate, toDate, communityId);
+    const { fromDate, toDate } = this.parseDateRange(from, to);
+    const filters = this.parseCommunityFilters(communityId, communitySlug);
+    return this.analyticsService.getProducts(creatorId, fromDate, toDate, filters.communityId, filters.communitySlug);
   }
 
   @Get('posts')
@@ -197,17 +247,19 @@ export class AnalyticsController {
   @ApiQuery({ name: 'from', required: false })
   @ApiQuery({ name: 'to', required: false })
   @ApiQuery({ name: 'communityId', required: false })
+  @ApiQuery({ name: 'communitySlug', required: false })
   async getPosts(
     @Req() req, 
     @Query('from') from?: string, 
     @Query('to') to?: string,
-    @Query('communityId') communityId?: string
+    @Query('communityId') communityId?: string,
+    @Query('communitySlug') communitySlug?: string,
   ) {
     const user = req.user;
     const creatorId = user.sub || user._id || user.userId;
-    const toDate = to ? new Date(to) : new Date();
-    const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 30 * 24 * 3600 * 1000);
-    return this.analyticsService.getPosts(creatorId, fromDate, toDate, communityId);
+    const { fromDate, toDate } = this.parseDateRange(from, to);
+    const filters = this.parseCommunityFilters(communityId, communitySlug);
+    return this.analyticsService.getPosts(creatorId, fromDate, toDate, filters.communityId, filters.communitySlug);
   }
 
   @Post('backfill')
@@ -252,9 +304,15 @@ export class AnalyticsController {
   @Get('debug-status')
   @ApiOperation({ summary: 'Debug creator analytics status (tracking vs rollups)' })
   @ApiQuery({ name: 'communityId', required: false })
-  async debugStatus(@Req() req, @Query('communityId') communityId?: string) {
+  @ApiQuery({ name: 'communitySlug', required: false })
+  async debugStatus(
+    @Req() req,
+    @Query('communityId') communityId?: string,
+    @Query('communitySlug') communitySlug?: string,
+  ) {
     const user = req.user;
     const creatorId = user.sub || user._id || user.userId;
-    return this.analyticsService.debugCreatorStatus(creatorId, communityId);
+    const filters = this.parseCommunityFilters(communityId, communitySlug);
+    return this.analyticsService.debugCreatorStatus(creatorId, filters.communityId, filters.communitySlug);
   }
 }

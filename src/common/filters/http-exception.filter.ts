@@ -35,9 +35,18 @@ export class HttpExceptionFilter implements ExceptionFilter {
           details = responseObj.message.map((msg: string) => ({
             message: msg,
           }));
+        } else if (exception instanceof BadRequestException && Array.isArray(responseObj.details)) {
+          code = responseObj.code || 'VALIDATION_ERROR';
+          message = responseObj.message || 'Validation failed';
+          details = responseObj.details.map((detail: any) => ({
+            field: detail?.field,
+            message: Array.isArray(detail?.messages)
+              ? detail.messages.join(', ')
+              : String(detail?.message || ''),
+          }));
         } else {
           message = responseObj.message || exception.message;
-          code = this.getErrorCode(status);
+          code = responseObj.code || this.getErrorCode(status);
         }
       } else {
         message = exception.message;

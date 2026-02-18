@@ -40,6 +40,7 @@ export class HttpCacheInterceptor implements NestInterceptor {
       '/dm/',
       '/wallet',
       '/admin/',
+      '/challenges/',
     ];
 
     if (skipPatterns.some(pattern => url.includes(pattern))) {

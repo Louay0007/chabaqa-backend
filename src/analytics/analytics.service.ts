@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { AnalyticsDaily, AnalyticsDailyDocument } from '../schema/analytics-daily.schema';
@@ -14,6 +14,7 @@ import { Ga4ReportingService } from '../ga4/ga4-reporting.service';
 @Injectable()
 export class AnalyticsService {
   private cache: Map<string, { data: any; expiresAt: number }>; // simple TTL cache
+  private readonly creatorObjectIdCache = new Map<string, Types.ObjectId>();
 
   constructor(
     @InjectModel(AnalyticsDaily.name) private readonly dailyModel: Model<AnalyticsDailyDocument>,
@@ -40,6 +41,91 @@ export class AnalyticsService {
       return null;
     }
     return entry.data as T;
+  }
+
+  private getCreatorObjectId(creatorId: string): Types.ObjectId {
+    const cached = this.creatorObjectIdCache.get(creatorId);
+    if (cached) return cached;
+    const objectId = new Types.ObjectId(creatorId);
+    this.creatorObjectIdCache.set(creatorId, objectId);
+    return objectId;
+  }
+
+  private buildLookupCommunityMatch(path: string, values: Array<string | Types.ObjectId>) {
+    return { [path]: { $in: values } };
+  }
+
+  private setDailyCommunityFilter(match: Record<string, any>, communityIdStrings: string[]) {
+    match.communityId = { $in: communityIdStrings };
+  }
+
+  private async resolveCommunityScope(
+    creatorId: string,
+    communityId?: string,
+    communitySlug?: string,
+  ): Promise<{
+    hasFilter: boolean;
+    cacheKeyPart: string;
+    communityIdStrings: string[];
+    lookupCommunityValues: Array<string | Types.ObjectId>;
+    ga4CommunityId?: string;
+  }> {
+    const candidate = (communityId || communitySlug || '').trim();
+    if (!candidate) {
+      return {
+        hasFilter: false,
+        cacheKeyPart: 'all',
+        communityIdStrings: [],
+        lookupCommunityValues: [],
+      };
+    }
+
+    const creatorObjectId = this.getCreatorObjectId(creatorId);
+    const communitiesCollection = this.dbConnection.db?.collection('communities');
+    if (!communitiesCollection) {
+      throw new ForbiddenException('Community analytics are temporarily unavailable.');
+    }
+
+    const ors: Record<string, any>[] = [{ slug: candidate }, { id: candidate }];
+    if (Types.ObjectId.isValid(candidate)) {
+      ors.push({ _id: new Types.ObjectId(candidate) });
+    }
+
+    const community = await communitiesCollection.findOne(
+      { createur: creatorObjectId, $or: ors },
+      { projection: { _id: 1, slug: 1, id: 1 } },
+    );
+
+    if (!community?._id) {
+      throw new ForbiddenException('You do not have access to this community analytics.');
+    }
+
+    const stringIds = new Set<string>();
+    stringIds.add(community._id.toString());
+
+    if (typeof community.slug === 'string' && community.slug.trim()) {
+      stringIds.add(community.slug.trim());
+    }
+    if (typeof community.id === 'string' && community.id.trim()) {
+      stringIds.add(community.id.trim());
+    }
+    if (candidate) {
+      stringIds.add(candidate);
+    }
+
+    const communityIdStrings = Array.from(stringIds);
+    const lookupCommunityValues: Array<string | Types.ObjectId> = [
+      ...communityIdStrings,
+      community._id as Types.ObjectId,
+    ];
+
+    return {
+      hasFilter: true,
+      cacheKeyPart: community._id.toString(),
+      communityIdStrings,
+      lookupCommunityValues,
+      ga4CommunityId: community._id.toString(),
+    };
   }
 
   async getCommunities(creatorId: string, from: Date, to: Date) {
@@ -73,22 +159,23 @@ export class AnalyticsService {
     return result;
   }
 
-  async getOverview(creatorId: string, from: Date, to: Date, plan?: PlanTier, communityId?: string) {
+  async getOverview(creatorId: string, from: Date, to: Date, plan?: PlanTier, communityId?: string, communitySlug?: string) {
     if (!plan) {
       const sub = await this.subscriptionService.getMySubscription(creatorId);
       plan = (sub?.plan as PlanTier) || PlanTier.STARTER;
     }
-    const key = this.cacheKey(creatorId, from.toISOString(), to.toISOString(), `overview:${communityId || 'all'}`);
+    const communityScope = await this.resolveCommunityScope(creatorId, communityId, communitySlug);
+    const key = this.cacheKey(creatorId, from.toISOString(), to.toISOString(), `overview:${communityScope.cacheKeyPart}`);
     const cached = this.getCache<any>(key);
     if (cached) return this.shapeOverview(cached, plan);
 
     const match = {
-      creatorId: new Types.ObjectId(creatorId),
+      creatorId: this.getCreatorObjectId(creatorId),
       date: { $gte: from, $lte: to },
     } as any;
 
-    if (communityId) {
-      match.communityId = communityId;
+    if (communityScope.hasFilter) {
+      this.setDailyCommunityFilter(match, communityScope.communityIdStrings);
     }
 
     // Try GA4 first for interaction counts
@@ -98,7 +185,7 @@ export class AnalyticsService {
         creatorId,
         from.toISOString().slice(0, 10),
         to.toISOString().slice(0, 10),
-        communityId
+        communityScope.ga4CommunityId
       );
       if (ga4Counts) {
         ga4Totals = {
@@ -216,8 +303,8 @@ export class AnalyticsService {
           { $lookup: { from: 'posts', localField: 'contentId', foreignField: 'id', as: 'post' } },
           { $addFields: { contentDoc } },
           { $addFields: { creatorIdResolved: { $ifNull: ['$contentDoc.creatorId', '$contentDoc.authorId'] } } },
-          { $match: { creatorIdResolved: new Types.ObjectId(creatorId) } },
-          ...(communityId ? [{ $match: { 'contentDoc.communityId': communityId } }] : []),
+          { $match: { creatorIdResolved: this.getCreatorObjectId(creatorId) } },
+          ...(communityScope.hasFilter ? [{ $match: this.buildLookupCommunityMatch('contentDoc.communityId', communityScope.lookupCommunityValues) }] : []),
           {
             $group: {
               _id: null,
@@ -247,13 +334,13 @@ export class AnalyticsService {
 
     // Calculate revenue from orders
     const revenueMatch: any = {
-      creatorId: new Types.ObjectId(creatorId),
+      creatorId: this.getCreatorObjectId(creatorId),
       status: 'paid',
       createdAt: { $gte: from, $lte: to },
     };
 
-    if (communityId) {
-      revenueMatch.communityId = communityId;
+    if (communityScope.hasFilter) {
+      revenueMatch.communityId = { $in: communityScope.lookupCommunityValues };
     }
 
     // Note: Orders currently don't store communityId, so we only filter by creator/date/status
@@ -276,7 +363,7 @@ export class AnalyticsService {
     const interactions = totals.starts + totals.completes + totals.likes + totals.shares + totals.downloads + totals.bookmarks;
     const engagementRate = totals.views > 0 ? (interactions / totals.views) * 100 : 0;
 
-    const trend = await this.dailyModel.aggregate([
+    let trend = await this.dailyModel.aggregate([
       { $match: match },
       {
         $group: {
@@ -290,6 +377,20 @@ export class AnalyticsService {
       { $project: { _id: 0, date: '$_id', views: 1, starts: 1, completes: 1, watchTime: 1 } },
       { $sort: { date: 1 } },
     ]);
+
+    try {
+      const ga4Trend = await this.ga4ReportingService.getCreatorDailyTrend(
+        creatorId,
+        from.toISOString().slice(0, 10),
+        to.toISOString().slice(0, 10),
+        communityScope.ga4CommunityId,
+      );
+      if (ga4Trend.length > 0) {
+        trend = ga4Trend;
+      }
+    } catch {
+      // Keep Mongo trend as fallback
+    }
 
     const topContents = await this.dailyModel.aggregate([
       { $match: match },
@@ -319,19 +420,20 @@ export class AnalyticsService {
     return this.shapeOverview(full, plan);
   }
 
-  async getCourses(creatorId: string, from: Date, to: Date, communityId?: string) {
-    const key = this.cacheKey(creatorId, from.toISOString(), to.toISOString(), `courses:${communityId || 'all'}`);
+  async getCourses(creatorId: string, from: Date, to: Date, communityId?: string, communitySlug?: string) {
+    const communityScope = await this.resolveCommunityScope(creatorId, communityId, communitySlug);
+    const key = this.cacheKey(creatorId, from.toISOString(), to.toISOString(), `courses:${communityScope.cacheKeyPart}`);
     const cached = this.getCache<any>(key);
     if (cached) return cached;
 
     const match = {
-      creatorId: new Types.ObjectId(creatorId),
+      creatorId: this.getCreatorObjectId(creatorId),
       date: { $gte: from, $lte: to },
       contentType: 'course',
     } as any;
 
-    if (communityId) {
-      match.communityId = communityId;
+    if (communityScope.hasFilter) {
+      this.setDailyCommunityFilter(match, communityScope.communityIdStrings);
     }
 
     let byCourse = await this.dailyModel.aggregate([
@@ -404,7 +506,7 @@ export class AnalyticsService {
         'course',
         from.toISOString().slice(0, 10),
         to.toISOString().slice(0, 10),
-        communityId
+        communityScope.ga4CommunityId
       );
 
       if (ga4Stats.length > 0) {
@@ -454,11 +556,11 @@ export class AnalyticsService {
       { $match: { timestamp: { $gte: from, $lte: to }, contentType: 'course' } },
       { $lookup: { from: 'cours', localField: 'contentId', foreignField: 'id', as: 'course' } },
       { $unwind: '$course' },
-      { $match: { 'course.creatorId': new Types.ObjectId(creatorId) } },
+      { $match: { 'course.creatorId': this.getCreatorObjectId(creatorId) } },
     ];
 
-    if (communityId) {
-      funnelPipeline.push({ $match: { 'course.communityId': communityId } });
+    if (communityScope.hasFilter) {
+      funnelPipeline.push({ $match: this.buildLookupCommunityMatch('course.communityId', communityScope.lookupCommunityValues) });
     }
 
     funnelPipeline.push(
@@ -482,19 +584,20 @@ export class AnalyticsService {
     return { byCourse, chapterFunnel };
   }
 
-  async getChallenges(creatorId: string, from: Date, to: Date, communityId?: string) {
-    const key = this.cacheKey(creatorId, from.toISOString(), to.toISOString(), `challenges:${communityId || 'all'}`);
+  async getChallenges(creatorId: string, from: Date, to: Date, communityId?: string, communitySlug?: string) {
+    const communityScope = await this.resolveCommunityScope(creatorId, communityId, communitySlug);
+    const key = this.cacheKey(creatorId, from.toISOString(), to.toISOString(), `challenges:${communityScope.cacheKeyPart}`);
     const cached = this.getCache<any>(key);
     if (cached) return cached;
 
     const match = {
-      creatorId: new Types.ObjectId(creatorId),
+      creatorId: this.getCreatorObjectId(creatorId),
       date: { $gte: from, $lte: to },
       contentType: 'challenge',
     } as any;
 
-    if (communityId) {
-      match.communityId = communityId;
+    if (communityScope.hasFilter) {
+      this.setDailyCommunityFilter(match, communityScope.communityIdStrings);
     }
 
     // Aggregate from AnalyticsDaily for basic metrics
@@ -529,6 +632,40 @@ export class AnalyticsService {
       },
       { $sort: { completes: -1 } },
     ]);
+
+    // Prefer GA4 content stats when available
+    try {
+      const ga4Stats = await this.ga4ReportingService.getCreatorContentStats(
+        creatorId,
+        'challenge',
+        from.toISOString().slice(0, 10),
+        to.toISOString().slice(0, 10),
+        communityScope.ga4CommunityId,
+      );
+
+      if (ga4Stats.length > 0) {
+        byChallenge.length = 0;
+        for (const s of ga4Stats) {
+          const completionRate = s.starts > 0 ? (s.completes / s.starts) * 100 : 0;
+          byChallenge.push({
+            contentId: s.contentId,
+            views: s.views,
+            starts: s.starts,
+            completes: s.completes,
+            likes: s.likes,
+            shares: s.shares,
+            bookmarks: s.bookmarks,
+            participants: s.starts,
+            submissions: s.completes,
+            winners: completionRate >= 90 ? Math.max(1, Math.floor(s.completes * 0.3)) : 0,
+            completionRate,
+          });
+        }
+        byChallenge.sort((a: any, b: any) => Number(b.completes || 0) - Number(a.completes || 0));
+      }
+    } catch {
+      // Keep Mongo aggregate
+    }
 
     // Get challenge titles
     const challengeIds = byChallenge.map((c: any) => c.contentId).filter(Boolean);
@@ -567,11 +704,11 @@ export class AnalyticsService {
       { $match: { timestamp: { $gte: from, $lte: to }, contentType: 'challenge' } },
       { $lookup: { from: 'challenges', localField: 'contentId', foreignField: 'id', as: 'challenge' } },
       { $unwind: '$challenge' },
-      { $match: { 'challenge.creatorId': new Types.ObjectId(creatorId) } },
+      { $match: { 'challenge.creatorId': this.getCreatorObjectId(creatorId) } },
     ];
 
-    if (communityId) {
-      funnelPipeline.push({ $match: { 'challenge.communityId': communityId } });
+    if (communityScope.hasFilter) {
+      funnelPipeline.push({ $match: this.buildLookupCommunityMatch('challenge.communityId', communityScope.lookupCommunityValues) });
     }
 
     funnelPipeline.push(
@@ -596,11 +733,11 @@ export class AnalyticsService {
       { $match: { timestamp: { $gte: from, $lte: to }, contentType: 'challenge', actionType: 'start' } },
       { $lookup: { from: 'challenges', localField: 'contentId', foreignField: 'id', as: 'challenge' } },
       { $unwind: '$challenge' },
-      { $match: { 'challenge.creatorId': new Types.ObjectId(creatorId) } },
+      { $match: { 'challenge.creatorId': this.getCreatorObjectId(creatorId) } },
     ];
 
-    if (communityId) {
-      participantsPipeline.push({ $match: { 'challenge.communityId': communityId } });
+    if (communityScope.hasFilter) {
+      participantsPipeline.push({ $match: this.buildLookupCommunityMatch('challenge.communityId', communityScope.lookupCommunityValues) });
     }
 
     participantsPipeline.push(
@@ -623,11 +760,11 @@ export class AnalyticsService {
         { $match: { timestamp: { $gte: from, $lte: to }, contentType: 'challenge' } },
         { $lookup: { from: 'challenges', localField: 'contentId', foreignField: 'id', as: 'challenge' } },
         { $unwind: '$challenge' },
-        { $match: { 'challenge.creatorId': new Types.ObjectId(creatorId) } },
+      { $match: { 'challenge.creatorId': this.getCreatorObjectId(creatorId) } },
       ];
 
-      if (communityId) {
-        trackingAggPipeline.push({ $match: { 'challenge.communityId': communityId } });
+      if (communityScope.hasFilter) {
+        trackingAggPipeline.push({ $match: this.buildLookupCommunityMatch('challenge.communityId', communityScope.lookupCommunityValues) });
       }
 
       trackingAggPipeline.push(
@@ -683,9 +820,9 @@ export class AnalyticsService {
     // FINAL FALLBACK: Query actual challenge documents + submissions collection directly
     // This ensures data shows up even when no tracking events or rollup data exist
     try {
-      const challengeQuery: any = { creatorId: new Types.ObjectId(creatorId) }; // removed isActive: true to show historical data
-      if (communityId) {
-        challengeQuery.communityId = communityId;
+      const challengeQuery: any = { creatorId: this.getCreatorObjectId(creatorId) }; // removed isActive: true to show historical data
+      if (communityScope.hasFilter) {
+        challengeQuery.communityId = { $in: communityScope.lookupCommunityValues };
       }
 
       const challengeDocs = await this.dbConnection.db
@@ -798,14 +935,15 @@ export class AnalyticsService {
     return { byChallenge, stepFunnel };
   }
 
-  async getSessions(creatorId: string, from: Date, to: Date, communityId?: string) {
-    const key = this.cacheKey(creatorId, from.toISOString(), to.toISOString(), `sessions:${communityId || 'all'}`);
+  async getSessions(creatorId: string, from: Date, to: Date, communityId?: string, communitySlug?: string) {
+    const communityScope = await this.resolveCommunityScope(creatorId, communityId, communitySlug);
+    const key = this.cacheKey(creatorId, from.toISOString(), to.toISOString(), `sessions:${communityScope.cacheKeyPart}`);
     const cached = this.getCache<any>(key);
     if (cached) return cached;
-    const match = { creatorId: new Types.ObjectId(creatorId), date: { $gte: from, $lte: to }, contentType: 'session' } as any;
+    const match = { creatorId: this.getCreatorObjectId(creatorId), date: { $gte: from, $lte: to }, contentType: 'session' } as any;
 
-    if (communityId) {
-      match.communityId = communityId;
+    if (communityScope.hasFilter) {
+      this.setDailyCommunityFilter(match, communityScope.communityIdStrings);
     }
 
     const bySession = await this.dailyModel.aggregate([
@@ -814,18 +952,43 @@ export class AnalyticsService {
       { $project: { _id: 0, contentId: '$_id', views: 1, starts: 1, completes: 1, completionRate: { $cond: [{ $gt: ['$starts', 0] }, { $divide: ['$completes', '$starts'] }, 0] } } },
       { $sort: { views: -1 } },
     ]);
+    try {
+      const ga4Stats = await this.ga4ReportingService.getCreatorContentStats(
+        creatorId,
+        'session',
+        from.toISOString().slice(0, 10),
+        to.toISOString().slice(0, 10),
+        communityScope.ga4CommunityId,
+      );
+      if (ga4Stats.length > 0) {
+        bySession.length = 0;
+        for (const s of ga4Stats) {
+          bySession.push({
+            contentId: s.contentId,
+            views: s.views,
+            starts: s.starts,
+            completes: s.completes,
+            completionRate: s.starts > 0 ? s.completes / s.starts : 0,
+          });
+        }
+        bySession.sort((a: any, b: any) => Number(b.views || 0) - Number(a.views || 0));
+      }
+    } catch {
+      // Keep Mongo aggregate
+    }
     this.setCache(key, { bySession });
     return { bySession };
   }
 
-  async getEvents(creatorId: string, from: Date, to: Date, communityId?: string) {
-    const key = this.cacheKey(creatorId, from.toISOString(), to.toISOString(), `events:${communityId || 'all'}`);
+  async getEvents(creatorId: string, from: Date, to: Date, communityId?: string, communitySlug?: string) {
+    const communityScope = await this.resolveCommunityScope(creatorId, communityId, communitySlug);
+    const key = this.cacheKey(creatorId, from.toISOString(), to.toISOString(), `events:${communityScope.cacheKeyPart}`);
     const cached = this.getCache<any>(key);
     if (cached) return cached;
-    const match = { creatorId: new Types.ObjectId(creatorId), date: { $gte: from, $lte: to }, contentType: 'event' } as any;
+    const match = { creatorId: this.getCreatorObjectId(creatorId), date: { $gte: from, $lte: to }, contentType: 'event' } as any;
 
-    if (communityId) {
-      match.communityId = communityId;
+    if (communityScope.hasFilter) {
+      this.setDailyCommunityFilter(match, communityScope.communityIdStrings);
     }
 
     const byEvent = await this.dailyModel.aggregate([
@@ -834,18 +997,42 @@ export class AnalyticsService {
       { $project: { _id: 0, contentId: '$_id', views: 1, starts: 1, completes: 1 } },
       { $sort: { views: -1 } },
     ]);
+    try {
+      const ga4Stats = await this.ga4ReportingService.getCreatorContentStats(
+        creatorId,
+        'event',
+        from.toISOString().slice(0, 10),
+        to.toISOString().slice(0, 10),
+        communityScope.ga4CommunityId,
+      );
+      if (ga4Stats.length > 0) {
+        byEvent.length = 0;
+        for (const s of ga4Stats) {
+          byEvent.push({
+            contentId: s.contentId,
+            views: s.views,
+            starts: s.starts,
+            completes: s.completes,
+          });
+        }
+        byEvent.sort((a: any, b: any) => Number(b.views || 0) - Number(a.views || 0));
+      }
+    } catch {
+      // Keep Mongo aggregate
+    }
     this.setCache(key, { byEvent });
     return { byEvent };
   }
 
-  async getProducts(creatorId: string, from: Date, to: Date, communityId?: string) {
-    const key = this.cacheKey(creatorId, from.toISOString(), to.toISOString(), `products:${communityId || 'all'}`);
+  async getProducts(creatorId: string, from: Date, to: Date, communityId?: string, communitySlug?: string) {
+    const communityScope = await this.resolveCommunityScope(creatorId, communityId, communitySlug);
+    const key = this.cacheKey(creatorId, from.toISOString(), to.toISOString(), `products:${communityScope.cacheKeyPart}`);
     const cached = this.getCache<any>(key);
     if (cached) return cached;
-    const match = { creatorId: new Types.ObjectId(creatorId), date: { $gte: from, $lte: to }, contentType: 'product' } as any;
+    const match = { creatorId: this.getCreatorObjectId(creatorId), date: { $gte: from, $lte: to }, contentType: 'product' } as any;
 
-    if (communityId) {
-      match.communityId = communityId;
+    if (communityScope.hasFilter) {
+      this.setDailyCommunityFilter(match, communityScope.communityIdStrings);
     }
 
     const byProduct = await this.dailyModel.aggregate([
@@ -854,18 +1041,43 @@ export class AnalyticsService {
       { $project: { _id: 0, contentId: '$_id', views: 1, likes: 1, shares: 1, downloads: 1 } },
       { $sort: { views: -1 } },
     ]);
+    try {
+      const ga4Stats = await this.ga4ReportingService.getCreatorContentStats(
+        creatorId,
+        'product',
+        from.toISOString().slice(0, 10),
+        to.toISOString().slice(0, 10),
+        communityScope.ga4CommunityId,
+      );
+      if (ga4Stats.length > 0) {
+        byProduct.length = 0;
+        for (const s of ga4Stats) {
+          byProduct.push({
+            contentId: s.contentId,
+            views: s.views,
+            likes: s.likes,
+            shares: s.shares,
+            downloads: s.downloads,
+          });
+        }
+        byProduct.sort((a: any, b: any) => Number(b.views || 0) - Number(a.views || 0));
+      }
+    } catch {
+      // Keep Mongo aggregate
+    }
     this.setCache(key, { byProduct });
     return { byProduct };
   }
 
-  async getPosts(creatorId: string, from: Date, to: Date, communityId?: string) {
-    const key = this.cacheKey(creatorId, from.toISOString(), to.toISOString(), `posts:${communityId || 'all'}`);
+  async getPosts(creatorId: string, from: Date, to: Date, communityId?: string, communitySlug?: string) {
+    const communityScope = await this.resolveCommunityScope(creatorId, communityId, communitySlug);
+    const key = this.cacheKey(creatorId, from.toISOString(), to.toISOString(), `posts:${communityScope.cacheKeyPart}`);
     const cached = this.getCache<any>(key);
     if (cached) return cached;
-    const match = { creatorId: new Types.ObjectId(creatorId), date: { $gte: from, $lte: to }, contentType: 'post' } as any;
+    const match = { creatorId: this.getCreatorObjectId(creatorId), date: { $gte: from, $lte: to }, contentType: 'post' } as any;
 
-    if (communityId) {
-      match.communityId = communityId;
+    if (communityScope.hasFilter) {
+      this.setDailyCommunityFilter(match, communityScope.communityIdStrings);
     }
 
     const byPost = await this.dailyModel.aggregate([
@@ -874,6 +1086,31 @@ export class AnalyticsService {
       { $project: { _id: 0, contentId: '$_id', views: 1, likes: 1, shares: 1, bookmarks: 1, ratingsCount: 1 } },
       { $sort: { views: -1 } },
     ]);
+    try {
+      const ga4Stats = await this.ga4ReportingService.getCreatorContentStats(
+        creatorId,
+        'post',
+        from.toISOString().slice(0, 10),
+        to.toISOString().slice(0, 10),
+        communityScope.ga4CommunityId,
+      );
+      if (ga4Stats.length > 0) {
+        byPost.length = 0;
+        for (const s of ga4Stats) {
+          byPost.push({
+            contentId: s.contentId,
+            views: s.views,
+            likes: s.likes,
+            shares: s.shares,
+            bookmarks: s.bookmarks,
+            ratingsCount: s.ratingsCount,
+          });
+        }
+        byPost.sort((a: any, b: any) => Number(b.views || 0) - Number(a.views || 0));
+      }
+    } catch {
+      // Keep Mongo aggregate
+    }
     this.setCache(key, { byPost });
     return { byPost };
   }
@@ -949,8 +1186,9 @@ export class AnalyticsService {
     return { ok: true, updated: count };
   }
 
-  async getDevices(creatorId: string, from: Date, to: Date, communityId?: string) {
-    const key = this.cacheKey(creatorId, from.toISOString(), to.toISOString(), `devices:${communityId || 'all'}`);
+  async getDevices(creatorId: string, from: Date, to: Date, communityId?: string, communitySlug?: string) {
+    const communityScope = await this.resolveCommunityScope(creatorId, communityId, communitySlug);
+    const key = this.cacheKey(creatorId, from.toISOString(), to.toISOString(), `devices:${communityScope.cacheKeyPart}`);
     const cached = this.getCache<any>(key);
     if (cached) return cached;
 
@@ -960,7 +1198,7 @@ export class AnalyticsService {
         creatorId,
         from.toISOString().slice(0, 10),
         to.toISOString().slice(0, 10),
-        communityId
+        communityScope.ga4CommunityId
       );
       const isMeaningful = (device: string | undefined | null) => {
         const v = (device || '').trim().toLowerCase();
@@ -990,11 +1228,11 @@ export class AnalyticsService {
         { $lookup: { from: 'cours', localField: 'contentId', foreignField: 'id', as: 'course' } },
         { $lookup: { from: 'challenges', localField: 'contentId', foreignField: 'id', as: 'challenge' } },
         { $addFields: { contentDoc: { $ifNull: [{ $arrayElemAt: ['$course', 0] }, { $arrayElemAt: ['$challenge', 0] }] } } },
-        { $match: { 'contentDoc.creatorId': new Types.ObjectId(creatorId) } },
+        { $match: { 'contentDoc.creatorId': this.getCreatorObjectId(creatorId) } },
       ];
 
-      if (communityId) {
-        pipeline.push({ $match: { 'contentDoc.communityId': communityId } });
+      if (communityScope.hasFilter) {
+        pipeline.push({ $match: this.buildLookupCommunityMatch('contentDoc.communityId', communityScope.lookupCommunityValues) });
       }
 
       pipeline.push(
@@ -1030,8 +1268,9 @@ export class AnalyticsService {
     return { rows };
   }
 
-  async getReferrers(creatorId: string, from: Date, to: Date, communityId?: string) {
-    const key = this.cacheKey(creatorId, from.toISOString(), to.toISOString(), `referrers:${communityId || 'all'}`);
+  async getReferrers(creatorId: string, from: Date, to: Date, communityId?: string, communitySlug?: string) {
+    const communityScope = await this.resolveCommunityScope(creatorId, communityId, communitySlug);
+    const key = this.cacheKey(creatorId, from.toISOString(), to.toISOString(), `referrers:${communityScope.cacheKeyPart}`);
     const cached = this.getCache<any>(key);
     if (cached) return cached;
 
@@ -1041,7 +1280,7 @@ export class AnalyticsService {
         creatorId,
         from.toISOString().slice(0, 10),
         to.toISOString().slice(0, 10),
-        communityId
+        communityScope.ga4CommunityId
       );
       if (ga4Referrers.length > 0) {
         const rows = ga4Referrers.map(r => ({
@@ -1066,11 +1305,11 @@ export class AnalyticsService {
         { $lookup: { from: 'cours', localField: 'contentId', foreignField: 'id', as: 'course' } },
         { $lookup: { from: 'challenges', localField: 'contentId', foreignField: 'id', as: 'challenge' } },
         { $addFields: { contentDoc: { $ifNull: [{ $arrayElemAt: ['$course', 0] }, { $arrayElemAt: ['$challenge', 0] }] } } },
-        { $match: { 'contentDoc.creatorId': new Types.ObjectId(creatorId) } },
+        { $match: { 'contentDoc.creatorId': this.getCreatorObjectId(creatorId) } },
       ];
 
-      if (communityId) {
-        pipeline.push({ $match: { 'contentDoc.communityId': communityId } });
+      if (communityScope.hasFilter) {
+        pipeline.push({ $match: this.buildLookupCommunityMatch('contentDoc.communityId', communityScope.lookupCommunityValues) });
       }
 
       pipeline.push(
@@ -1094,13 +1333,13 @@ export class AnalyticsService {
     return { rows };
   }
 
-  async exportCsv(creatorId: string, scope: 'overview' | 'courses' | 'challenges' | 'sessions' | 'events' | 'products' | 'posts', from: Date, to: Date, communityId?: string) {
+  async exportCsv(creatorId: string, scope: 'overview' | 'courses' | 'challenges' | 'sessions' | 'events' | 'products' | 'posts', from: Date, to: Date, communityId?: string, communitySlug?: string) {
     // Restrictions removed: CSV export available for everyone
     // const sub = await this.subscriptionService.getMySubscription(creatorId);
     // const plan = (sub?.plan as PlanTier) || PlanTier.STARTER;
 
     if (scope === 'overview') {
-      const data = await this.getOverview(creatorId, from, to, PlanTier.PRO, communityId);
+      const data = await this.getOverview(creatorId, from, to, PlanTier.PRO, communityId, communitySlug);
       const rows = [
         ['metric', 'value'],
         ['views', data.totals.views],
@@ -1120,42 +1359,42 @@ export class AnalyticsService {
     }
 
     if (scope === 'courses') {
-      const res = await this.getCourses(creatorId, from, to, communityId);
+      const res = await this.getCourses(creatorId, from, to, communityId, communitySlug);
       const head = ['contentId', 'views', 'starts', 'completes', 'completionRate', 'watchTime', 'ratingsCount'];
       const rows = [head, ...res.byCourse.map((c: any) => [c.contentId, c.views, c.starts, c.completes, c.completionRate, c.watchTime, c.ratingsCount])];
       return { filename: 'courses.csv', csv: this.toCsv(rows) };
     }
 
     if (scope === 'challenges') {
-      const res = await this.getChallenges(creatorId, from, to, communityId);
+      const res = await this.getChallenges(creatorId, from, to, communityId, communitySlug);
       const head = ['contentId', 'views', 'starts', 'completes', 'completionRate'];
       const rows = [head, ...res.byChallenge.map((c: any) => [c.contentId, c.views, c.starts, c.completes, c.completionRate])];
       return { filename: 'challenges.csv', csv: this.toCsv(rows) };
     }
 
     if (scope === 'sessions') {
-      const res = await this.getSessions(creatorId, from, to, communityId);
+      const res = await this.getSessions(creatorId, from, to, communityId, communitySlug);
       const head = ['contentId', 'views', 'starts', 'completes', 'completionRate'];
       const rows = [head, ...res.bySession.map((c: any) => [c.contentId, c.views, c.starts, c.completes, c.completionRate])];
       return { filename: 'sessions.csv', csv: this.toCsv(rows) };
     }
 
     if (scope === 'events') {
-      const res = await this.getEvents(creatorId, from, to, communityId);
+      const res = await this.getEvents(creatorId, from, to, communityId, communitySlug);
       const head = ['contentId', 'views', 'starts', 'completes'];
       const rows = [head, ...res.byEvent.map((c: any) => [c.contentId, c.views, c.starts, c.completes])];
       return { filename: 'events.csv', csv: this.toCsv(rows) };
     }
 
     if (scope === 'products') {
-      const res = await this.getProducts(creatorId, from, to, communityId);
+      const res = await this.getProducts(creatorId, from, to, communityId, communitySlug);
       const head = ['contentId', 'views', 'likes', 'shares', 'downloads'];
       const rows = [head, ...res.byProduct.map((c: any) => [c.contentId, c.views, c.likes, c.shares, c.downloads])];
       return { filename: 'products.csv', csv: this.toCsv(rows) };
     }
 
     // posts
-    const res = await this.getPosts(creatorId, from, to, communityId);
+    const res = await this.getPosts(creatorId, from, to, communityId, communitySlug);
     const head = ['contentId', 'views', 'likes', 'shares', 'bookmarks', 'ratingsCount'];
     const rows = [head, ...res.byPost.map((c: any) => [c.contentId, c.views, c.likes, c.shares, c.bookmarks, c.ratingsCount])];
     return { filename: 'posts.csv', csv: this.toCsv(rows) };
@@ -1378,7 +1617,8 @@ export class AnalyticsService {
     return analytics;
   }
 
-  async debugCreatorStatus(creatorId: string, communityId?: string) {
+  async debugCreatorStatus(creatorId: string, communityId?: string, communitySlug?: string) {
+    const communityScope = await this.resolveCommunityScope(creatorId, communityId, communitySlug);
     const tracking = this.dbConnection.collection('trackingactions');
     const coursesCol = this.dbConnection.collection('cours');
 
@@ -1394,7 +1634,8 @@ export class AnalyticsService {
         }
       },
       { $unwind: '$courseInfo' },
-      { $match: { 'courseInfo.creatorId': new Types.ObjectId(creatorId) } },
+      { $match: { 'courseInfo.creatorId': this.getCreatorObjectId(creatorId) } },
+      ...(communityScope.hasFilter ? [{ $match: this.buildLookupCommunityMatch('courseInfo.communityId', communityScope.lookupCommunityValues) }] : []),
       {
         $group: {
           _id: { action: '$actionType', contentId: '$contentId' },
@@ -1410,8 +1651,8 @@ export class AnalyticsService {
     ]).toArray();
 
     // 3. Check rollups in analytics_daily
-    const match: any = { creatorId: new Types.ObjectId(creatorId) };
-    if (communityId) match.communityId = communityId;
+    const match: any = { creatorId: this.getCreatorObjectId(creatorId) };
+    if (communityScope.hasFilter) this.setDailyCommunityFilter(match, communityScope.communityIdStrings);
 
     const rollupSummary = await this.dailyModel.aggregate([
       { $match: match },
@@ -1423,7 +1664,7 @@ export class AnalyticsService {
 
     return {
       creatorId,
-      communityIdFilter: communityId || 'all',
+      communityIdFilter: communityScope.cacheKeyPart,
       trackingSummary,
       trackingByAllTypes,
       rollupSummary,
