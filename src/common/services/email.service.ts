@@ -7,12 +7,18 @@ export class EmailService {
   private useEthereal: boolean = false;
   private readonly logger = new Logger(EmailService.name);
 
+  private getEmailPassword(): string | undefined {
+    return process.env.EMAIL_PASS || process.env.EMAIL_PASSWORD;
+  }
+
   constructor() {
+    const emailPassword = this.getEmailPassword();
+
     // Initialize transporter asynchronously
     this.initializeTransporter()
       .then(transporter => {
         this.transporter = transporter;
-        if (process.env.EMAIL_HOST && process.env.EMAIL_USER && process.env.EMAIL_PASS) {
+        if (process.env.EMAIL_HOST && process.env.EMAIL_USER && emailPassword) {
           this.logger.log('✅ Email SMTP configuré avec succès');
         } else {
           this.logger.log('📧 Service Ethereal Email configuré pour les tests');
@@ -35,8 +41,10 @@ export class EmailService {
   }
 
   private async initializeTransporter(usePool: boolean = false): Promise<nodemailer.Transporter> {
+      const emailPassword = this.getEmailPassword();
+
       // Email SMTP Configuration (using your env variables)
-      if (process.env.EMAIL_HOST && process.env.EMAIL_USER && process.env.EMAIL_PASS) {
+      if (process.env.EMAIL_HOST && process.env.EMAIL_USER && emailPassword) {
       // Gmail SMTP configuration - don't use pool to avoid connection issues
       const transportOptions: any = {
         service: 'Gmail',
@@ -45,7 +53,7 @@ export class EmailService {
           secure: false, // true for 465, false for other ports
           auth: {
             user: process.env.EMAIL_USER,
-            pass: process.env.EMAIL_PASS,
+            pass: emailPassword,
           },
           tls: {
             rejectUnauthorized: false,

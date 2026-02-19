@@ -97,7 +97,7 @@ export class ChallengeService {
       .map((resource) => ({
         ...resource,
         title: resource.title.trim(),
-        url: resource.url.trim(),
+        url: this.uploadService.ensureAbsoluteUrl(resource.url.trim()),
         type: resource.type.trim().toLowerCase(),
         description: this.isNonEmptyString(resource?.description)
           ? resource.description.trim()
@@ -117,7 +117,7 @@ export class ChallengeService {
       .map((resource) => ({
         ...resource,
         title: resource.title.trim(),
-        url: resource.url.trim(),
+        url: this.uploadService.ensureAbsoluteUrl(resource.url.trim()),
         type: resource.type.trim().toLowerCase(),
         description: this.isNonEmptyString(resource?.description)
           ? resource.description.trim()
@@ -1907,7 +1907,10 @@ export class ChallengeService {
       duration: challenge.duration,
       thumbnail: challenge.thumbnail,
       notes: challenge.notes,
-      resources: challenge.resources || [],
+      resources: (challenge.resources || []).map((resource: any) => ({
+        ...(resource as any),
+        url: this.uploadService.ensureAbsoluteUrl(resource?.url),
+      })),
       tasks: (challenge.tasks || []).map((task) => {
         const taskIdRaw = (task as any).id || (task as any)._id;
         const taskId = taskIdRaw ? String(taskIdRaw) : '';
@@ -1922,7 +1925,10 @@ export class ChallengeService {
           points: task.points,
           instructions: task.instructions,
           notes: task.notes,
-          resources: task.resources || [],
+          resources: (task.resources || []).map((resource: any) => ({
+            ...(resource as any),
+            url: this.uploadService.ensureAbsoluteUrl(resource?.url),
+          })),
           createdAt: task.createdAt?.toISOString?.() || new Date(task.createdAt).toISOString(),
         };
       }),

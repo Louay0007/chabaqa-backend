@@ -77,10 +77,11 @@ export class AuthService {
   }
 
   async loginWithGoogleMobile(idToken: string): Promise<LoginResponseDto> {
-    const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+    const googleAuthClientId = process.env.GOOGLE_AUTH_CLIENT_ID || process.env.GOOGLE_CLIENT_ID;
+    const client = new OAuth2Client(googleAuthClientId);
     const ticket = await client.verifyIdToken({
       idToken: idToken,
-      audience: process.env.GOOGLE_CLIENT_ID,
+      audience: googleAuthClientId,
     });
     const payload = ticket.getPayload();
     if (!payload) {

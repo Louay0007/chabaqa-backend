@@ -6,11 +6,41 @@ import { AuthService } from './auth.service';
 import { LoginDto } from '../dto-user/login.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { RegisterDto } from '../dto-user/register.dto';
+import { GoogleAuthGuard } from './guards/google-auth.guard';
 
 @ApiTags('Authentication')
 @Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) { }
+
+  private getFrontendBaseUrl(): string {
+    const baseUrl = process.env.FRONTEND_URL || process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:8080';
+    return baseUrl.replace(/\/+$/, '');
+  }
+
+  private normalizeRedirectPath(rawPath?: string): string | null {
+    if (!rawPath) return null;
+
+    let path = rawPath;
+    try {
+      path = decodeURIComponent(rawPath);
+    } catch {
+      path = rawPath;
+    }
+
+    if (!path.startsWith('/') || path.startsWith('//')) {
+      return null;
+    }
+
+    return path;
+  }
+
+  private defaultRedirectForRole(role?: string): string {
+    const normalizedRole = role?.toLowerCase();
+    if (normalizedRole === 'creator') return '/creator/dashboard';
+    if (normalizedRole === 'admin') return '/admin';
+    return '/explore';
+  }
 
   @Post('login')
   @HttpCode(HttpStatus.OK)
@@ -115,7 +145,7 @@ export class AuthController {
   }
 
   @Get('google')
-  @UseGuards(AuthGuard('google'))
+  @UseGuards(GoogleAuthGuard)
   @ApiOperation({ summary: 'Start Google OAuth 2.0 login' })
   async googleAuth() {
     // Redirects to Google for authentication
@@ -124,9 +154,29 @@ export class AuthController {
   @Get('google/callback')
   @UseGuards(AuthGuard('google'))
   @ApiOperation({ summary: 'Google OAuth 2.0 callback' })
-  async googleAuthCallback(@Req() req) {
-    const result = await (this.authService as any).loginWithGoogle(req.user);
-    return result;
+  async googleAuthCallback(@Req() req, @Res() res: Response) {
+    try {
+      const result = await (this.authService as any).loginWithGoogle(req.user);
+      const frontendBaseUrl = this.getFrontendBaseUrl();
+
+      const stateParam = Array.isArray(req.query?.state) ? req.query.state[0] : req.query?.state;
+      const requestedRedirect = this.normalizeRedirectPath(stateParam);
+      const redirectPath = requestedRedirect && requestedRedirect !== '/signin'
+        ? requestedRedirect
+        : this.defaultRedirectForRole(result?.user?.role);
+
+      const userPayload = Buffer.from(JSON.stringify(result.user || {}), 'utf8').toString('base64url');
+      const hashParams = new URLSearchParams({
+        access_token: result.access_token,
+        user: userPayload,
+        redirect: redirectPath,
+      });
+
+      return res.redirect(`${frontendBaseUrl}/signin#${hashParams.toString()}`);
+    } catch (error) {
+      const frontendBaseUrl = this.getFrontendBaseUrl();
+      return res.redirect(`${frontendBaseUrl}/signin?message=${encodeURIComponent('Google sign-in failed. Please try again.')}`);
+    }
   }
 
   @Post('google/mobile')

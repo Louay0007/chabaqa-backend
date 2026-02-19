@@ -10,15 +10,26 @@ import { OAuth2Client } from 'google-auth-library';
 export class GoogleCalendarService {
   private readonly logger = new Logger(GoogleCalendarService.name);
   private oauth2Client: OAuth2Client;
+  private readonly oauthRedirectUri: string;
+  private readonly calendarClientId: string | undefined;
+  private readonly calendarClientSecret: string | undefined;
 
   constructor(
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     @InjectModel(Session.name) private sessionModel: Model<SessionDocument>,
   ) {
+    this.calendarClientId = process.env.GOOGLE_CALENDAR_CLIENT_ID || process.env.GOOGLE_CLIENT_ID;
+    this.calendarClientSecret = process.env.GOOGLE_CALENDAR_CLIENT_SECRET || process.env.GOOGLE_CLIENT_SECRET;
+    this.oauthRedirectUri =
+      process.env.GOOGLE_CALENDAR_REDIRECT_URI ||
+      process.env.GOOGLE_REDIRECT_URI ||
+      process.env.GOOGLE_CALLBACK_URL ||
+      'http://localhost:3000/api/auth/google/callback';
+
     this.oauth2Client = new google.auth.OAuth2(
-      process.env.GOOGLE_CLIENT_ID,
-      process.env.GOOGLE_CLIENT_SECRET,
-      process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3000/api/auth/google/callback'
+      this.calendarClientId,
+      this.calendarClientSecret,
+      this.oauthRedirectUri
     );
   }
 
@@ -27,8 +38,8 @@ export class GoogleCalendarService {
    */
   getAuthUrl(userId: string): string {
     this.logger.log(`[getAuthUrl] Generating auth URL for user: ${userId}`);
-    this.logger.debug(`[getAuthUrl] GOOGLE_CLIENT_ID: ${process.env.GOOGLE_CLIENT_ID?.substring(0, 20)}...`);
-    this.logger.debug(`[getAuthUrl] GOOGLE_REDIRECT_URI: ${process.env.GOOGLE_REDIRECT_URI}`);
+    this.logger.debug(`[getAuthUrl] GOOGLE_CLIENT_ID: ${this.calendarClientId?.substring(0, 20)}...`);
+    this.logger.debug(`[getAuthUrl] GOOGLE_REDIRECT_URI: ${this.oauthRedirectUri}`);
     
     const scopes = [
       'https://www.googleapis.com/auth/calendar',

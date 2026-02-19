@@ -5,10 +5,17 @@ import { Strategy, Profile } from 'passport-google-oauth20';
 @Injectable()
 export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
   constructor() {
+    const clientID = process.env.GOOGLE_AUTH_CLIENT_ID || process.env.GOOGLE_CLIENT_ID;
+    const clientSecret = process.env.GOOGLE_AUTH_CLIENT_SECRET || process.env.GOOGLE_CLIENT_SECRET;
+    const callbackURL =
+      process.env.GOOGLE_AUTH_CALLBACK_URL ||
+      process.env.GOOGLE_CALLBACK_URL ||
+      'http://localhost:3000/api/auth/google/callback';
+
     super({
-      clientID: process.env.GOOGLE_CLIENT_ID as string,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET as string,
-      callbackURL: process.env.GOOGLE_CALLBACK_URL || 'http://localhost:3000/auth/google/callback',
+      clientID: clientID as string,
+      clientSecret: clientSecret as string,
+      callbackURL,
       scope: ['email', 'profile'],
       passReqToCallback: false,
     });
