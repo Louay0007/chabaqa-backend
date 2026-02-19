@@ -6,6 +6,19 @@ import { Session, SessionDocument } from '../schema/session.schema';
 import { google } from 'googleapis';
 import { OAuth2Client } from 'google-auth-library';
 
+export type GoogleCalendarFailureCategory =
+  | 'auth_expired'
+  | 'insufficient_scope'
+  | 'quota'
+  | 'transient'
+  | 'unknown';
+
+export interface GoogleCalendarFailureDetails {
+  category: GoogleCalendarFailureCategory;
+  retryable: boolean;
+  message: string;
+}
+
 @Injectable()
 export class GoogleCalendarService {
   private readonly logger = new Logger(GoogleCalendarService.name);
@@ -18,10 +31,17 @@ export class GoogleCalendarService {
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     @InjectModel(Session.name) private sessionModel: Model<SessionDocument>,
   ) {
-    this.calendarClientId = process.env.GOOGLE_CALENDAR_CLIENT_ID || process.env.GOOGLE_CLIENT_ID;
-    this.calendarClientSecret = process.env.GOOGLE_CALENDAR_CLIENT_SECRET || process.env.GOOGLE_CLIENT_SECRET;
+    this.calendarClientId =
+      process.env.GOOGLE_CALENDAR_CLIENT_ID ||
+      process.env.GOOGLE_AUTH_CLIENT_ID ||
+      process.env.GOOGLE_CLIENT_ID;
+    this.calendarClientSecret =
+      process.env.GOOGLE_CALENDAR_CLIENT_SECRET ||
+      process.env.GOOGLE_AUTH_CLIENT_SECRET ||
+      process.env.GOOGLE_CLIENT_SECRET;
     this.oauthRedirectUri =
       process.env.GOOGLE_CALENDAR_REDIRECT_URI ||
+      process.env.GOOGLE_AUTH_CALLBACK_URL ||
       process.env.GOOGLE_REDIRECT_URI ||
       process.env.GOOGLE_CALLBACK_URL ||
       'http://localhost:3000/api/auth/google/callback';
@@ -33,6 +53,59 @@ export class GoogleCalendarService {
     );
   }
 
+  private classifyGoogleError(error: any): GoogleCalendarFailureDetails {
+    const errorMessage =
+      error?.message ||
+      error?.response?.data?.error?.message ||
+      error?.response?.data?.message ||
+      'Google Calendar operation failed';
+    const status = error?.code || error?.response?.status;
+    const lower = String(errorMessage).toLowerCase();
+
+    if (status === 401 || lower.includes('invalid_grant') || lower.includes('token')) {
+      return {
+        category: 'auth_expired',
+        retryable: false,
+        message: errorMessage,
+      };
+    }
+
+    if (lower.includes('insufficient') || lower.includes('scope') || lower.includes('permission')) {
+      return {
+        category: 'insufficient_scope',
+        retryable: false,
+        message: errorMessage,
+      };
+    }
+
+    if (status === 429 || lower.includes('quota') || lower.includes('rate limit')) {
+      return {
+        category: 'quota',
+        retryable: true,
+        message: errorMessage,
+      };
+    }
+
+    if (
+      lower.includes('timeout') ||
+      lower.includes('network') ||
+      lower.includes('temporar') ||
+      ['econnreset', 'eai_again', 'etimedout', 'ecconnaborted'].some((token) => lower.includes(token))
+    ) {
+      return {
+        category: 'transient',
+        retryable: true,
+        message: errorMessage,
+      };
+    }
+
+    return {
+      category: 'unknown',
+      retryable: false,
+      message: errorMessage,
+    };
+  }
+
   /**
    * Generate Google OAuth authorization URL
    */
@@ -40,6 +113,10 @@ export class GoogleCalendarService {
     this.logger.log(`[getAuthUrl] Generating auth URL for user: ${userId}`);
     this.logger.debug(`[getAuthUrl] GOOGLE_CLIENT_ID: ${this.calendarClientId?.substring(0, 20)}...`);
     this.logger.debug(`[getAuthUrl] GOOGLE_REDIRECT_URI: ${this.oauthRedirectUri}`);
+
+    if (!this.calendarClientId || !this.calendarClientSecret) {
+      throw new BadRequestException('Google OAuth is not configured on the server');
+    }
     
     const scopes = [
       'https://www.googleapis.com/auth/calendar',
@@ -77,7 +154,7 @@ export class GoogleCalendarService {
       this.logger.log(`[handleCallback] Got tokens, scope: ${tokens.scope}`);
       
       // Verify the state matches the user ID for security
-      if (tokens.scope && !tokens.scope.includes('calendar')) {
+      if (tokens.scope && (!tokens.scope.includes('calendar') || !tokens.scope.includes('calendar.events'))) {
         this.logger.error('[handleCallback] Calendar access not granted in scope');
         throw new BadRequestException('Calendar access not granted');
       }
@@ -137,6 +214,7 @@ export class GoogleCalendarService {
         googleTokens: {
           ...user.googleTokens,
           access_token: credentials.access_token!,
+          refresh_token: credentials.refresh_token || user.googleTokens.refresh_token,
           expiry_date: credentials.expiry_date!
         }
       });
@@ -226,9 +304,15 @@ export class GoogleCalendarService {
       this.logger.log(`Created Google Meet event ${eventId} for session ${sessionId}`);
       
       return { meetLink, eventId };
-    } catch (error) {
+    } catch (error: any) {
+      const failure = this.classifyGoogleError(error);
       this.logger.error('Error creating Google Calendar event:', error);
-      throw new BadRequestException('Failed to create Google Meet link');
+      throw new BadRequestException({
+        message: 'Failed to create Google Meet link',
+        category: failure.category,
+        retryable: failure.retryable,
+        details: failure.message,
+      });
     }
   }
 

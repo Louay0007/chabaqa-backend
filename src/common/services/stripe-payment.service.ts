@@ -229,6 +229,7 @@ export class StripePaymentService {
     amountDT?: number;
     paymentMethod?: LinkPaymentMethod;
     customerId?: string;
+    sessionMetadata?: Record<string, string>;
     error?: string;
   }> {
     try {
@@ -274,6 +275,7 @@ export class StripePaymentService {
         amountDT: paymentIntent.amount / 100, // Convert from cents to dollars
         paymentMethod,
         customerId: customer?.id,
+        sessionMetadata: (session.metadata || {}) as Record<string, string>,
       };
     } catch (e: any) {
       return {

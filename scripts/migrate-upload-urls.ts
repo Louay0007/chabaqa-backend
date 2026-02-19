@@ -131,7 +131,7 @@ async function migrateCollection(
 
         for (const field of fieldsToCheck) {
           const fieldPath = field.split('.');
-          let value = doc;
+          let value: any = doc;
           
           // Navigate nested fields
           for (const part of fieldPath) {

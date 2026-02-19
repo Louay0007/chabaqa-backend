@@ -36,6 +36,12 @@ export interface GetPayoutsQuery {
   limit?: number;
 }
 
+interface CreatorBankDetails {
+  rib: string;
+  bankName: string;
+  ownerName: string;
+}
+
 @Injectable()
 export class PayoutService {
   constructor(
@@ -52,6 +58,92 @@ export class PayoutService {
     const date = new Date().toISOString().split('T')[0].replace(/-/g, '');
     const random = Math.random().toString(36).substring(2, 8).toUpperCase();
     return `REF-${date}-${random}`;
+  }
+
+  private normalizeBankDetails(bankDetails?: Partial<CreatorBankDetails>): CreatorBankDetails | null {
+    const rib = String(bankDetails?.rib || '').replace(/\s+/g, '');
+    const bankName = String(bankDetails?.bankName || '').trim();
+    const ownerName = String(bankDetails?.ownerName || '').trim();
+
+    if (!rib && !bankName && !ownerName) {
+      return null;
+    }
+
+    return {
+      rib,
+      bankName,
+      ownerName,
+    };
+  }
+
+  private ensureValidBankDetails(bankDetails?: Partial<CreatorBankDetails>): CreatorBankDetails {
+    const normalized = this.normalizeBankDetails(bankDetails);
+    if (!normalized) {
+      throw new BadRequestException('Bank details are required');
+    }
+
+    if (!/^\d{20}$/.test(normalized.rib)) {
+      throw new BadRequestException('Invalid Tunisian RIB. It must contain exactly 20 digits.');
+    }
+
+    if (!normalized.bankName) {
+      throw new BadRequestException('Bank name is required');
+    }
+
+    if (!normalized.ownerName) {
+      throw new BadRequestException('Account holder name is required');
+    }
+
+    return normalized;
+  }
+
+  async getCreatorBankCredentials(creatorId: string): Promise<{
+    isConfigured: boolean;
+    bankDetails: CreatorBankDetails | null;
+  }> {
+    const creator = await this.userModel.findById(creatorId).select('bankDetails');
+    if (!creator) {
+      throw new NotFoundException('Creator not found');
+    }
+
+    const normalized = this.normalizeBankDetails((creator as any).bankDetails);
+    if (!normalized) {
+      return { isConfigured: false, bankDetails: null };
+    }
+
+    const isConfigured =
+      /^\d{20}$/.test(normalized.rib) &&
+      Boolean(normalized.bankName) &&
+      Boolean(normalized.ownerName);
+
+    return {
+      isConfigured,
+      bankDetails: normalized,
+    };
+  }
+
+  async updateCreatorBankCredentials(
+    creatorId: string,
+    bankDetails: Partial<CreatorBankDetails>,
+  ): Promise<{ isConfigured: boolean; bankDetails: CreatorBankDetails }> {
+    const validated = this.ensureValidBankDetails(bankDetails);
+
+    const updatedCreator = await this.userModel.findByIdAndUpdate(
+      creatorId,
+      {
+        bankDetails: validated,
+      },
+      { new: true },
+    ).select('bankDetails');
+
+    if (!updatedCreator) {
+      throw new NotFoundException('Creator not found');
+    }
+
+    return {
+      isConfigured: true,
+      bankDetails: validated,
+    };
   }
 
   /**
@@ -95,6 +187,21 @@ export class PayoutService {
       throw new BadRequestException('Payout amount must be greater than 0');
     }
 
+    let payoutMetadata = metadata ? { ...metadata } : {};
+    if (method === PayoutMethod.BANK_TRANSFER) {
+      const validBankDetails = this.ensureValidBankDetails((creator as any).bankDetails);
+      payoutMetadata = {
+        ...payoutMetadata,
+        bankAccount: {
+          ...(payoutMetadata as any)?.bankAccount,
+          rib: validBankDetails.rib,
+          bankName: validBankDetails.bankName,
+          ownerName: validBankDetails.ownerName,
+          countryCode: 'TN',
+        },
+      };
+    }
+
     // Create payout record
     const payoutData = {
       creatorId,
@@ -105,7 +212,7 @@ export class PayoutService {
       description,
       scheduledFor,
       itemsCount,
-      metadata,
+      metadata: payoutMetadata,
       reference: this.generateReference(),
       status: scheduledFor ? PayoutStatus.SCHEDULED : PayoutStatus.PENDING,
     };

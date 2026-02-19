@@ -188,6 +188,40 @@ export class SessionBooking {
   meetingUrl?: string;
 
   @Prop({
+    trim: true
+  })
+  googleEventId?: string;
+
+  @Prop({
+    type: String,
+    enum: ['not_required', 'pending', 'created', 'failed'],
+    default: 'not_required'
+  })
+  meetStatus?: 'not_required' | 'pending' | 'created' | 'failed';
+
+  @Prop({
+    trim: true
+  })
+  meetFailureReason?: string;
+
+  @Prop({
+    type: Date
+  })
+  meetLastAttemptAt?: Date;
+
+  @Prop({
+    type: Number,
+    default: 0
+  })
+  meetRetryCount?: number;
+
+  @Prop({
+    type: String,
+    enum: ['book_session', 'confirm_booking', 'manual', 'worker']
+  })
+  meetProvisioningSource?: 'book_session' | 'confirm_booking' | 'manual' | 'worker';
+
+  @Prop({
     trim: true,
     maxlength: 1000
   })
@@ -591,7 +625,13 @@ SessionSchema.pre('save', function(next) {
   
   // Trier les réservations par date
   if (this.isModified('bookings')) {
-    this.bookings.sort((a, b) => a.scheduledAt.getTime() - b.scheduledAt.getTime());
+    this.bookings.sort((a, b) => {
+      const aTime = a?.scheduledAt ? new Date(a.scheduledAt).getTime() : Number.POSITIVE_INFINITY;
+      const bTime = b?.scheduledAt ? new Date(b.scheduledAt).getTime() : Number.POSITIVE_INFINITY;
+      const safeATime = Number.isFinite(aTime) ? aTime : Number.POSITIVE_INFINITY;
+      const safeBTime = Number.isFinite(bTime) ? bTime : Number.POSITIVE_INFINITY;
+      return safeATime - safeBTime;
+    });
   }
   
   next();
@@ -607,6 +647,7 @@ SessionSchema.methods.getBookingsThisWeek = function(): number {
   
   return this.bookings.filter(booking => {
     if (booking.status === 'cancelled') return false;
+    if (!booking.scheduledAt || Number.isNaN(new Date(booking.scheduledAt).getTime())) return false;
     return booking.scheduledAt >= startOfWeek && booking.scheduledAt <= endOfWeek;
   }).length;
 };
@@ -619,10 +660,14 @@ SessionSchema.methods.canBookMore = function(): boolean {
 
 // Méthode pour vérifier la disponibilité d'un créneau
 SessionSchema.methods.isTimeSlotAvailable = function(scheduledAt: Date): boolean {
+  if (!scheduledAt || Number.isNaN(new Date(scheduledAt).getTime())) {
+    return false;
+  }
   const sessionEnd = new Date(scheduledAt.getTime() + this.duration * 60000);
   
   return !this.bookings.some(booking => {
     if (booking.status === 'cancelled') return false;
+    if (!booking.scheduledAt || Number.isNaN(new Date(booking.scheduledAt).getTime())) return false;
     
     const bookingEnd = new Date(booking.scheduledAt.getTime() + this.duration * 60000);
     
@@ -656,7 +701,15 @@ SessionSchema.methods.addBooking = function(booking: SessionBooking): void {
   if (!booking.id) {
     booking.id = new Types.ObjectId().toString();
   }
+
+  if (!booking.meetStatus) {
+    booking.meetStatus = booking.status === 'confirmed' ? 'pending' : 'not_required';
+  }
   
+  if (!booking.scheduledAt || Number.isNaN(new Date(booking.scheduledAt).getTime())) {
+    throw new Error('Date de réservation invalide');
+  }
+
   // Vérifier la disponibilité
   if (!this.isTimeSlotAvailable(booking.scheduledAt)) {
     throw new Error('Ce créneau horaire n\'est pas disponible');
@@ -668,7 +721,13 @@ SessionSchema.methods.addBooking = function(booking: SessionBooking): void {
   }
   
   this.bookings.push(booking);
-  this.bookings.sort((a, b) => a.scheduledAt.getTime() - b.scheduledAt.getTime());
+  this.bookings.sort((a, b) => {
+    const aTime = a?.scheduledAt ? new Date(a.scheduledAt).getTime() : Number.POSITIVE_INFINITY;
+    const bTime = b?.scheduledAt ? new Date(b.scheduledAt).getTime() : Number.POSITIVE_INFINITY;
+    const safeATime = Number.isFinite(aTime) ? aTime : Number.POSITIVE_INFINITY;
+    const safeBTime = Number.isFinite(bTime) ? bTime : Number.POSITIVE_INFINITY;
+    return safeATime - safeBTime;
+  });
 };
 
 // Méthode pour supprimer une réservation

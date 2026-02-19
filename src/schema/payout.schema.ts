@@ -71,10 +71,13 @@ export class Payout {
   metadata?: {
     // Bank transfer details
     bankAccount?: {
+      rib?: string;
       accountNumber?: string;
       iban?: string;
       bankName?: string;
+      ownerName?: string;
       swiftCode?: string;
+      countryCode?: string;
     };
     // PayPal details
     paypalEmail?: string;

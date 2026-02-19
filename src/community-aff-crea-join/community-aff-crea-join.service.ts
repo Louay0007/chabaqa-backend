@@ -1,6 +1,6 @@
 import { Injectable, ConflictException, NotFoundException, InternalServerErrorException, ForbiddenException, BadRequestException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { Connection, Model, Types } from 'mongoose';
 import { Community, CommunityDocument } from '../schema/community.schema';
 import { User, UserDocument, UserRole } from '../schema/user.schema';
 import { CreateCommunityDto } from '../dto-community/create-community.dto';
@@ -29,6 +29,10 @@ export class CommunityAffCreaJoinService {
     private readonly notificationService: NotificationService,
     private readonly trackingService: ContentTrackingService,
   ) { }
+
+  private getModelIfRegistered<T = any>(connection: Connection, modelName: string): Model<T> | null {
+    return connection.modelNames().includes(modelName) ? (connection.model(modelName) as Model<T>) : null;
+  }
 
   /**
    * Créer une nouvelle communauté
@@ -1772,12 +1776,216 @@ export class CommunityAffCreaJoinService {
     try {
       console.log('🗑️ [DELETE-COMMUNITY] Deleting community:', communityId);
 
-      // Find and delete the community
-      const result = await this.communityModel.findByIdAndDelete(communityId);
-      
-      if (!result) {
+      if (!Types.ObjectId.isValid(communityId)) {
         throw new NotFoundException('Community not found');
       }
+
+      const communityObjectId = new Types.ObjectId(communityId);
+      const communityIdString = communityObjectId.toString();
+
+      const existingCommunity = await this.communityModel
+        .findById(communityObjectId)
+        .select('_id')
+        .lean();
+
+      if (!existingCommunity) {
+        throw new NotFoundException('Community not found');
+      }
+
+      const connection = this.communityModel.db;
+      const session: any = null;
+        const courseModel = this.getModelIfRegistered(connection, 'Cours');
+        const challengeModel = this.getModelIfRegistered(connection, 'Challenge');
+        const productModel = this.getModelIfRegistered(connection, 'Product');
+        const sessionModel = this.getModelIfRegistered(connection, 'Session');
+        const eventModel = this.getModelIfRegistered(connection, 'Event');
+        const postModel = this.getModelIfRegistered(connection, 'Post');
+        const resourceModel = this.getModelIfRegistered(connection, 'Resource');
+        const communityPageContentModel = this.getModelIfRegistered(connection, 'CommunityPageContent');
+        const orderModel = this.getModelIfRegistered(connection, 'Order');
+        const payoutModel = this.getModelIfRegistered(connection, 'Payout');
+        const promoCodeModel = this.getModelIfRegistered(connection, 'PromoCode');
+        const analyticsDailyModel = this.getModelIfRegistered(connection, 'AnalyticsDaily');
+        const emailCampaignModel = this.getModelIfRegistered(connection, 'EmailCampaign');
+        const achievementModel = this.getModelIfRegistered(connection, 'Achievement');
+        const userAchievementModel = this.getModelIfRegistered(connection, 'UserAchievement');
+        const userLoginActivityModel = this.getModelIfRegistered(connection, 'UserLoginActivity');
+        const courseEnrollmentModel = this.getModelIfRegistered(connection, 'CourseEnrollment');
+        const challengeSubmissionModel = this.getModelIfRegistered(connection, 'ChallengeSubmission');
+        const contentProgressModel = this.getModelIfRegistered(connection, 'ContentProgress');
+        const trackingActionModel = this.getModelIfRegistered(connection, 'TrackingAction');
+        const conversationModel = this.getModelIfRegistered(connection, 'Conversation');
+        const messageModel = this.getModelIfRegistered(connection, 'Message');
+        const feedbackModel = this.getModelIfRegistered(connection, 'Feedback');
+
+        const [
+          courses,
+          challenges,
+          products,
+          sessions,
+          posts,
+          events,
+          resources,
+          conversations,
+        ] = await Promise.all([
+          courseModel
+            ? courseModel.find({ communityId: communityIdString }).select('_id id').session(session).lean()
+            : [],
+          challengeModel
+            ? challengeModel.find({ communityId: communityIdString }).select('_id id').session(session).lean()
+            : [],
+          productModel
+            ? productModel.find({ communityId: communityIdString }).select('_id id').session(session).lean()
+            : [],
+          sessionModel
+            ? sessionModel.find({ communityId: communityIdString }).select('_id id').session(session).lean()
+            : [],
+          postModel
+            ? postModel.find({ communityId: communityIdString }).select('_id id').session(session).lean()
+            : [],
+          eventModel
+            ? eventModel.find({ communityId: communityObjectId }).select('_id id').session(session).lean()
+            : [],
+          resourceModel
+            ? resourceModel.find({ communityId: communityObjectId }).select('_id').session(session).lean()
+            : [],
+          conversationModel
+            ? conversationModel.find({ communityId: communityObjectId }).select('_id').session(session).lean()
+            : [],
+        ]);
+
+        const courseObjectIds = courses.map((doc: any) => doc._id).filter(Boolean);
+        const challengeObjectIds = challenges.map((doc: any) => doc._id).filter(Boolean);
+        const conversationIds = conversations.map((doc: any) => doc._id).filter(Boolean);
+        const contentStringIds = [
+          ...courses.map((doc: any) => String(doc.id || '')).filter(Boolean),
+          ...challenges.map((doc: any) => String(doc.id || '')).filter(Boolean),
+          ...products.map((doc: any) => String(doc.id || '')).filter(Boolean),
+          ...sessions.map((doc: any) => String(doc.id || '')).filter(Boolean),
+          ...posts.map((doc: any) => String(doc.id || '')).filter(Boolean),
+          ...events.map((doc: any) => String(doc.id || '')).filter(Boolean),
+          ...posts.map((doc: any) => String(doc._id || '')).filter(Boolean),
+          ...resources.map((doc: any) => String(doc._id || '')).filter(Boolean),
+          communityIdString,
+        ];
+
+        await Promise.all([
+          communityPageContentModel
+            ? communityPageContentModel.deleteMany({ community: communityObjectId }).session(session)
+            : Promise.resolve(),
+          postModel
+            ? postModel.deleteMany({ communityId: communityIdString }).session(session)
+            : Promise.resolve(),
+          courseModel
+            ? courseModel.deleteMany({ communityId: communityIdString }).session(session)
+            : Promise.resolve(),
+          challengeModel
+            ? challengeModel.deleteMany({ communityId: communityIdString }).session(session)
+            : Promise.resolve(),
+          productModel
+            ? productModel.deleteMany({ communityId: communityIdString }).session(session)
+            : Promise.resolve(),
+          sessionModel
+            ? sessionModel.deleteMany({ communityId: communityIdString }).session(session)
+            : Promise.resolve(),
+          eventModel
+            ? eventModel.deleteMany({ communityId: communityObjectId }).session(session)
+            : Promise.resolve(),
+          resourceModel
+            ? resourceModel.deleteMany({ communityId: communityObjectId }).session(session)
+            : Promise.resolve(),
+          emailCampaignModel
+            ? emailCampaignModel.deleteMany({ communityId: communityObjectId }).session(session)
+            : Promise.resolve(),
+          userLoginActivityModel
+            ? userLoginActivityModel.deleteMany({ communityId: communityObjectId }).session(session)
+            : Promise.resolve(),
+          userAchievementModel
+            ? userAchievementModel.deleteMany({ communityId: communityObjectId }).session(session)
+            : Promise.resolve(),
+          achievementModel
+            ? achievementModel.deleteMany({ communityId: communityObjectId }).session(session)
+            : Promise.resolve(),
+          analyticsDailyModel
+            ? analyticsDailyModel.deleteMany({ communityId: communityIdString }).session(session)
+            : Promise.resolve(),
+          promoCodeModel
+            ? promoCodeModel.deleteMany({ communityId: communityIdString }).session(session)
+            : Promise.resolve(),
+          orderModel
+            ? orderModel.deleteMany({ communityId: communityObjectId }).session(session)
+            : Promise.resolve(),
+          payoutModel
+            ? payoutModel.deleteMany({ communityId: communityObjectId }).session(session)
+            : Promise.resolve(),
+          conversationModel
+            ? conversationModel.deleteMany({ communityId: communityObjectId }).session(session)
+            : Promise.resolve(),
+          courseEnrollmentModel && courseObjectIds.length > 0
+            ? courseEnrollmentModel.deleteMany({ courseId: { $in: courseObjectIds } }).session(session)
+            : Promise.resolve(),
+          challengeSubmissionModel && challengeObjectIds.length > 0
+            ? challengeSubmissionModel.deleteMany({ challengeId: { $in: challengeObjectIds } }).session(session)
+            : Promise.resolve(),
+          messageModel && conversationIds.length > 0
+            ? messageModel.deleteMany({ conversationId: { $in: conversationIds } }).session(session)
+            : Promise.resolve(),
+          feedbackModel
+            ? feedbackModel
+                .deleteMany({
+                  $or: [
+                    { relatedModel: 'Community', relatedTo: communityObjectId },
+                    { relatedModel: 'Cours', relatedTo: { $in: courseObjectIds } },
+                    { relatedModel: 'Challenge', relatedTo: { $in: challengeObjectIds } },
+                    { relatedModel: 'Product', relatedTo: { $in: products.map((doc: any) => doc._id).filter(Boolean) } },
+                    { relatedModel: 'Session', relatedTo: { $in: sessions.map((doc: any) => doc._id).filter(Boolean) } },
+                    { relatedModel: 'Event', relatedTo: { $in: events.map((doc: any) => doc._id).filter(Boolean) } },
+                  ],
+                })
+                .session(session)
+            : Promise.resolve(),
+          contentProgressModel
+            ? contentProgressModel
+                .deleteMany({
+                  $or: [
+                    { contentType: TrackableContentType.COMMUNITY, contentId: communityIdString },
+                    { contentId: { $in: contentStringIds } },
+                  ],
+                })
+                .session(session)
+            : Promise.resolve(),
+          trackingActionModel
+            ? trackingActionModel
+                .deleteMany({
+                  $or: [
+                    { contentType: TrackableContentType.COMMUNITY, contentId: communityIdString },
+                    { contentId: { $in: contentStringIds } },
+                  ],
+                })
+                .session(session)
+            : Promise.resolve(),
+          this.userModel.updateMany(
+            {
+              $or: [
+                { createdCommunities: communityObjectId },
+                { joinedCommunities: communityObjectId },
+                { adminCommunities: communityObjectId },
+                { moderatorCommunities: communityObjectId },
+              ],
+            },
+            {
+              $pull: {
+                createdCommunities: communityObjectId,
+                joinedCommunities: communityObjectId,
+                adminCommunities: communityObjectId,
+                moderatorCommunities: communityObjectId,
+              },
+            },
+            { session },
+          ),
+        ]);
+
+        await this.communityModel.deleteOne({ _id: communityObjectId }).session(session);
 
       console.log('✅ [DELETE-COMMUNITY] Community deleted successfully:', communityId);
 

@@ -3,7 +3,7 @@ import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags, ApiQuery, ApiBody } 
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PayoutService } from './payout.service';
 import { Payout, PayoutStatus, PayoutMethod } from '../schema/payout.schema';
-import { Types } from 'mongoose';
+import { UpdateBankCredentialsDto } from './dto/update-bank-credentials.dto';
 
 export interface CreatePayoutDto {
   amount: number;
@@ -116,6 +116,33 @@ export class PayoutController {
     return {
       availableBalance: result.availableBalance
     };
+  }
+
+  @Get('bank-credentials')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Get current creator bank credentials used for payouts' })
+  async getBankCredentials(@Request() req: any): Promise<{
+    isConfigured: boolean;
+    bankDetails: { rib: string; bankName: string; ownerName: string } | null;
+  }> {
+    const creatorId = req.user._id || req.user.sub;
+    return this.payoutService.getCreatorBankCredentials(creatorId);
+  }
+
+  @Put('bank-credentials')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Update creator Tunisian bank credentials for payouts' })
+  async updateBankCredentials(
+    @Request() req: any,
+    @Body() updateBankCredentialsDto: UpdateBankCredentialsDto,
+  ): Promise<{
+    isConfigured: boolean;
+    bankDetails: { rib: string; bankName: string; ownerName: string };
+  }> {
+    const creatorId = req.user._id || req.user.sub;
+    return this.payoutService.updateCreatorBankCredentials(creatorId, updateBankCredentialsDto);
   }
 
   @Get(':id')

@@ -56,6 +56,9 @@ export class Order {
 
   @Prop({ type: String })
   paymentProof?: string; // URL of the uploaded proof file
+
+  @Prop({ type: Object, default: {} })
+  metadata?: Record<string, any>;
 }
 
 export const OrderSchema = SchemaFactory.createForClass(Order);

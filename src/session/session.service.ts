@@ -17,6 +17,10 @@ import { TrackableContentType } from '../schema/content-tracking.schema';
 import { GoogleCalendarService } from '../google-calendar/google-calendar.service';
 import { EmailService, SessionBookingEmailData } from '../email/email.service';
 import { Logger } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
+
+type MeetStatus = 'not_required' | 'pending' | 'created' | 'failed';
+type MeetProvisioningSource = 'book_session' | 'confirm_booking' | 'manual' | 'worker';
 
 @Injectable()
 export class SessionService {
@@ -48,6 +52,153 @@ export class SessionService {
     
     // Fallback to finding by id field
     return this.communityModel.findOne({ id: communityId });
+  }
+
+  private getBookingById(sessionDoc: SessionDocument, bookingId: string): any | undefined {
+    return (sessionDoc.bookings || []).find((booking: any) => booking.id === bookingId);
+  }
+
+  private parseGoogleFailure(error: any): { category: string; retryable: boolean; details: string } {
+    const response = error?.getResponse?.();
+    if (response && typeof response === 'object') {
+      return {
+        category: String((response as any).category || 'unknown'),
+        retryable: Boolean((response as any).retryable),
+        details: String((response as any).details || (response as any).message || error?.message || 'unknown'),
+      };
+    }
+
+    return {
+      category: 'unknown',
+      retryable: false,
+      details: String(error?.message || 'unknown'),
+    };
+  }
+
+  private getRetryDelayMs(retryCount: number): number {
+    // Exponential backoff capped at 60 minutes
+    const minutes = Math.min(Math.pow(2, Math.max(0, retryCount - 1)), 60);
+    return minutes * 60 * 1000;
+  }
+
+  private async provisionMeetForBooking(params: {
+    sessionDoc: SessionDocument;
+    bookingId: string;
+    creatorId: string;
+    participantId: string;
+    source: MeetProvisioningSource;
+    force?: boolean;
+  }): Promise<{
+    success: boolean;
+    meetingUrl?: string;
+    googleEventId?: string;
+    meetStatus: MeetStatus;
+    errorCategory?: string;
+    errorDetails?: string;
+  }> {
+    const { sessionDoc, bookingId, creatorId, participantId, source, force = false } = params;
+    const booking = this.getBookingById(sessionDoc, bookingId);
+    if (!booking) {
+      return { success: false, meetStatus: 'failed', errorCategory: 'booking_not_found', errorDetails: 'Booking not found' };
+    }
+
+    if (!force && booking.meetingUrl) {
+      booking.meetStatus = 'created';
+      booking.meetFailureReason = undefined;
+      booking.meetProvisioningSource = source;
+      booking.updatedAt = new Date();
+      sessionDoc.markModified('bookings');
+      await sessionDoc.save();
+      return {
+        success: true,
+        meetingUrl: booking.meetingUrl,
+        googleEventId: booking.googleEventId,
+        meetStatus: 'created',
+      };
+    }
+
+    if (booking.status !== 'confirmed') {
+      booking.meetStatus = 'not_required';
+      booking.meetProvisioningSource = source;
+      booking.updatedAt = new Date();
+      sessionDoc.markModified('bookings');
+      await sessionDoc.save();
+      return { success: false, meetStatus: 'not_required', errorCategory: 'booking_not_confirmed', errorDetails: 'Booking is not confirmed' };
+    }
+
+    const attemptAt = new Date();
+    booking.meetStatus = 'pending';
+    booking.meetProvisioningSource = source;
+    booking.meetLastAttemptAt = attemptAt;
+    booking.meetRetryCount = (booking.meetRetryCount || 0) + 1;
+    booking.updatedAt = attemptAt;
+    sessionDoc.markModified('bookings');
+    await sessionDoc.save();
+
+    try {
+      const hasGoogleAccess = await this.googleCalendarService.hasValidAccess(creatorId);
+      if (!hasGoogleAccess) {
+        booking.meetStatus = 'failed';
+        booking.meetFailureReason = 'auth_expired:creator_google_calendar_not_connected';
+        booking.updatedAt = new Date();
+        sessionDoc.markModified('bookings');
+        await sessionDoc.save();
+        return { success: false, meetStatus: 'failed', errorCategory: 'auth_expired', errorDetails: 'Creator Google Calendar not connected' };
+      }
+
+      const participant = await this.userModel.findById(participantId).select('email name');
+      if (!participant?.email) {
+        booking.meetStatus = 'failed';
+        booking.meetFailureReason = 'participant_email_missing';
+        booking.updatedAt = new Date();
+        sessionDoc.markModified('bookings');
+        await sessionDoc.save();
+        return { success: false, meetStatus: 'failed', errorCategory: 'participant_email_missing', errorDetails: 'Participant email not found' };
+      }
+
+      const scheduledAt = new Date(booking.scheduledAt);
+      const endTime = new Date(scheduledAt.getTime() + (sessionDoc.duration || 60) * 60 * 1000);
+
+      const result = await this.googleCalendarService.createCalendarEventWithMeet(
+        creatorId,
+        sessionDoc.id,
+        participant.email,
+        scheduledAt,
+        endTime,
+        sessionDoc.title,
+        sessionDoc.description
+      );
+
+      booking.meetingUrl = result.meetLink;
+      booking.googleEventId = result.eventId;
+      booking.meetStatus = 'created';
+      booking.meetFailureReason = undefined;
+      booking.updatedAt = new Date();
+      sessionDoc.markModified('bookings');
+      await sessionDoc.save();
+
+      this.logger.log(`[provisionMeetForBooking] Meet created for booking ${bookingId} (${source})`);
+      return {
+        success: true,
+        meetingUrl: result.meetLink,
+        googleEventId: result.eventId,
+        meetStatus: 'created',
+      };
+    } catch (error: any) {
+      const parsed = this.parseGoogleFailure(error);
+      booking.meetStatus = 'failed';
+      booking.meetFailureReason = `${parsed.category}:${parsed.details}`;
+      booking.updatedAt = new Date();
+      sessionDoc.markModified('bookings');
+      await sessionDoc.save();
+      this.logger.warn(`[provisionMeetForBooking] Failed for booking ${bookingId}: ${parsed.category} - ${parsed.details}`);
+      return {
+        success: false,
+        meetStatus: 'failed',
+        errorCategory: parsed.category,
+        errorDetails: parsed.details,
+      };
+    }
   }
 
   /**
@@ -460,7 +611,10 @@ export class SessionService {
    * Réserver une session
    */
   async bookSession(sessionId: string, bookSessionDto: BookSessionDto, userId: string, promoCode?: string, session: any = null, initialStatus: 'pending' | 'confirmed' = 'pending'): Promise<SessionResponseDto> {
-    const sessionDoc = await this.sessionModel.findOne({ id: sessionId }).session(session);
+    let sessionDoc = await this.sessionModel.findOne({ id: sessionId }).session(session);
+    if (!sessionDoc && Types.ObjectId.isValid(sessionId)) {
+      sessionDoc = await this.sessionModel.findById(sessionId).session(session);
+    }
     if (!sessionDoc) {
       throw new NotFoundException('Session non trouvée');
     }
@@ -475,7 +629,14 @@ export class SessionService {
       throw new BadRequestException('Vous ne pouvez pas réserver votre propre session');
     }
 
+    if (!bookSessionDto?.scheduledAt) {
+      throw new BadRequestException('La date de la session est obligatoire');
+    }
+
     const scheduledAt = new Date(bookSessionDto.scheduledAt);
+    if (Number.isNaN(scheduledAt.getTime())) {
+      throw new BadRequestException('Date de session invalide');
+    }
 
     // Vérifier que la date est dans le futur
     if (scheduledAt <= new Date()) {
@@ -502,41 +663,13 @@ export class SessionService {
       createdAt: new Date(),
       updatedAt: new Date(),
       meetingUrl: undefined as string | undefined,
-      googleEventId: undefined as string | undefined
+      googleEventId: undefined as string | undefined,
+      meetStatus: (initialStatus === 'confirmed' ? 'pending' : 'not_required') as MeetStatus,
+      meetFailureReason: undefined as string | undefined,
+      meetLastAttemptAt: undefined as Date | undefined,
+      meetRetryCount: 0,
+      meetProvisioningSource: (initialStatus === 'confirmed' ? 'book_session' : undefined) as MeetProvisioningSource | undefined,
     };
-
-    // If confirmed (e.g. paid), try to create Google Meet link
-    if (initialStatus === 'confirmed') {
-      try {
-        const creatorId = sessionDoc.creatorId.toString();
-        const hasGoogleAccess = await this.googleCalendarService.hasValidAccess(creatorId);
-        
-        if (hasGoogleAccess) {
-          const participant = await this.userModel.findById(userId).select('email name');
-          if (participant?.email) {
-            const endTime = new Date(scheduledAt.getTime() + (sessionDoc.duration || 60) * 60 * 1000);
-            
-            this.logger.log(`[bookSession] Creating Google Meet for confirmed booking`);
-            const result = await this.googleCalendarService.createCalendarEventWithMeet(
-              creatorId,
-              sessionDoc.id,
-              participant.email,
-              scheduledAt,
-              endTime,
-              sessionDoc.title,
-              sessionDoc.description
-            );
-            
-            booking.meetingUrl = result.meetLink;
-            booking.googleEventId = result.eventId;
-            this.logger.log(`[bookSession] Google Meet created: ${result.meetLink}`);
-          }
-        }
-      } catch (error: any) {
-        this.logger.warn(`[bookSession] Failed to create Google Meet: ${error.message}`);
-        // Continue without Meet link
-      }
-    }
 
     sessionDoc.addBooking(booking as any);
     // Si la session est payante, appliquer promo puis créer une commande avec calcul des frais
@@ -582,6 +715,18 @@ export class SessionService {
     }
     await sessionDoc.save({ session });
 
+    if (initialStatus === 'confirmed') {
+      await this.provisionMeetForBooking({
+        sessionDoc,
+        bookingId: booking.id,
+        creatorId: sessionDoc.creatorId.toString(),
+        participantId: userId,
+        source: 'book_session',
+      });
+    }
+
+    const storedBooking = this.getBookingById(sessionDoc, booking.id);
+
     // Send email notifications if confirmed
     if (initialStatus === 'confirmed') {
       try {
@@ -595,9 +740,9 @@ export class SessionService {
             creatorEmail: creator.email,
             participantName: participant.name || 'Participant',
             participantEmail: participant.email,
-            scheduledAt: booking.scheduledAt,
+            scheduledAt: storedBooking?.scheduledAt || booking.scheduledAt,
             duration: sessionDoc.duration || 60,
-            meetingUrl: booking.meetingUrl,
+            meetingUrl: storedBooking?.meetingUrl,
             bookingId: booking.id,
             sessionId: sessionDoc.id,
           };
@@ -637,47 +782,13 @@ export class SessionService {
       throw new BadRequestException('Cette réservation ne peut pas être confirmée');
     }
 
-    // Try to create Google Meet link if creator has Google Calendar connected
-    let meetingUrl = confirmBookingDto.meetingUrl;
-    let googleEventId: string | undefined;
-    
-    if (!meetingUrl) {
-      try {
-        const hasGoogleAccess = await this.googleCalendarService.hasValidAccess(userId);
-        if (hasGoogleAccess) {
-          // Get participant email
-          const participant = await this.userModel.findById(booking.userId).select('email name');
-          if (participant?.email) {
-            const scheduledAt = new Date(booking.scheduledAt);
-            const endTime = new Date(scheduledAt.getTime() + (session.duration || 60) * 60 * 1000);
-            
-            this.logger.log(`[confirmBooking] Creating Google Meet for booking ${bookingId}`);
-            const result = await this.googleCalendarService.createCalendarEventWithMeet(
-              userId,
-              session.id,
-              participant.email,
-              scheduledAt,
-              endTime,
-              session.title,
-              session.description
-            );
-            
-            meetingUrl = result.meetLink;
-            googleEventId = result.eventId;
-            this.logger.log(`[confirmBooking] Google Meet created: ${meetingUrl}`);
-          }
-        }
-      } catch (error: any) {
-        this.logger.warn(`[confirmBooking] Failed to create Google Meet: ${error.message}`);
-        // Continue without Meet link - don't fail the confirmation
-      }
-    }
-
     // Mettre à jour la réservation
     booking.status = 'confirmed';
-    booking.meetingUrl = meetingUrl;
-    if (googleEventId) {
-      (booking as any).googleEventId = googleEventId;
+    booking.meetStatus = confirmBookingDto.meetingUrl ? 'created' : 'pending';
+    booking.meetProvisioningSource = 'confirm_booking';
+    booking.meetFailureReason = undefined;
+    if (confirmBookingDto.meetingUrl) {
+      booking.meetingUrl = confirmBookingDto.meetingUrl;
     }
     if (confirmBookingDto.notes) {
       booking.notes = confirmBookingDto.notes;
@@ -686,6 +797,18 @@ export class SessionService {
 
     session.markModified('bookings');
     await session.save();
+
+    if (!confirmBookingDto.meetingUrl) {
+      await this.provisionMeetForBooking({
+        sessionDoc: session,
+        bookingId,
+        creatorId: userId,
+        participantId: booking.userId.toString(),
+        source: 'confirm_booking',
+      });
+    }
+
+    const refreshedBooking = this.getBookingById(session, bookingId);
 
     // Send confirmation email to participant
     try {
@@ -699,9 +822,9 @@ export class SessionService {
           creatorEmail: creator.email,
           sessionTitle: session.title,
           sessionDescription: session.description,
-          scheduledAt: booking.scheduledAt,
+          scheduledAt: refreshedBooking?.scheduledAt || booking.scheduledAt,
           duration: session.duration || 60,
-          meetingUrl: meetingUrl,
+          meetingUrl: refreshedBooking?.meetingUrl || confirmBookingDto.meetingUrl,
           bookingId: bookingId,
           sessionId: session.id,
         });
@@ -757,7 +880,13 @@ export class SessionService {
   /**
    * Create Google Meet link for an existing booking
    */
-  async createMeetLinkForBooking(bookingId: string, userId: string): Promise<{ meetingUrl: string; googleEventId: string }> {
+  async createMeetLinkForBooking(bookingId: string, userId: string): Promise<{
+    bookingId: string;
+    meetingUrl?: string;
+    googleEventId?: string;
+    meetStatus: MeetStatus;
+    meetFailureReason?: string;
+  }> {
     this.logger.debug(`[createMeetLinkForBooking] Looking for booking: ${bookingId}`);
     const session = await this.sessionModel.findOne({ 'bookings.id': bookingId });
     if (!session) {
@@ -783,49 +912,142 @@ export class SessionService {
       throw new NotFoundException('Booking not found');
     }
 
-    // Check if booking already has a Meet link
-    if (booking.meetingUrl) {
-      throw new BadRequestException('This booking already has a Meet link');
+    const result = await this.provisionMeetForBooking({
+      sessionDoc: session,
+      bookingId,
+      creatorId: userId,
+      participantId: booking.userId.toString(),
+      source: 'manual',
+      force: true,
+    });
+
+    const updatedBooking = this.getBookingById(session, bookingId);
+    return {
+      bookingId,
+      meetingUrl: updatedBooking?.meetingUrl || result.meetingUrl,
+      googleEventId: updatedBooking?.googleEventId || result.googleEventId,
+      meetStatus: (updatedBooking?.meetStatus || result.meetStatus || 'failed') as MeetStatus,
+      meetFailureReason: updatedBooking?.meetFailureReason,
+    };
+  }
+
+  async getMeetStatusForBooking(
+    bookingId: string,
+    userId: string,
+  ): Promise<{
+    bookingId: string;
+    sessionId: string;
+    status: string;
+    meetingUrl?: string;
+    googleEventId?: string;
+    meetStatus: MeetStatus;
+    meetFailureReason?: string;
+    meetRetryCount?: number;
+    meetLastAttemptAt?: string;
+  }> {
+    const session = await this.sessionModel.findOne({ 'bookings.id': bookingId });
+    if (!session) throw new NotFoundException('Booking not found');
+
+    const booking = session.getBooking(bookingId);
+    if (!booking) throw new NotFoundException('Booking not found');
+
+    const isCreator = session.creatorId.toString() === userId.toString();
+    const isParticipant = booking.userId.toString() === userId.toString();
+    if (!isCreator && !isParticipant) {
+      throw new ForbiddenException('Access denied');
     }
 
-    // Check if creator has Google Calendar connected
-    const hasGoogleAccess = await this.googleCalendarService.hasValidAccess(userId);
-    if (!hasGoogleAccess) {
-      throw new BadRequestException('Please connect your Google Calendar first');
+    return {
+      bookingId,
+      sessionId: session.id,
+      status: booking.status,
+      meetingUrl: booking.meetingUrl,
+      googleEventId: (booking as any).googleEventId,
+      meetStatus: (booking as any).meetStatus || (booking.meetingUrl ? 'created' : 'not_required'),
+      meetFailureReason: (booking as any).meetFailureReason,
+      meetRetryCount: (booking as any).meetRetryCount || 0,
+      meetLastAttemptAt: (booking as any).meetLastAttemptAt
+        ? new Date((booking as any).meetLastAttemptAt).toISOString()
+        : undefined,
+    };
+  }
+
+  async retryPendingMeetProvisioning(creatorId?: string): Promise<{ processed: number; succeeded: number; failed: number; skipped: number }> {
+    const query: any = { 'bookings.status': 'confirmed' };
+    if (creatorId) {
+      query.creatorId = new Types.ObjectId(creatorId);
     }
 
-    // Get participant email
-    const participant = await this.userModel.findById(booking.userId).select('email name');
-    if (!participant?.email) {
-      throw new BadRequestException('Participant email not found');
+    const sessions = await this.sessionModel
+      .find(query)
+      .select('id title description duration creatorId bookings')
+      .exec();
+
+    let processed = 0;
+    let succeeded = 0;
+    let failed = 0;
+    let skipped = 0;
+
+    for (const session of sessions) {
+      for (const booking of session.bookings || []) {
+        if (!booking || booking.status !== 'confirmed') continue;
+        if (booking.meetingUrl) continue;
+
+        const meetStatus = (booking as any).meetStatus as MeetStatus | undefined;
+        const retryCount = Number((booking as any).meetRetryCount || 0);
+        const lastAttemptAt = (booking as any).meetLastAttemptAt ? new Date((booking as any).meetLastAttemptAt) : null;
+        const eligibleStatus = !meetStatus || meetStatus === 'pending' || meetStatus === 'failed';
+        if (!eligibleStatus) {
+          skipped++;
+          continue;
+        }
+
+        if (retryCount >= 10) {
+          skipped++;
+          continue;
+        }
+
+        if (lastAttemptAt) {
+          const delay = this.getRetryDelayMs(retryCount || 1);
+          if (Date.now() - lastAttemptAt.getTime() < delay) {
+            skipped++;
+            continue;
+          }
+        }
+
+        processed++;
+        const result = await this.provisionMeetForBooking({
+          sessionDoc: session,
+          bookingId: booking.id,
+          creatorId: session.creatorId.toString(),
+          participantId: booking.userId.toString(),
+          source: 'worker',
+          force: true,
+        });
+
+        if (result.success) {
+          succeeded++;
+        } else {
+          failed++;
+        }
+      }
     }
 
-    const scheduledAt = new Date(booking.scheduledAt);
-    const endTime = new Date(scheduledAt.getTime() + (session.duration || 60) * 60 * 1000);
+    return { processed, succeeded, failed, skipped };
+  }
 
-    this.logger.log(`[createMeetLinkForBooking] Creating Google Meet for booking ${bookingId}`);
-    
-    const result = await this.googleCalendarService.createCalendarEventWithMeet(
-      userId,
-      session.id,
-      participant.email,
-      scheduledAt,
-      endTime,
-      session.title,
-      session.description
-    );
-
-    // Update booking with Meet link
-    booking.meetingUrl = result.meetLink;
-    (booking as any).googleEventId = result.eventId;
-    booking.updatedAt = new Date();
-
-    session.markModified('bookings');
-    await session.save();
-
-    this.logger.log(`[createMeetLinkForBooking] Google Meet created: ${result.meetLink}`);
-
-    return { meetingUrl: result.meetLink, googleEventId: result.eventId };
+  @Cron(CronExpression.EVERY_5_MINUTES)
+  async runMeetProvisioningRetryWorker() {
+    try {
+      const result = await this.retryPendingMeetProvisioning();
+      if (result.processed > 0) {
+        this.logger.log(
+          `[MeetRetryWorker] processed=${result.processed}, succeeded=${result.succeeded}, failed=${result.failed}, skipped=${result.skipped}`,
+        );
+      }
+    } catch (error: any) {
+      this.logger.error(`[MeetRetryWorker] Failed: ${error.message}`, error.stack);
+    }
   }
 
   /**
@@ -891,6 +1113,9 @@ export class SessionService {
       scheduledAt: Date;
       status: 'pending' | 'confirmed' | 'completed' | 'cancelled';
       meetingUrl?: string;
+      googleEventId?: string;
+      meetStatus?: MeetStatus;
+      meetFailureReason?: string;
       notes?: string;
       createdAt: Date;
       updatedAt: Date;
@@ -965,6 +1190,9 @@ export class SessionService {
         scheduledAt: booking.scheduledAt.toISOString(),
         status: booking.status,
         meetingUrl: booking.meetingUrl,
+        googleEventId: (booking as any).googleEventId,
+        meetStatus: (booking as any).meetStatus || (booking.meetingUrl ? 'created' : 'not_required'),
+        meetFailureReason: (booking as any).meetFailureReason,
         notes: booking.notes,
         createdAt: booking.createdAt.toISOString(),
         updatedAt: booking.updatedAt.toISOString()
@@ -1026,6 +1254,9 @@ export class SessionService {
             scheduledAt: slotStartTime ? new Date(slotStartTime) : new Date(),
             status: 'confirmed' as const,
             notes: notes || undefined,
+            meetStatus: 'pending' as MeetStatus,
+            meetRetryCount: 0,
+            meetProvisioningSource: 'worker' as MeetProvisioningSource,
             createdAt: new Date(),
             updatedAt: new Date(),
           };
@@ -1037,6 +1268,14 @@ export class SessionService {
           session.markModified('bookings');
           
           await session.save();
+          await this.provisionMeetForBooking({
+            sessionDoc: session,
+            bookingId,
+            creatorId: session.creatorId.toString(),
+            participantId: userId,
+            source: 'worker',
+            force: true,
+          });
           synced++;
           console.log(`[syncBookingsFromPaidOrders] Created booking ${bookingId} for session ${session.id}, userId: ${userId}`);
           console.log(`[syncBookingsFromPaidOrders] Session now has ${session.bookings.length} bookings`);
@@ -1145,6 +1384,8 @@ export class SessionService {
       status: 'pending' | 'confirmed' | 'completed' | 'cancelled';
       meetingUrl?: string;
       googleEventId?: string;
+      meetStatus?: MeetStatus;
+      meetFailureReason?: string;
       notes?: string;
       createdAt: Date;
       updatedAt: Date;
@@ -1184,6 +1425,8 @@ export class SessionService {
           status: booking.status,
           meetingUrl: booking.meetingUrl,
           googleEventId: (booking as any).googleEventId,
+          meetStatus: (booking as any).meetStatus || (booking.meetingUrl ? 'created' : 'not_required'),
+          meetFailureReason: (booking as any).meetFailureReason,
           notes: booking.notes,
           createdAt: booking.createdAt,
           updatedAt: booking.updatedAt,
@@ -1269,6 +1512,8 @@ export class SessionService {
           status: booking.status,
           meetingUrl: booking.meetingUrl,
           googleEventId: booking.googleEventId,
+          meetStatus: booking.meetStatus,
+          meetFailureReason: booking.meetFailureReason,
           notes: booking.notes,
           createdAt: booking.createdAt?.toISOString() || new Date().toISOString(),
           updatedAt: booking.updatedAt?.toISOString() || new Date().toISOString()
@@ -1456,40 +1701,14 @@ export class SessionService {
       scheduledAt: slot.startTime,
       status: 'confirmed' as const,
       notes: bookSlotDto.notes,
+      meetStatus: 'pending' as MeetStatus,
+      meetRetryCount: 0,
+      meetProvisioningSource: 'book_session' as MeetProvisioningSource,
       createdAt: new Date(),
       updatedAt: new Date()
     };
 
     session.addBooking(booking);
-
-    // Try to create Google Meet link if creator has Google Calendar connected
-    try {
-      const attendee = await this.userModel.findById(userId).select('email');
-      const creator = await this.userModel.findById(session.creatorId).select('email');
-
-      if (attendee?.email && creator?.email) {
-        const endTime = new Date(slot.startTime.getTime() + session.duration * 60000);
-
-        const { meetLink } = await this.googleCalendarService.createCalendarEventWithMeet(
-          session.creatorId.toString(),
-          sessionId,
-          attendee.email,
-          slot.startTime,
-          endTime,
-          session.title,
-          session.description
-        );
-
-        // Update the booking with the Meet link
-        const bookingIndex = session.bookings.findIndex(b => b.id === booking.id);
-        if (bookingIndex !== -1) {
-          session.bookings[bookingIndex].meetingUrl = meetLink;
-        }
-      }
-    } catch (error) {
-      // Log error but don't fail the booking if Google Calendar fails
-      console.warn('Failed to create Google Meet link:', error.message);
-    }
 
     // Si la session est payante, créer une commande
     if (session.price && session.price > 0) {
@@ -1509,6 +1728,13 @@ export class SessionService {
     }
 
     await session.save();
+    await this.provisionMeetForBooking({
+      sessionDoc: session,
+      bookingId: booking.id,
+      creatorId: session.creatorId.toString(),
+      participantId: userId,
+      source: 'book_session',
+    });
 
     // Send email notifications
     try {
@@ -1625,6 +1851,9 @@ export class SessionService {
         scheduledAt: booking.scheduledAt.toISOString(),
         status: booking.status,
         meetingUrl: booking.meetingUrl,
+        googleEventId: (booking as any).googleEventId,
+        meetStatus: (booking as any).meetStatus || (booking.meetingUrl ? 'created' : 'not_required'),
+        meetFailureReason: (booking as any).meetFailureReason,
         notes: booking.notes,
         createdAt: booking.createdAt.toISOString(),
         updatedAt: booking.updatedAt.toISOString()

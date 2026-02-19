@@ -679,10 +679,10 @@ export class FinancialManagementService {
   /**
    * Get payout details by ID
    */
-  async getPayoutById(payoutId: string): Promise<Payout> {
+  async getPayoutById(payoutId: string): Promise<any> {
     const payout = await this.payoutModel
       .findById(payoutId)
-      .populate('creatorId', 'name email')
+      .populate('creatorId', 'name email bankDetails')
       .populate('communityId', 'name slug')
       .lean()
       .exec();
@@ -691,7 +691,42 @@ export class FinancialManagementService {
       throw new NotFoundException('Payout not found');
     }
 
-    return payout;
+    const creator = payout.creatorId as any;
+    const community = payout.communityId as any;
+    const snapshotBankAccount = (payout as any)?.metadata?.bankAccount || {};
+    const creatorBankDetails = creator?.bankDetails || {};
+
+    const bankCredentials = payout.method === PayoutMethod.BANK_TRANSFER
+      ? {
+          rib: snapshotBankAccount?.rib || creatorBankDetails?.rib || null,
+          bankName: snapshotBankAccount?.bankName || creatorBankDetails?.bankName || null,
+          ownerName: snapshotBankAccount?.ownerName || creatorBankDetails?.ownerName || null,
+          countryCode: snapshotBankAccount?.countryCode || 'TN',
+        }
+      : null;
+
+    return {
+      ...payout,
+      creator: creator
+        ? {
+            _id: creator._id?.toString?.() || creator._id,
+            username: creator.name || 'N/A',
+            email: creator.email || '',
+          }
+        : null,
+      community: community
+        ? {
+            _id: community._id?.toString?.() || community._id,
+            name: community.name || 'N/A',
+            slug: community.slug || '',
+          }
+        : null,
+      initiatedAt: (payout as any).requestedAt || (payout as any).createdAt,
+      transactionReference: (payout as any).reference || null,
+      notes: (payout as any).description || null,
+      bankCredentials,
+      bankAccount: bankCredentials,
+    };
   }
 
   /**

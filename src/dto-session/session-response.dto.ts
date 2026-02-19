@@ -48,6 +48,15 @@ export class SessionBookingResponseDto {
   @ApiPropertyOptional({ description: 'URL de la réunion', example: 'https://meet.google.com/abc-def-ghi' })
   meetingUrl?: string;
 
+  @ApiPropertyOptional({ description: 'ID de l\'événement Google Calendar' })
+  googleEventId?: string;
+
+  @ApiPropertyOptional({ description: 'Statut de provisionnement Meet', enum: ['not_required', 'pending', 'created', 'failed'] })
+  meetStatus?: 'not_required' | 'pending' | 'created' | 'failed';
+
+  @ApiPropertyOptional({ description: 'Raison du dernier échec Meet' })
+  meetFailureReason?: string;
+
   @ApiPropertyOptional({ description: 'Notes de la réservation' })
   notes?: string;
 
@@ -220,6 +229,12 @@ export class CreatorBookingResponseDto {
 
   @ApiPropertyOptional({ description: 'ID de l\'événement Google Calendar' })
   googleEventId?: string;
+
+  @ApiPropertyOptional({ description: 'Statut de provisionnement Meet', enum: ['not_required', 'pending', 'created', 'failed'] })
+  meetStatus?: 'not_required' | 'pending' | 'created' | 'failed';
+
+  @ApiPropertyOptional({ description: 'Raison du dernier échec Meet' })
+  meetFailureReason?: string;
 
   @ApiPropertyOptional({ description: 'Notes de la réservation' })
   notes?: string;

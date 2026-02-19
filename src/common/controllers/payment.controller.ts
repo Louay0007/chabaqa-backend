@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Query, Get, BadRequestException, UnauthorizedException, Req, UseGuards, UseInterceptors, UploadedFile, Param, Logger } from '@nestjs/common';
+import { Controller, Post, Body, Query, Get, BadRequestException, UnauthorizedException, ForbiddenException, Req, UseGuards, UseInterceptors, UploadedFile, Param, Logger } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import { extname, join } from 'path';
@@ -1098,6 +1098,9 @@ export class PaymentController {
     const userId = (req.user?._id || req.user?.sub || '').toString();
     const sessionDoc = await this.sessionModel.findOne({ id: sessionId }) || await this.sessionModel.findById(sessionId);
     if (!sessionDoc) throw new BadRequestException('Session not found');
+    if (sessionDoc.creatorId?.toString() === userId) {
+      throw new BadRequestException('Vous ne pouvez pas réserver votre propre session');
+    }
 
     const price = sessionDoc.price || 0;
     if (price <= 0) throw new BadRequestException('Free session');
@@ -1129,7 +1132,11 @@ export class PaymentController {
       promoCode: appliedCode,
       discountDT,
       status: 'pending',
-      metadata: { bookingDto }
+      metadata: {
+        bookingDto,
+        contentId: sessionId,
+        slotId: bookingDto?.slotId,
+      }
     });
 
     const successUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-success?scope=session&id=${sessionId}&provider=stripe&sessionId={CHECKOUT_SESSION_ID}`;
@@ -1243,7 +1250,51 @@ export class PaymentController {
 
 
 
-  private async grantAccess(order: any, session: any = null) {
+  private parseBookingDto(raw: any): any {
+    if (!raw) return {};
+    if (typeof raw === 'string') {
+      try {
+        const parsed = JSON.parse(raw);
+        return parsed && typeof parsed === 'object' ? parsed : {};
+      } catch {
+        return {};
+      }
+    }
+    return typeof raw === 'object' ? raw : {};
+  }
+
+  private getErrorMessage(error: any): string {
+    const response = error?.getResponse?.();
+    if (typeof response === 'string') return response;
+    if (Array.isArray(response?.message)) return response.message.join(', ');
+    if (typeof response?.message === 'string') return response.message;
+    if (typeof error?.message === 'string') return error.message;
+    return 'Unknown error';
+  }
+
+  private isMissingScheduledAtError(error: any): boolean {
+    const message = this.getErrorMessage(error).toLowerCase();
+    return message.includes('la date de la session est obligatoire');
+  }
+
+  private async findSessionByAnyId(sessionId: string, dbSession: any = null): Promise<SessionDocument | null> {
+    let sessionDoc = await this.sessionModel.findOne({ id: sessionId }).session(dbSession);
+    if (!sessionDoc && Types.ObjectId.isValid(sessionId)) {
+      sessionDoc = await this.sessionModel.findById(sessionId).session(dbSession);
+    }
+    return sessionDoc;
+  }
+
+  private async resolveScheduledAtFromSlot(sessionId: string, slotId: string, dbSession: any = null): Promise<string | undefined> {
+    if (!slotId) return undefined;
+    const sessionDoc = await this.findSessionByAnyId(sessionId, dbSession);
+    if (!sessionDoc) return undefined;
+    const slot = (sessionDoc.availableSlots || []).find((s: any) => String(s?.id) === String(slotId));
+    if (!slot?.startTime) return undefined;
+    return new Date(slot.startTime).toISOString();
+  }
+
+  private async grantAccess(order: any, session: any = null, stripeSessionMetadata?: Record<string, string>) {
     this.logger.log(`Granting access for order ${order._id} (Type: ${order.contentType})`);
 
     switch (order.contentType) {
@@ -1275,9 +1326,32 @@ export class PaymentController {
         break;
 
       case TrackableContentType.SESSION:
-        // metadata might contain booking details, or we use a standard booking
-        const bookingDto = order.metadata?.bookingDto || {};
-        await this.sessionService.bookSession(order.contentId, bookingDto, order.buyerId.toString(), order.promoCode, session, 'confirmed');
+        if (order.creatorId?.toString() === order.buyerId?.toString()) {
+          this.logger.warn(`Skipping self-booking for session order ${order._id}`);
+          break;
+        }
+        const bookingSessionId = order.metadata?.contentId || stripeSessionMetadata?.contentId || order.contentId;
+        const orderBookingDto = this.parseBookingDto(order.metadata?.bookingDto);
+        const stripeBookingDto = this.parseBookingDto(stripeSessionMetadata?.bookingDto);
+        const bookingDto: any = {
+          ...stripeBookingDto,
+          ...orderBookingDto,
+        };
+
+        const slotId =
+          bookingDto.slotId ||
+          order.metadata?.slotId ||
+          stripeSessionMetadata?.slotId;
+
+        if (!bookingDto.scheduledAt && slotId) {
+          const scheduledAtFromSlot = await this.resolveScheduledAtFromSlot(bookingSessionId, slotId, session);
+          if (scheduledAtFromSlot) {
+            bookingDto.scheduledAt = scheduledAtFromSlot;
+            bookingDto.slotId = slotId;
+          }
+        }
+
+        await this.sessionService.bookSession(bookingSessionId, bookingDto, order.buyerId.toString(), order.promoCode, session, 'confirmed');
         break;
 
       case TrackableContentType.PRODUCT:
@@ -1318,13 +1392,71 @@ export class PaymentController {
     if (!order) throw new BadRequestException('Order not found');
 
     if (verify.status === 'paid' || verify.status === 'succeeded' || verify.status === 'complete') {
+      let requiresBookingAction = false;
+      let sessionContentId = order.metadata?.contentId || verify.sessionMetadata?.contentId || order.contentId;
+
       if (order.status !== 'paid') {
         await this.orderModel.db.transaction(async (session) => {
+          const nextMetadata: Record<string, any> = { ...(order.metadata || {}) };
           order.status = 'paid';
           order.paymentMethod = verify.paymentMethod?.type || 'stripe-link';
+
+          try {
+            await this.grantAccess(order, session, verify.sessionMetadata);
+            delete nextMetadata.fulfillmentStatus;
+            delete nextMetadata.fulfillmentReason;
+          } catch (error: any) {
+            if (order.contentType === TrackableContentType.SESSION && this.isMissingScheduledAtError(error)) {
+              requiresBookingAction = true;
+              nextMetadata.fulfillmentStatus = 'requires_booking';
+              nextMetadata.fulfillmentReason = 'missing_scheduledAt';
+              nextMetadata.contentId = sessionContentId;
+            } else {
+              throw error;
+            }
+          }
+
+          order.metadata = nextMetadata;
           await order.save({ session });
-          await this.grantAccess(order, session);
         });
+      }
+
+      if (order.contentType === TrackableContentType.SESSION) {
+        const metadataBookingDto = this.parseBookingDto(order.metadata?.bookingDto);
+        const hasBookingDate = Boolean(metadataBookingDto?.scheduledAt);
+        const hasPendingFlag = order.metadata?.fulfillmentStatus === 'requires_booking';
+
+        let hasExistingBooking = false;
+        const sessionDoc = await this.findSessionByAnyId(sessionContentId);
+        if (sessionDoc) {
+          hasExistingBooking = (sessionDoc.bookings || []).some(
+            (b: any) => b?.userId?.toString() === order.buyerId?.toString() && b?.status !== 'cancelled',
+          );
+        }
+
+        if (hasPendingFlag || (!hasExistingBooking && !hasBookingDate)) {
+          requiresBookingAction = true;
+          order.metadata = {
+            ...(order.metadata || {}),
+            fulfillmentStatus: 'requires_booking',
+            fulfillmentReason: 'missing_scheduledAt',
+            contentId: sessionContentId,
+          };
+          await order.save();
+        }
+      }
+
+      if (requiresBookingAction) {
+        return {
+          status: 'paid_action_required',
+          action: 'choose_session_slot',
+          message: 'Payment received. Please choose a session slot to finalize your booking.',
+          orderId: order._id,
+          sessionContentId,
+          paymentMethod: verify.paymentMethod,
+          customerId: verify.customerId,
+          ...(await this.enrichOrderDetails(order)),
+        };
       }
 
       return {
@@ -1339,6 +1471,96 @@ export class PaymentController {
     order.status = 'pending';
     await order.save();
     return { status: verify.status };
+  }
+
+  @Post('session/finalize-booking')
+  @ApiOperation({ summary: 'Finalize booking for a paid session order' })
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  async finalizeSessionBooking(
+    @Req() req: any,
+    @Body('orderId') orderId: string,
+    @Body('scheduledAt') scheduledAt?: string,
+    @Body('notes') notes?: string,
+    @Body('slotId') slotId?: string,
+  ) {
+    const userId = (req.user?._id || req.user?.sub || '').toString();
+    if (!orderId) throw new BadRequestException('orderId is required');
+
+    const order = await this.orderModel.findById(orderId);
+    if (!order) throw new BadRequestException('Order not found');
+    if (order.buyerId?.toString() !== userId) {
+      throw new ForbiddenException('You are not allowed to finalize this booking');
+    }
+    if (order.contentType !== TrackableContentType.SESSION) {
+      throw new BadRequestException('Order is not a session payment');
+    }
+    if (order.status !== 'paid') {
+      throw new BadRequestException('Order must be paid before finalizing booking');
+    }
+    if (order.creatorId?.toString() === userId) {
+      throw new BadRequestException('Vous ne pouvez pas réserver votre propre session');
+    }
+
+    const bookingSessionId = order.metadata?.contentId || order.contentId;
+    const resolvedFromSlot = !scheduledAt && slotId
+      ? await this.resolveScheduledAtFromSlot(bookingSessionId, slotId)
+      : undefined;
+    const finalScheduledAt = scheduledAt || resolvedFromSlot;
+
+    if (!finalScheduledAt) {
+      throw new BadRequestException('La date de la session est obligatoire');
+    }
+
+    const scheduledDate = new Date(finalScheduledAt);
+    if (Number.isNaN(scheduledDate.getTime())) {
+      throw new BadRequestException('Date de session invalide');
+    }
+
+    const sessionDoc = await this.findSessionByAnyId(bookingSessionId);
+    if (!sessionDoc) throw new BadRequestException('Session non trouvée');
+
+    const existingBooking = (sessionDoc.bookings || []).find((booking: any) =>
+      booking?.userId?.toString() === userId &&
+      booking?.status !== 'cancelled' &&
+      booking?.scheduledAt &&
+      new Date(booking.scheduledAt).getTime() === scheduledDate.getTime(),
+    );
+
+    if (!existingBooking) {
+      await this.sessionService.bookSession(
+        bookingSessionId,
+        { scheduledAt: finalScheduledAt, notes } as any,
+        userId,
+        order.promoCode || undefined,
+        null,
+        'confirmed',
+      );
+    }
+
+    const nextMetadata: Record<string, any> = { ...(order.metadata || {}) };
+    delete nextMetadata.fulfillmentStatus;
+    delete nextMetadata.fulfillmentReason;
+    nextMetadata.contentId = bookingSessionId;
+    nextMetadata.slotId = slotId || nextMetadata.slotId;
+    nextMetadata.bookingDto = {
+      ...(this.parseBookingDto(nextMetadata.bookingDto)),
+      scheduledAt: finalScheduledAt,
+      notes: notes || this.parseBookingDto(nextMetadata.bookingDto)?.notes,
+      slotId: slotId || this.parseBookingDto(nextMetadata.bookingDto)?.slotId,
+    };
+    nextMetadata.finalizedAt = new Date().toISOString();
+    order.metadata = nextMetadata;
+    await order.save();
+
+    return {
+      status: 'paid',
+      bookingFinalized: true,
+      existingBooking: Boolean(existingBooking),
+      orderId: order._id,
+      sessionContentId: bookingSessionId,
+      scheduledAt: finalScheduledAt,
+    };
   }
 
   @Post('stripe-link/webhook')

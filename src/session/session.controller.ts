@@ -189,10 +189,25 @@ export class SessionController {
   async createMeetLink(
     @Param('bookingId') bookingId: string,
     @Request() req: any
-  ): Promise<{ meetingUrl: string; googleEventId: string }> {
+  ): Promise<{ bookingId: string; meetingUrl?: string; googleEventId?: string; meetStatus: 'not_required' | 'pending' | 'created' | 'failed'; meetFailureReason?: string }> {
     const userId = req.user._id || req.user.userId || req.user.sub || req.user.id;
     console.log(`[createMeetLink] bookingId: ${bookingId}, userId: ${userId}`);
     return this.sessionService.createMeetLinkForBooking(bookingId, userId);
+  }
+
+  @Get('bookings/:bookingId/meet-status')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get Meet provisioning status for a booking' })
+  @ApiResponse({ status: 200, description: 'Meet provisioning status retrieved' })
+  @ApiResponse({ status: 403, description: 'Access denied' })
+  @ApiResponse({ status: 404, description: 'Booking not found' })
+  async getMeetStatus(
+    @Param('bookingId') bookingId: string,
+    @Request() req: any
+  ): Promise<any> {
+    const userId = req.user._id || req.user.userId || req.user.sub || req.user.id;
+    return this.sessionService.getMeetStatusForBooking(bookingId, userId);
   }
 
   @Patch('bookings/:bookingId/complete')
@@ -242,6 +257,20 @@ export class SessionController {
       success: true,
       message: `Cleaned up ${result.duplicatesRemoved} duplicate booking(s) from ${result.sessionsProcessed} session(s)`,
       ...result
+    };
+  }
+
+  @Post('bookings/retry-meet')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Retry pending/failed Meet provisioning for current creator' })
+  @ApiResponse({ status: 200, description: 'Retry completed' })
+  async retryMeetProvisioning(@Request() req: any) {
+    const userId = req.user._id || req.user.userId || req.user.sub || req.user.id;
+    const result = await this.sessionService.retryPendingMeetProvisioning(userId);
+    return {
+      success: true,
+      ...result,
     };
   }
 
