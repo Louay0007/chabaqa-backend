@@ -1125,8 +1125,10 @@ export class SessionService {
       sessionCurrency?: string;
       sessionDuration?: number;
       amountPaid?: number;
+      creatorId?: string;
       creatorName: string;
       creatorAvatar?: string;
+      communityId?: string;
     }
 
     const allBookings: BookingWithSession[] = [];
@@ -1163,7 +1165,9 @@ export class SessionService {
           sessionCurrency: session.currency,
           sessionDuration: session.duration,
           creatorName: creator?.name || 'Unknown',
-          creatorAvatar: creatorAvatar
+          creatorAvatar: creatorAvatar,
+          creatorId: String(session.creatorId || ''),
+          communityId: String(session.communityId || ''),
         });
       }
     }
@@ -1182,8 +1186,10 @@ export class SessionService {
         sessionCurrency: booking.sessionCurrency,
         sessionDuration: booking.sessionDuration,
         amountPaid: booking.amountPaid ?? booking.sessionPrice, // Include amountPaid or fallback to session price
+        creatorId: booking.creatorId,
         creatorName: booking.creatorName,
         creatorAvatar: booking.creatorAvatar,
+        communityId: booking.communityId,
         userId: booking.userId.toString(),
         userName: 'Current User', // L'utilisateur actuel
         userAvatar: undefined,

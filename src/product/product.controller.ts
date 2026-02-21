@@ -31,6 +31,16 @@ import { HttpCacheInterceptor } from '../common/interceptors/cache.interceptor';
 export class ProductController {
   constructor(private readonly productService: ProductService) { }
 
+  private getRequestUserId(req: any): string {
+    return (
+      req?.user?._id ||
+      req?.user?.userId ||
+      req?.user?.sub ||
+      req?.user?.id ||
+      ''
+    ).toString();
+  }
+
   @Post()
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
@@ -41,7 +51,7 @@ export class ProductController {
   @ApiResponse({ status: 403, description: 'Pas créateur de communauté' })
   @ApiResponse({ status: 404, description: 'Communauté non trouvée' })
   async create(@Body() createProductDto: CreateProductDto, @Request() req): Promise<{ success: boolean; data: ProductResponseDto }> {
-    const userId = req.user._id || req.user.userId;
+    const userId = this.getRequestUserId(req);
     const product = await this.productService.create(createProductDto, userId);
     return { success: true, data: product };
   }
@@ -137,7 +147,7 @@ export class ProductController {
   async getMyPurchases(
     @Request() req
   ): Promise<{ success: boolean; products: any[] }> {
-    const products = await this.productService.getMyPurchases(req.user.userId);
+    const products = await this.productService.getMyPurchases(this.getRequestUserId(req));
     return { success: true, products };
   }
 
@@ -201,7 +211,11 @@ export class ProductController {
     @Body() updateProductDto: UpdateProductDto,
     @Request() req
   ): Promise<{ success: boolean; data: ProductResponseDto }> {
-    const product = await this.productService.update(id, updateProductDto, req.user.userId);
+    const product = await this.productService.update(
+      id,
+      updateProductDto,
+      this.getRequestUserId(req),
+    );
     return { success: true, data: product };
   }
 
@@ -214,7 +228,7 @@ export class ProductController {
   @ApiResponse({ status: 403, description: 'Pas le créateur du produit' })
   @ApiResponse({ status: 404, description: 'Produit non trouvé' })
   async remove(@Param('id') id: string, @Request() req): Promise<{ success: boolean; message: string }> {
-    const result = await this.productService.remove(id, req.user.userId);
+    const result = await this.productService.remove(id, this.getRequestUserId(req));
     return { success: true, message: result.message };
   }
 
@@ -232,7 +246,11 @@ export class ProductController {
     @Body() createVariantDto: CreateProductVariantDto,
     @Request() req
   ): Promise<{ success: boolean; data: ProductVariantResponseDto }> {
-    const variant = await this.productService.addVariant(productId, createVariantDto, req.user.userId);
+    const variant = await this.productService.addVariant(
+      productId,
+      createVariantDto,
+      this.getRequestUserId(req),
+    );
     return { success: true, data: variant };
   }
 
@@ -249,7 +267,11 @@ export class ProductController {
     @Param('variantId') variantId: string,
     @Request() req
   ): Promise<{ success: boolean; message: string }> {
-    const result = await this.productService.removeVariant(productId, variantId, req.user.userId);
+    const result = await this.productService.removeVariant(
+      productId,
+      variantId,
+      this.getRequestUserId(req),
+    );
     return { success: true, message: result.message };
   }
 
@@ -267,7 +289,11 @@ export class ProductController {
     @Body() createFileDto: CreateProductFileDto,
     @Request() req
   ): Promise<{ success: boolean; data: ProductFileResponseDto }> {
-    const file = await this.productService.addFile(productId, createFileDto, req.user.userId);
+    const file = await this.productService.addFile(
+      productId,
+      createFileDto,
+      this.getRequestUserId(req),
+    );
     return { success: true, data: file };
   }
 
@@ -284,7 +310,11 @@ export class ProductController {
     @Param('fileId') fileId: string,
     @Request() req
   ): Promise<{ success: boolean; message: string }> {
-    const result = await this.productService.removeFile(productId, fileId, req.user.userId);
+    const result = await this.productService.removeFile(
+      productId,
+      fileId,
+      this.getRequestUserId(req),
+    );
     return { success: true, message: result.message };
   }
 
@@ -302,7 +332,11 @@ export class ProductController {
     @Body('amount') amount: number,
     @Request() req
   ): Promise<{ success: boolean; message: string; newInventory: number }> {
-    const result = await this.productService.updateInventory(productId, amount, req.user.userId);
+    const result = await this.productService.updateInventory(
+      productId,
+      amount,
+      this.getRequestUserId(req),
+    );
     return { success: true, ...result };
   }
 
@@ -318,7 +352,10 @@ export class ProductController {
     @Param('id') productId: string,
     @Request() req
   ): Promise<{ success: boolean; message: string; isPublished: boolean }> {
-    const result = await this.productService.togglePublished(productId, req.user.userId);
+    const result = await this.productService.togglePublished(
+      productId,
+      this.getRequestUserId(req),
+    );
     return { success: true, ...result };
   }
 
@@ -346,7 +383,12 @@ export class ProductController {
     @Query('promoCode') promoCode: string | undefined,
     @Request() req
   ): Promise<{ success: boolean; downloadUrl: string; message: string }> {
-    const result = await this.productService.downloadFile(productId, fileId, req.user.userId, promoCode);
+    const result = await this.productService.downloadFile(
+      productId,
+      fileId,
+      this.getRequestUserId(req),
+      promoCode,
+    );
     return { success: true, ...result };
   }
 
@@ -380,7 +422,12 @@ export class ProductController {
     @Body('isActive') isActive: boolean,
     @Request() req
   ): Promise<{ success: boolean; message: string }> {
-    const result = await this.productService.updateFileStatus(productId, fileId, isActive, req.user.userId);
+    const result = await this.productService.updateFileStatus(
+      productId,
+      fileId,
+      isActive,
+      this.getRequestUserId(req),
+    );
     return { success: true, ...result };
   }
 }

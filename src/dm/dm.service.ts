@@ -1,11 +1,13 @@
-import { Injectable, BadRequestException, ForbiddenException, NotFoundException, InternalServerErrorException } from '@nestjs/common';
+import { Injectable, BadRequestException, ConflictException, ForbiddenException, NotFoundException, InternalServerErrorException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { Conversation, ConversationDocument } from '../schema/conversation.schema';
 import { Message, MessageDocument } from '../schema/message.schema';
 import { Community, CommunityDocument } from '../schema/community.schema';
 import { User } from '../schema/user.schema';
 import { Admin, AdminDocument } from '../schema/admin.schema';
+import { Session } from '../schema/session.schema';
 import { PolicyService } from '../common/services/policy.service';
 import { DmGateway } from './dm.gateway';
 import { NotificationService } from '../notification/notification.service';
@@ -18,6 +20,7 @@ export class DmService {
     @InjectModel(Community.name) private communityModel: Model<CommunityDocument>,
     @InjectModel('User') private userModel: Model<User>,
     @InjectModel(Admin.name) private adminModel: Model<AdminDocument>,
+    @InjectModel(Session.name) private sessionModel: Model<any>,
 
     private readonly policyService: PolicyService,
     private readonly dmGateway: DmGateway,
@@ -187,6 +190,162 @@ export class DmService {
     return finalConv || conv;
   }
 
+  async startSessionConversation(userId: string, bookingId: string): Promise<ConversationDocument> {
+    const normalizedBookingId = String(bookingId || '').trim();
+    if (!normalizedBookingId) {
+      throw new BadRequestException('Booking ID is required');
+    }
+
+    let uid: Types.ObjectId;
+    try {
+      uid = new Types.ObjectId(String(userId || ''));
+    } catch {
+      throw new ForbiddenException('Invalid user ID format');
+    }
+    const sessionDoc = await this.sessionModel
+      .findOne({ 'bookings.id': normalizedBookingId })
+      .select('id title duration creatorId communityId bookings')
+      .exec();
+
+    if (!sessionDoc) {
+      throw new NotFoundException('Booking not found');
+    }
+
+    const booking = (sessionDoc.bookings || []).find((b: any) => String(b?.id) === normalizedBookingId);
+    if (!booking) {
+      throw new NotFoundException('Booking not found');
+    }
+
+    if (String(booking.userId) !== uid.toString()) {
+      throw new ForbiddenException('You do not have access to this booking');
+    }
+
+    if (booking.status !== 'confirmed') {
+      throw new BadRequestException('Temporary mentor chat is only available for confirmed bookings');
+    }
+
+    let mentorId: Types.ObjectId;
+    try {
+      mentorId = new Types.ObjectId(String(sessionDoc.creatorId || ''));
+    } catch {
+      throw new BadRequestException('Session creator is invalid');
+    }
+    if (uid.equals(mentorId)) {
+      throw new BadRequestException('You cannot start a mentor chat with yourself');
+    }
+
+    const scheduledAt = new Date(booking.scheduledAt);
+    const durationMinutes = Number(sessionDoc.duration || 60);
+    const expiresAt = new Date(scheduledAt.getTime() + durationMinutes * 60 * 1000);
+
+    const existing = await this.conversationModel
+      .findOne({ type: 'SESSION_TEMP_DM', sessionBookingId: normalizedBookingId })
+      .populate('participantA', 'name firstName lastName email profile_picture photo_profil avatar photo username role')
+      .populate('participantB', 'name firstName lastName email profile_picture photo_profil avatar photo username role')
+      .populate('communityId', 'name slug logo')
+      .exec();
+
+    if (existing) {
+      const normalizedExisting = await this.enforceSessionTempLifecycle(existing);
+      if (!normalizedExisting.isOpen) {
+        throw new ConflictException('This session chat is closed because the session has finished.');
+      }
+      return normalizedExisting;
+    }
+
+    if (new Date() >= expiresAt) {
+      throw new ConflictException('This session chat is closed because the session has finished.');
+    }
+
+    const communityObjectId = Types.ObjectId.isValid(String(sessionDoc.communityId))
+      ? new Types.ObjectId(String(sessionDoc.communityId))
+      : undefined;
+
+    const conv = await this.conversationModel.create({
+      type: 'SESSION_TEMP_DM',
+      participantA: uid,
+      participantB: mentorId,
+      communityId: communityObjectId,
+      sessionId: String(sessionDoc.id || ''),
+      sessionBookingId: normalizedBookingId,
+      expiresAt,
+      isOpen: true,
+      unreadCountA: 0,
+      unreadCountB: 0,
+    });
+
+    const result = await this.conversationModel.findById(conv._id)
+      .populate('participantA', 'name firstName lastName email profile_picture photo_profil avatar photo username role')
+      .populate('participantB', 'name firstName lastName email profile_picture photo_profil avatar photo username role')
+      .populate('communityId', 'name slug logo')
+      .exec();
+
+    if (!result) {
+      throw new InternalServerErrorException('Error creating conversation');
+    }
+    return result;
+  }
+
+  private async enforceSessionTempLifecycle(conv: ConversationDocument): Promise<ConversationDocument> {
+    if (!conv || conv.type !== 'SESSION_TEMP_DM') {
+      return conv;
+    }
+
+    let shouldClose = false;
+    let closeReason: 'session_finished' | 'booking_cancelled' | 'booking_completed' | 'manual' = 'manual';
+    const now = new Date();
+
+    const tryClose = (reason: 'session_finished' | 'booking_cancelled' | 'booking_completed' | 'manual') => {
+      if (conv.isOpen) {
+        shouldClose = true;
+        closeReason = reason;
+      }
+    };
+
+    if (conv.expiresAt && new Date(conv.expiresAt).getTime() <= now.getTime()) {
+      tryClose('session_finished');
+    }
+
+    if (!shouldClose && conv.sessionBookingId) {
+      const sessionDoc = await this.sessionModel
+        .findOne({ 'bookings.id': conv.sessionBookingId })
+        .select('duration bookings')
+        .exec();
+
+      if (!sessionDoc) {
+        tryClose('manual');
+      } else {
+        const booking = (sessionDoc.bookings || []).find((b: any) => String(b?.id) === String(conv.sessionBookingId));
+        if (!booking) {
+          tryClose('manual');
+        } else if (booking.status === 'cancelled') {
+          tryClose('booking_cancelled');
+        } else if (booking.status === 'completed') {
+          tryClose('booking_completed');
+        } else {
+          const computedExpiry = new Date(new Date(booking.scheduledAt).getTime() + Number(sessionDoc.duration || 60) * 60 * 1000);
+          if (!conv.expiresAt || new Date(conv.expiresAt).getTime() !== computedExpiry.getTime()) {
+            conv.expiresAt = computedExpiry;
+          }
+          if (computedExpiry.getTime() <= now.getTime()) {
+            tryClose('session_finished');
+          }
+        }
+      }
+    }
+
+    if (shouldClose) {
+      conv.isOpen = false;
+      conv.closedAt = now;
+      conv.closeReason = closeReason;
+      await conv.save();
+    } else if (conv.isModified()) {
+      await conv.save();
+    }
+
+    return conv;
+  }
+
   async listUnassignedHelpThreads() {
     const items = await this.conversationModel
       .find({ type: 'HELP_DM', $or: [{ participantB: { $exists: false } }, { participantB: null }] })
@@ -194,11 +353,12 @@ export class DmService {
     return { items };
   }
 
-  async listInbox(userId: string, type?: 'community' | 'help' | 'peer', page = 1, limit = 20) {
+  async listInbox(userId: string, type?: 'community' | 'help' | 'peer' | 'session', page = 1, limit = 20) {
     const filter: any = { $or: [{ participantA: new Types.ObjectId(userId) }, { participantB: new Types.ObjectId(userId) }] };
     if (type === 'community') filter.type = 'COMMUNITY_DM';
     if (type === 'help') filter.type = 'HELP_DM';
     if (type === 'peer') filter.type = 'PEER_DM';
+    if (type === 'session') filter.type = 'SESSION_TEMP_DM';
     const skip = (page - 1) * limit;
     const [items, total] = await Promise.all([
       this.conversationModel
@@ -211,9 +371,10 @@ export class DmService {
         .limit(limit),
       this.conversationModel.countDocuments(filter),
     ]);
+    const normalizedItems = await Promise.all(items.map((item) => this.enforceSessionTempLifecycle(item)));
     const totalPages = Math.ceil(total / limit);
     return {
-      conversations: items,
+      conversations: normalizedItems,
       page,
       total,
       totalPages,
@@ -228,6 +389,7 @@ export class DmService {
       .populate('participantB', 'name firstName lastName email profile_picture photo_profil avatar photo username role');
 
     if (!conv) throw new NotFoundException('Conversation introuvable');
+    await this.enforceSessionTempLifecycle(conv);
 
     // Convert userId to ObjectId for comparison
     let uid: Types.ObjectId;
@@ -290,6 +452,7 @@ export class DmService {
   ) {
     const conv = await this.conversationModel.findById(conversationId);
     if (!conv) throw new NotFoundException('Conversation introuvable');
+    await this.enforceSessionTempLifecycle(conv);
     const sid = new Types.ObjectId(senderId);
     const isParticipantA = sid.equals(conv.participantA);
     const isParticipantB = conv.participantB && sid.equals(conv.participantB);
@@ -307,6 +470,10 @@ export class DmService {
       if (!community || !community.isMember(sid)) {
         throw new ForbiddenException('Vous n\'êtes plus membre de cette communauté');
       }
+    }
+
+    if (conv.type === 'SESSION_TEMP_DM' && !conv.isOpen) {
+      throw new ForbiddenException('This session chat is closed');
     }
 
     if (!payload.text && (!payload.attachments || payload.attachments.length === 0)) {
@@ -375,6 +542,7 @@ export class DmService {
   async markRead(conversationId: string, userId: string) {
     const conv = await this.conversationModel.findById(conversationId);
     if (!conv) throw new NotFoundException('Conversation introuvable');
+    await this.enforceSessionTempLifecycle(conv);
     const uid = new Types.ObjectId(userId);
     const now = new Date();
     if (uid.equals(conv.participantA)) conv.unreadCountA = 0;
@@ -464,6 +632,32 @@ export class DmService {
     }
 
     return null;
+  }
+
+  @Cron(CronExpression.EVERY_10_MINUTES)
+  async closeExpiredSessionTempChats() {
+    const now = new Date();
+    const openSessionConversations = await this.conversationModel
+      .find({
+        type: 'SESSION_TEMP_DM',
+        isOpen: true,
+        $or: [
+          { expiresAt: { $lte: now } },
+          { expiresAt: { $exists: false } },
+        ],
+      })
+      .select('_id')
+      .limit(200)
+      .exec();
+
+    await Promise.all(
+      openSessionConversations.map(async (item) => {
+        const conv = await this.conversationModel.findById(item._id).exec();
+        if (conv) {
+          await this.enforceSessionTempLifecycle(conv);
+        }
+      }),
+    );
   }
 }
 

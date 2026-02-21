@@ -12,6 +12,7 @@ import { PolicyModule } from '../common/modules/policy.module';
 import { Community, CommunitySchema } from '../schema/community.schema';
 import { User, UserSchema } from '../schema/user.schema';
 import { Admin, AdminSchema } from '../schema/admin.schema';
+import { Session, SessionSchema } from '../schema/session.schema';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { Admin, AdminSchema } from '../schema/admin.schema';
       { name: Community.name, schema: CommunitySchema },
       { name: User.name, schema: UserSchema },
       { name: Admin.name, schema: AdminSchema },
+      { name: Session.name, schema: SessionSchema },
     ]),
     AuthModule,
     UploadModule,

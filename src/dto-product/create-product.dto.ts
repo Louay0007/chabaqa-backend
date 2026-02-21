@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsOptional, IsNumber, IsArray, IsEnum, IsBoolean, MaxLength, MinLength, Min, Max, ArrayMaxSize, IsUrl } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsNumber, IsArray, IsEnum, IsBoolean, MaxLength, MinLength, Min, Max, ArrayMaxSize, Matches } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 /**
@@ -49,6 +49,14 @@ export class CreateProductVariantDto {
  * DTO pour créer un fichier de produit
  */
 export class CreateProductFileDto {
+  @ApiPropertyOptional({
+    description: 'ID du fichier (utile pour les mises à jour)',
+    example: 'file_123'
+  })
+  @IsString()
+  @IsOptional()
+  id?: string;
+
   @ApiProperty({
     description: 'Nom du fichier',
     example: 'UI_Kit.fig',
@@ -65,19 +73,17 @@ export class CreateProductFileDto {
   })
   @IsString()
   @IsNotEmpty()
-  @IsUrl({}, { message: 'L\'URL du fichier doit être valide' })
+  @Matches(/^(https?:\/\/|\/uploads\/|uploads\/).+/i, {
+    message: 'L\'URL du fichier doit être valide',
+  })
   url: string;
 
   @ApiProperty({
     description: 'Type de fichier',
-    example: 'Figma',
-    enum: ['Figma', 'PDF', 'SVG', 'PNG', 'JPG', 'ZIP', 'PSD', 'AI', 'SKETCH', 'XD', 'MP4', 'MP3', 'DOC', 'DOCX', 'PPT', 'PPTX', 'XLS', 'XLSX', 'TXT', 'MD', 'JSON', 'XML', 'CSS', 'JS', 'HTML', 'PHP', 'PY', 'JAVA', 'CPP', 'C', 'OTHER']
+    example: 'application/pdf'
   })
   @IsString()
   @IsNotEmpty()
-  @IsEnum(['Figma', 'PDF', 'SVG', 'PNG', 'JPG', 'ZIP', 'PSD', 'AI', 'SKETCH', 'XD', 'MP4', 'MP3', 'DOC', 'DOCX', 'PPT', 'PPTX', 'XLS', 'XLSX', 'TXT', 'MD', 'JSON', 'XML', 'CSS', 'JS', 'HTML', 'PHP', 'PY', 'JAVA', 'CPP', 'C', 'OTHER'], {
-    message: 'Le type de fichier doit être valide'
-  })
   type: string;
 
   @ApiPropertyOptional({
@@ -183,6 +189,14 @@ export class CreateProductDto {
   category: string;
 
   @ApiPropertyOptional({
+    description: 'Indique si le produit est publié',
+    example: false
+  })
+  @IsBoolean()
+  @IsOptional()
+  isPublished?: boolean;
+
+  @ApiPropertyOptional({
     description: 'Type de produit',
     example: 'digital',
     enum: ['digital', 'physical'],
@@ -243,25 +257,6 @@ export class CreateProductDto {
   @IsOptional()
   @MaxLength(2000, { message: 'Les termes de licence ne peuvent pas dépasser 2000 caractères' })
   licenseTerms?: string;
-
-  @ApiPropertyOptional({
-    description: 'Indique si le produit est récurrent',
-    example: false,
-    default: false
-  })
-  @IsBoolean()
-  @IsOptional()
-  isRecurring?: boolean;
-
-  @ApiPropertyOptional({
-    description: 'Intervalle de récurrence',
-    example: 'month',
-    enum: ['month', 'year', 'week']
-  })
-  @IsString()
-  @IsOptional()
-  @IsEnum(['month', 'year', 'week'], { message: 'L\'intervalle doit être month, year ou week' })
-  recurringInterval?: 'month' | 'year' | 'week';
 
   @ApiPropertyOptional({
     description: 'Fonctionnalités du produit',

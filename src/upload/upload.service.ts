@@ -36,7 +36,38 @@ export class UploadService {
   private readonly allowedTypes = {
     [FileType.IMAGE]: ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg'],
     [FileType.VIDEO]: ['.mp4', '.avi', '.mov', '.wmv', '.flv', '.webm'],
-    [FileType.DOCUMENT]: ['.pdf', '.doc', '.docx', '.txt', '.rtf', '.odt'],
+    [FileType.DOCUMENT]: [
+      '.pdf',
+      '.doc',
+      '.docx',
+      '.txt',
+      '.rtf',
+      '.odt',
+      '.zip',
+      '.ppt',
+      '.pptx',
+      '.xls',
+      '.xlsx',
+      '.md',
+      '.json',
+      '.xml',
+      '.csv',
+      '.fig',
+      '.sketch',
+      '.xd',
+      '.ai',
+      '.psd',
+      '.epub',
+      '.mobi',
+      '.html',
+      '.css',
+      '.js',
+      '.php',
+      '.py',
+      '.java',
+      '.cpp',
+      '.c',
+    ],
     [FileType.AUDIO]: ['.mp3', '.wav', '.ogg', '.aac', '.flac']
   };
 
@@ -44,7 +75,7 @@ export class UploadService {
   private readonly maxSizes = {
     [FileType.IMAGE]: 5 * 1024 * 1024, // 5MB
     [FileType.VIDEO]: 500 * 1024 * 1024, // 500MB
-    [FileType.DOCUMENT]: 10 * 1024 * 1024, // 10MB
+    [FileType.DOCUMENT]: 100 * 1024 * 1024, // 100MB
     [FileType.AUDIO]: 20 * 1024 * 1024 // 20MB
   };
 
@@ -107,7 +138,27 @@ export class UploadService {
     const validMimeTypes = {
       'image': ['image/'],
       'video': ['video/'],
-      'document': ['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument', 'text/plain', 'application/rtf', 'application/vnd.oasis.opendocument'],
+      'document': [
+        'application/pdf',
+        'application/msword',
+        'application/vnd.openxmlformats-officedocument',
+        'application/vnd.ms-excel',
+        'application/vnd.ms-powerpoint',
+        'application/rtf',
+        'application/vnd.oasis.opendocument',
+        'application/zip',
+        'application/x-zip-compressed',
+        'application/json',
+        'application/xml',
+        'application/javascript',
+        'text/plain',
+        'text/markdown',
+        'text/xml',
+        'text/css',
+        'text/javascript',
+        'text/html',
+        'application/octet-stream',
+      ],
       'audio': ['audio/']
     };
 
@@ -399,9 +450,21 @@ export class UploadService {
       '.mov': 'video/quicktime',
       '.webm': 'video/webm',
       '.pdf': 'application/pdf',
+      '.zip': 'application/zip',
       '.doc': 'application/msword',
       '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      '.xls': 'application/vnd.ms-excel',
+      '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      '.ppt': 'application/vnd.ms-powerpoint',
+      '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
       '.txt': 'text/plain',
+      '.md': 'text/markdown',
+      '.json': 'application/json',
+      '.xml': 'application/xml',
+      '.csv': 'text/plain',
+      '.html': 'text/html',
+      '.css': 'text/css',
+      '.js': 'application/javascript',
       '.mp3': 'audio/mpeg',
       '.wav': 'audio/wav',
       '.ogg': 'audio/ogg'

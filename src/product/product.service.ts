@@ -63,6 +63,116 @@ export class ProductService {
     return product;
   }
 
+  private normalizeProductFileType(inputType?: string, filename?: string): string {
+    const rawValue = String(inputType || '').trim().toLowerCase();
+    const value = rawValue.split(';')[0].trim();
+    const extension = String(filename || '')
+      .split('.')
+      .pop()
+      ?.toLowerCase()
+      .replace(/[^a-z0-9]/g, '');
+
+    if (!value && !extension) {
+      return 'OTHER';
+    }
+
+    const map: Record<string, string> = {
+      figma: 'Figma',
+      fig: 'Figma',
+      pdf: 'PDF',
+      svg: 'SVG',
+      png: 'PNG',
+      jpg: 'JPG',
+      jpeg: 'JPG',
+      zip: 'ZIP',
+      psd: 'PSD',
+      ai: 'AI',
+      sketch: 'SKETCH',
+      xd: 'XD',
+      mp4: 'MP4',
+      mp3: 'MP3',
+      doc: 'DOC',
+      docx: 'DOCX',
+      ppt: 'PPT',
+      pptx: 'PPTX',
+      xls: 'XLS',
+      xlsx: 'XLSX',
+      txt: 'TXT',
+      md: 'MD',
+      json: 'JSON',
+      xml: 'XML',
+      css: 'CSS',
+      js: 'JS',
+      html: 'HTML',
+      php: 'PHP',
+      py: 'PY',
+      java: 'JAVA',
+      cpp: 'CPP',
+      c: 'C',
+      other: 'OTHER',
+      epub: 'OTHER',
+      mobi: 'OTHER',
+      odt: 'OTHER',
+      rtf: 'OTHER',
+      csv: 'OTHER',
+      'image/png': 'PNG',
+      'image/jpeg': 'JPG',
+      'image/jpg': 'JPG',
+      'application/pdf': 'PDF',
+      'application/zip': 'ZIP',
+      'application/x-zip-compressed': 'ZIP',
+      'application/octet-stream': 'OTHER',
+      'video/mp4': 'MP4',
+      'audio/mpeg': 'MP3',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
+        'DOCX',
+      'application/msword': 'DOC',
+      'application/vnd.ms-excel': 'XLS',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'XLSX',
+      'application/vnd.ms-powerpoint': 'PPT',
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation':
+        'PPTX',
+      'text/plain': 'TXT',
+      'text/markdown': 'MD',
+      'application/json': 'JSON',
+      'application/xml': 'XML',
+      'text/xml': 'XML',
+      'text/css': 'CSS',
+      'application/javascript': 'JS',
+      'text/javascript': 'JS',
+      'text/html': 'HTML',
+    };
+
+    const normalized =
+      map[value] ||
+      map[value.replace(/^\./, '')] ||
+      map[extension || ''] ||
+      map[rawValue.replace(/^\./, '')];
+    return normalized || 'OTHER';
+  }
+
+  private normalizeProductFiles(files: any[] = []): any[] {
+    return files.map((file: any, idx: number) => ({
+      id: file.id || new Types.ObjectId().toString(),
+      name: String(file.name || '').trim(),
+      url: String(file.url || '').trim(),
+      type: this.normalizeProductFileType(file.type, file.name),
+      size: file.size,
+      description: file.description,
+      order: file.order ?? idx,
+      isActive: file.isActive !== false,
+    }));
+  }
+
+  private async assertCanPublishProduct(userId: string): Promise<void> {
+    const hasActiveSubscription = await this.policyService.hasActiveSubscription(userId);
+    if (!hasActiveSubscription) {
+      throw new ForbiddenException(
+        'Un abonnement actif est requis pour publier un produit',
+      );
+    }
+  }
+
   private async recomputeProductRatings(productMongoId: string) {
     const stats = await this.contentProgressModel.aggregate([
       {
@@ -207,43 +317,18 @@ export class ProductService {
         );
       }
 
+      const requestedPublish = createProductDto.isPublished === true;
+      if (requestedPublish) {
+        await this.assertCanPublishProduct(normalizedUserId);
+      }
+
       // Créer le produit
       console.log('📝 Creating product with DTO:', createProductDto);
 
       // Generate product ID
       const productId = new Types.ObjectId().toString();
 
-      // Normalize file types and add IDs
-      const normalizedFiles = (createProductDto.files || []).map(
-        (f: any, idx: number) => {
-          // Map MIME types to enum values
-          const mimeToEnum: { [key: string]: string } = {
-            'image/png': 'PNG',
-            'image/jpeg': 'JPG',
-            'image/jpg': 'JPG',
-            'application/pdf': 'PDF',
-            'application/zip': 'ZIP',
-            'video/mp4': 'MP4',
-            'audio/mpeg': 'MP3',
-            'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
-              'DOCX',
-            'application/msword': 'DOC',
-          };
-
-          const fileType = mimeToEnum[f.type] || f.type || 'OTHER';
-
-          return {
-            id: f.id || new Types.ObjectId().toString(),
-            name: f.name,
-            url: f.url,
-            type: fileType,
-            size: f.size,
-            description: f.description,
-            order: f.order ?? idx,
-            isActive: f.isActive !== false,
-          };
-        },
-      );
+      const normalizedFiles = this.normalizeProductFiles(createProductDto.files || []);
 
       const product = new this.productModel({
         ...createProductDto,
@@ -254,6 +339,7 @@ export class ProductService {
         variants: createProductDto.variants || [],
         files: normalizedFiles,
         features: createProductDto.features || [],
+        isPublished: requestedPublish,
       });
 
       const savedProduct = await product.save();
@@ -454,18 +540,19 @@ export class ProductService {
       );
     }
 
-    // Gating: require active subscription to activate/publish product (if fields exist)
-    const hasSub = await this.policyService.hasActiveSubscription(userId);
-    const nextIsPublished = (updateProductDto as any)?.isPublished;
-    const nextIsActive = (updateProductDto as any)?.isActive;
-    if (!hasSub && (nextIsPublished || nextIsActive)) {
-      throw new ForbiddenException(
-        'Un abonnement actif est requis pour publier/activer un produit',
-      );
+    const requestsPublishing =
+      updateProductDto.isPublished === true && product.isPublished !== true;
+    if (requestsPublishing) {
+      await this.assertCanPublishProduct(userId);
+    }
+
+    const normalizedUpdateDto: any = { ...updateProductDto };
+    if (Array.isArray(normalizedUpdateDto.files)) {
+      normalizedUpdateDto.files = this.normalizeProductFiles(normalizedUpdateDto.files);
     }
 
     // Mettre à jour le produit
-    Object.assign(product, updateProductDto);
+    Object.assign(product, normalizedUpdateDto);
     product.updatedAt = new Date();
 
     const updatedProduct = await product.save();
@@ -605,6 +692,7 @@ export class ProductService {
         createFileDto.isActive !== undefined ? createFileDto.isActive : true,
       uploadedAt: new Date(),
       ...createFileDto,
+      type: this.normalizeProductFileType(createFileDto.type, createFileDto.name),
     };
 
     product.addFile(file);
@@ -724,6 +812,10 @@ export class ProductService {
       throw new ForbiddenException(
         'Vous ne pouvez modifier que vos propres produits',
       );
+    }
+
+    if (!product.isPublished) {
+      await this.assertCanPublishProduct(userId);
     }
 
     product.isPublished = !product.isPublished;
@@ -928,8 +1020,6 @@ export class ProductService {
       averageRating: (product as any).averageRating || 0,
       ratingCount: (product as any).ratingCount || 0,
       licenseTerms: (product as any).licenseTerms,
-      isRecurring: (product as any).isRecurring,
-      recurringInterval: (product as any).recurringInterval,
       features: (product as any).features,
       createdAt: product.createdAt.toISOString(),
       updatedAt: product.updatedAt.toISOString(),

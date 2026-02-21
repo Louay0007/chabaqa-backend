@@ -1776,21 +1776,31 @@ export class CommunityAffCreaJoinService {
     try {
       console.log('🗑️ [DELETE-COMMUNITY] Deleting community:', communityId);
 
-      if (!Types.ObjectId.isValid(communityId)) {
+      const normalizedCommunityId = String(communityId || '').trim();
+      if (!normalizedCommunityId) {
         throw new NotFoundException('Community not found');
       }
 
-      const communityObjectId = new Types.ObjectId(communityId);
-      const communityIdString = communityObjectId.toString();
-
-      const existingCommunity = await this.communityModel
-        .findById(communityObjectId)
-        .select('_id')
-        .lean();
+      const existingCommunity = Types.ObjectId.isValid(normalizedCommunityId)
+        ? await this.communityModel
+            .findById(new Types.ObjectId(normalizedCommunityId))
+            .select('_id slug')
+            .lean()
+        : await this.communityModel
+            .findOne({ slug: normalizedCommunityId })
+            .select('_id slug')
+            .lean();
 
       if (!existingCommunity) {
         throw new NotFoundException('Community not found');
       }
+
+      const communityObjectId = new Types.ObjectId((existingCommunity as any)._id);
+      const communityIdString = communityObjectId.toString();
+      const communitySlug = String((existingCommunity as any).slug || '').trim();
+      const communityStringRefs = Array.from(
+        new Set([communityIdString, communitySlug].filter(Boolean)),
+      );
 
       const connection = this.communityModel.db;
       const session: any = null;
@@ -1829,19 +1839,19 @@ export class CommunityAffCreaJoinService {
           conversations,
         ] = await Promise.all([
           courseModel
-            ? courseModel.find({ communityId: communityIdString }).select('_id id').session(session).lean()
+            ? courseModel.find({ communityId: { $in: communityStringRefs } }).select('_id id').session(session).lean()
             : [],
           challengeModel
-            ? challengeModel.find({ communityId: communityIdString }).select('_id id').session(session).lean()
+            ? challengeModel.find({ communityId: { $in: communityStringRefs } }).select('_id id').session(session).lean()
             : [],
           productModel
-            ? productModel.find({ communityId: communityIdString }).select('_id id').session(session).lean()
+            ? productModel.find({ communityId: { $in: communityStringRefs } }).select('_id id').session(session).lean()
             : [],
           sessionModel
-            ? sessionModel.find({ communityId: communityIdString }).select('_id id').session(session).lean()
+            ? sessionModel.find({ communityId: { $in: communityStringRefs } }).select('_id id').session(session).lean()
             : [],
           postModel
-            ? postModel.find({ communityId: communityIdString }).select('_id id').session(session).lean()
+            ? postModel.find({ communityId: { $in: communityStringRefs } }).select('_id id').session(session).lean()
             : [],
           eventModel
             ? eventModel.find({ communityId: communityObjectId }).select('_id id').session(session).lean()
@@ -1866,7 +1876,7 @@ export class CommunityAffCreaJoinService {
           ...events.map((doc: any) => String(doc.id || '')).filter(Boolean),
           ...posts.map((doc: any) => String(doc._id || '')).filter(Boolean),
           ...resources.map((doc: any) => String(doc._id || '')).filter(Boolean),
-          communityIdString,
+          ...communityStringRefs,
         ];
 
         await Promise.all([
@@ -1874,19 +1884,19 @@ export class CommunityAffCreaJoinService {
             ? communityPageContentModel.deleteMany({ community: communityObjectId }).session(session)
             : Promise.resolve(),
           postModel
-            ? postModel.deleteMany({ communityId: communityIdString }).session(session)
+            ? postModel.deleteMany({ communityId: { $in: communityStringRefs } }).session(session)
             : Promise.resolve(),
           courseModel
-            ? courseModel.deleteMany({ communityId: communityIdString }).session(session)
+            ? courseModel.deleteMany({ communityId: { $in: communityStringRefs } }).session(session)
             : Promise.resolve(),
           challengeModel
-            ? challengeModel.deleteMany({ communityId: communityIdString }).session(session)
+            ? challengeModel.deleteMany({ communityId: { $in: communityStringRefs } }).session(session)
             : Promise.resolve(),
           productModel
-            ? productModel.deleteMany({ communityId: communityIdString }).session(session)
+            ? productModel.deleteMany({ communityId: { $in: communityStringRefs } }).session(session)
             : Promise.resolve(),
           sessionModel
-            ? sessionModel.deleteMany({ communityId: communityIdString }).session(session)
+            ? sessionModel.deleteMany({ communityId: { $in: communityStringRefs } }).session(session)
             : Promise.resolve(),
           eventModel
             ? eventModel.deleteMany({ communityId: communityObjectId }).session(session)
@@ -1907,10 +1917,10 @@ export class CommunityAffCreaJoinService {
             ? achievementModel.deleteMany({ communityId: communityObjectId }).session(session)
             : Promise.resolve(),
           analyticsDailyModel
-            ? analyticsDailyModel.deleteMany({ communityId: communityIdString }).session(session)
+            ? analyticsDailyModel.deleteMany({ communityId: { $in: communityStringRefs } }).session(session)
             : Promise.resolve(),
           promoCodeModel
-            ? promoCodeModel.deleteMany({ communityId: communityIdString }).session(session)
+            ? promoCodeModel.deleteMany({ communityId: { $in: communityStringRefs } }).session(session)
             : Promise.resolve(),
           orderModel
             ? orderModel.deleteMany({ communityId: communityObjectId }).session(session)

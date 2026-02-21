@@ -262,18 +262,6 @@ export class ProductResponseDto {
   licenseTerms?: string;
 
   @ApiPropertyOptional({
-    description: 'Indique si le produit est récurrent',
-    example: false
-  })
-  isRecurring?: boolean;
-
-  @ApiPropertyOptional({
-    description: 'Intervalle de récurrence',
-    example: 'month'
-  })
-  recurringInterval?: 'month' | 'year' | 'week';
-
-  @ApiPropertyOptional({
     description: 'Fonctionnalités du produit',
     example: ['Support 24/7', 'Accès à vie', 'Certificat'],
     type: [String]

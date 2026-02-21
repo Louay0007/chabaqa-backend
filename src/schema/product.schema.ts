@@ -106,7 +106,7 @@ export class ProductFile {
 
   @Prop({
     type: Boolean,
-    default: true
+    default: false
   })
   isActive: boolean;
 
@@ -219,7 +219,7 @@ export class Product {
    */
   @Prop({
     type: Boolean,
-    default: true
+    default: false
   })
   isPublished: boolean;
 
@@ -302,24 +302,6 @@ export class Product {
   licenseTerms?: string;
 
   /**
-   * Indique si le produit est récurrent
-   */
-  @Prop({
-    type: Boolean,
-    default: false
-  })
-  isRecurring?: boolean;
-
-  /**
-   * Intervalle de récurrence
-   */
-  @Prop({
-    enum: ['month', 'year', 'week'],
-    type: String
-  })
-  recurringInterval?: 'month' | 'year' | 'week';
-
-  /**
    * Fonctionnalités du produit
    */
   @Prop({
@@ -338,11 +320,7 @@ export class Product {
       currency: { type: String, enum: ['USD', 'EUR', 'TND'], default: 'TND' },
       
       // Type de prix
-      priceType: { type: String, enum: ['free', 'one-time', 'monthly', 'yearly'], default: 'free' },
-      
-      // Produit récurrent (legacy - keep for backward compatibility)
-      isRecurring: { type: Boolean, default: false },
-      recurringInterval: { type: String, enum: ['month', 'year', 'week'] },
+      priceType: { type: String, enum: ['free', 'one-time'], default: 'free' },
       
       // Fonctionnalités incluses
       features: [{ type: String }],
@@ -365,9 +343,7 @@ export class Product {
   pricing?: {
     price: number;
     currency: string;
-    priceType: 'free' | 'one-time' | 'monthly' | 'yearly';
-    isRecurring: boolean;
-    recurringInterval?: 'month' | 'year' | 'week';
+    priceType: 'free' | 'one-time';
     features: string[];
     paymentOptions: {
       allowInstallments: boolean;
@@ -434,15 +410,11 @@ export interface ProductDocument extends Document {
   files?: ProductFile[];
   rating?: number;
   licenseTerms?: string;
-  isRecurring?: boolean;
-  recurringInterval?: 'month' | 'year' | 'week';
   features?: string[];
   pricing?: {
     price: number;
     currency: string;
-    priceType: 'free' | 'one-time' | 'monthly' | 'yearly';
-    isRecurring: boolean;
-    recurringInterval?: 'month' | 'year' | 'week';
+    priceType: 'free' | 'one-time';
     features: string[];
     paymentOptions: {
       allowInstallments: boolean;

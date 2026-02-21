@@ -69,6 +69,12 @@ export class SessionBookingResponseDto {
   @ApiPropertyOptional({ description: 'Durée de la session en minutes', example: 60 })
   sessionDuration?: number;
 
+  @ApiPropertyOptional({ description: 'ID du créateur de session', example: 'user_789' })
+  creatorId?: string;
+
+  @ApiPropertyOptional({ description: 'ID de la communauté', example: 'community_456' })
+  communityId?: string;
+
   @ApiPropertyOptional({ description: 'Montant payé', example: 50 })
   amountPaid?: number;
 
