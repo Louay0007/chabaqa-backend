@@ -21,6 +21,38 @@ interface AuthenticatedUser {
   role: string;
 }
 
+const resolveRequestIpAddress = (req: any): string | undefined => {
+  const forwarded = req?.headers?.['x-forwarded-for'];
+  const realIp = req?.headers?.['x-real-ip'];
+
+  let candidate: unknown = null;
+  if (Array.isArray(forwarded)) candidate = forwarded[0];
+  else if (typeof forwarded === 'string') candidate = forwarded.split(',')[0];
+  else if (Array.isArray(realIp)) candidate = realIp[0];
+  else if (typeof realIp === 'string') candidate = realIp;
+  else candidate = req?.ip || req?.socket?.remoteAddress;
+
+  if (typeof candidate !== 'string') return undefined;
+  const trimmed = candidate.trim();
+  if (!trimmed) return undefined;
+  return trimmed.startsWith('::ffff:') ? trimmed.slice(7) : trimmed;
+};
+
+const enrichTrackingMetadata = (req: any, metadata?: any) => {
+  const enriched = { ...(metadata || {}) };
+  const userAgent = req?.headers?.['user-agent'];
+  if (typeof userAgent === 'string' && !enriched.userAgent) {
+    enriched.userAgent = userAgent;
+  }
+
+  const ipAddress = resolveRequestIpAddress(req);
+  if (ipAddress && !enriched.ipAddress) {
+    enriched.ipAddress = ipAddress;
+  }
+
+  return enriched;
+};
+
 @ApiTags('Content Tracking')
 @Controller('tracking')
 @UseGuards(JwtAuthGuard)
@@ -44,9 +76,7 @@ export class TrackingController {
     @Body('metadata') metadata?: any,
   ) {
     const user = req.user as AuthenticatedUser;
-    const userAgent = req.headers?.['user-agent'];
-    const enriched = { ...(metadata || {}) };
-    if (typeof userAgent === 'string' && !enriched.userAgent) enriched.userAgent = userAgent;
+    const enriched = enrichTrackingMetadata(req, metadata);
     return await this.trackingService.trackView(user._id, contentId, contentType, enriched);
   }
 
@@ -66,9 +96,7 @@ export class TrackingController {
     @Body('metadata') metadata?: any,
   ) {
     const user = req.user as AuthenticatedUser;
-    const userAgent = req.headers?.['user-agent'];
-    const enriched = { ...(metadata || {}) };
-    if (typeof userAgent === 'string' && !enriched.userAgent) enriched.userAgent = userAgent;
+    const enriched = enrichTrackingMetadata(req, metadata);
     return await this.trackingService.trackStart(user._id, contentId, contentType, enriched);
   }
 
@@ -88,9 +116,7 @@ export class TrackingController {
     @Body('metadata') metadata?: any,
   ) {
     const user = req.user as AuthenticatedUser;
-    const userAgent = req.headers?.['user-agent'];
-    const enriched = { ...(metadata || {}) };
-    if (typeof userAgent === 'string' && !enriched.userAgent) enriched.userAgent = userAgent;
+    const enriched = enrichTrackingMetadata(req, metadata);
     return await this.trackingService.trackComplete(user._id, contentId, contentType, enriched);
   }
 
@@ -128,9 +154,7 @@ export class TrackingController {
     @Body('metadata') metadata?: any,
   ) {
     const user = req.user as AuthenticatedUser;
-    const userAgent = req.headers?.['user-agent'];
-    const enriched = { ...(metadata || {}) };
-    if (typeof userAgent === 'string' && !enriched.userAgent) enriched.userAgent = userAgent;
+    const enriched = enrichTrackingMetadata(req, metadata);
     return await this.trackingService.trackLike(user._id, contentId, contentType, enriched);
   }
 
@@ -150,9 +174,7 @@ export class TrackingController {
     @Body('metadata') metadata?: any,
   ) {
     const user = req.user as AuthenticatedUser;
-    const userAgent = req.headers?.['user-agent'];
-    const enriched = { ...(metadata || {}) };
-    if (typeof userAgent === 'string' && !enriched.userAgent) enriched.userAgent = userAgent;
+    const enriched = enrichTrackingMetadata(req, metadata);
     return await this.trackingService.trackShare(user._id, contentId, contentType, enriched);
   }
 
@@ -172,9 +194,7 @@ export class TrackingController {
     @Body('metadata') metadata?: any,
   ) {
     const user = req.user as AuthenticatedUser;
-    const userAgent = req.headers?.['user-agent'];
-    const enriched = { ...(metadata || {}) };
-    if (typeof userAgent === 'string' && !enriched.userAgent) enriched.userAgent = userAgent;
+    const enriched = enrichTrackingMetadata(req, metadata);
     return await this.trackingService.trackDownload(user._id, contentId, contentType, enriched);
   }
 

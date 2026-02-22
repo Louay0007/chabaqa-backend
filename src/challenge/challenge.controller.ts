@@ -44,6 +44,32 @@ import {
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { HttpCacheInterceptor } from '../common/interceptors/cache.interceptor';
 
+const resolveRequestIpAddress = (req: any): string | undefined => {
+  const forwarded = req?.headers?.['x-forwarded-for'];
+  const realIp = req?.headers?.['x-real-ip'];
+
+  let candidate: unknown = null;
+  if (Array.isArray(forwarded)) candidate = forwarded[0];
+  else if (typeof forwarded === 'string') candidate = forwarded.split(',')[0];
+  else if (Array.isArray(realIp)) candidate = realIp[0];
+  else if (typeof realIp === 'string') candidate = realIp;
+  else candidate = req?.ip || req?.socket?.remoteAddress;
+
+  if (typeof candidate !== 'string') return undefined;
+  const trimmed = candidate.trim();
+  if (!trimmed) return undefined;
+  return trimmed.startsWith('::ffff:') ? trimmed.slice(7) : trimmed;
+};
+
+const enrichTrackingMetadata = (req: any, metadata?: any) => {
+  const enriched = { ...(metadata || {}) };
+  const userAgent = req?.headers?.['user-agent'];
+  if (typeof userAgent === 'string' && !enriched.userAgent) enriched.userAgent = userAgent;
+  const ipAddress = resolveRequestIpAddress(req);
+  if (ipAddress && !enriched.ipAddress) enriched.ipAddress = ipAddress;
+  return enriched;
+};
+
 @ApiTags('Challenges')
 @Controller('challenges')
 @UseInterceptors(HttpCacheInterceptor)
@@ -745,9 +771,7 @@ export class ChallengeController {
   @ApiBody({ schema: { type: 'object', properties: { metadata: { type: 'object' } } } })
   async trackView(@Param('id') id: string, @Request() req: any, @Body('metadata') metadata?: any) {
     const userId = req.user._id || req.user.userId;
-    const userAgent = req.headers?.['user-agent'];
-    const enriched = { ...(metadata || {}) };
-    if (typeof userAgent === 'string' && !enriched.userAgent) enriched.userAgent = userAgent;
+    const enriched = enrichTrackingMetadata(req, metadata);
     return this.challengeService.trackChallengeView(id, userId, enriched);
   }
 
@@ -760,9 +784,7 @@ export class ChallengeController {
   @ApiBody({ schema: { type: 'object', properties: { metadata: { type: 'object' } } } })
   async trackStart(@Param('id') id: string, @Request() req: any, @Body('metadata') metadata?: any) {
     const userId = req.user._id || req.user.userId;
-    const userAgent = req.headers?.['user-agent'];
-    const enriched = { ...(metadata || {}) };
-    if (typeof userAgent === 'string' && !enriched.userAgent) enriched.userAgent = userAgent;
+    const enriched = enrichTrackingMetadata(req, metadata);
     return this.challengeService.trackChallengeStart(id, userId, enriched);
   }
 
@@ -775,9 +797,7 @@ export class ChallengeController {
   @ApiBody({ schema: { type: 'object', properties: { metadata: { type: 'object' } } } })
   async trackComplete(@Param('id') id: string, @Request() req: any, @Body('metadata') metadata?: any) {
     const userId = req.user._id || req.user.userId;
-    const userAgent = req.headers?.['user-agent'];
-    const enriched = { ...(metadata || {}) };
-    if (typeof userAgent === 'string' && !enriched.userAgent) enriched.userAgent = userAgent;
+    const enriched = enrichTrackingMetadata(req, metadata);
     return this.challengeService.trackChallengeComplete(id, userId, enriched);
   }
 
@@ -795,9 +815,7 @@ export class ChallengeController {
     @Body('metadata') metadata?: any
   ) {
     const userId = req.user._id || req.user.userId;
-    const userAgent = req.headers?.['user-agent'];
-    const enriched = { ...(metadata || {}) };
-    if (typeof userAgent === 'string' && !enriched.userAgent) enriched.userAgent = userAgent;
+    const enriched = enrichTrackingMetadata(req, metadata);
     return this.challengeService.trackTaskComplete(id, taskId, userId, enriched);
   }
 
@@ -810,9 +828,7 @@ export class ChallengeController {
   @ApiBody({ schema: { type: 'object', properties: { metadata: { type: 'object' } } } })
   async trackLike(@Param('id') id: string, @Request() req: any, @Body('metadata') metadata?: any) {
     const userId = req.user._id || req.user.userId;
-    const userAgent = req.headers?.['user-agent'];
-    const enriched = { ...(metadata || {}) };
-    if (typeof userAgent === 'string' && !enriched.userAgent) enriched.userAgent = userAgent;
+    const enriched = enrichTrackingMetadata(req, metadata);
     return this.challengeService.trackChallengeLike(id, userId, enriched);
   }
 
@@ -825,9 +841,7 @@ export class ChallengeController {
   @ApiBody({ schema: { type: 'object', properties: { metadata: { type: 'object' } } } })
   async trackShare(@Param('id') id: string, @Request() req: any, @Body('metadata') metadata?: any) {
     const userId = req.user._id || req.user.userId;
-    const userAgent = req.headers?.['user-agent'];
-    const enriched = { ...(metadata || {}) };
-    if (typeof userAgent === 'string' && !enriched.userAgent) enriched.userAgent = userAgent;
+    const enriched = enrichTrackingMetadata(req, metadata);
     return this.challengeService.trackChallengeShare(id, userId, enriched);
   }
 

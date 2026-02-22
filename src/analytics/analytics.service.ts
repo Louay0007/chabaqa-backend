@@ -1186,86 +1186,607 @@ export class AnalyticsService {
     return { ok: true, updated: count };
   }
 
+  private isMeaningfulDeviceValue(device: string | undefined | null): boolean {
+    const value = (device || '').trim().toLowerCase();
+    return (
+      value !== '' &&
+      value !== 'unknown' &&
+      value !== '(not set)' &&
+      value !== 'not set' &&
+      value !== '(not provided)' &&
+      value !== 'undefined' &&
+      value !== 'null'
+    );
+  }
+
+  private normalizeText(value: unknown): string | null {
+    if (typeof value !== 'string') return null;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+
+  private normalizeIpAddress(value: unknown): string | null {
+    const raw = this.normalizeText(value);
+    if (!raw) return null;
+    const candidate = raw.split(',')[0]?.trim();
+    if (!candidate) return null;
+    return candidate.startsWith('::ffff:') ? candidate.slice(7) : candidate;
+  }
+
+  private extractDeviceModelFromUserAgent(userAgent: string | null): string | null {
+    if (!userAgent) return null;
+
+    const iosMatch = userAgent.match(/\((iPhone|iPad|iPod)[^)]*\)/i);
+    if (iosMatch?.[1]) return iosMatch[1];
+
+    const androidBuildMatch = userAgent.match(/Android[^;)]*;\s*([^;)]+?)\s*Build\//i);
+    if (androidBuildMatch?.[1]) return androidBuildMatch[1].trim();
+
+    const androidGenericMatch = userAgent.match(/Android[^;)]*;\s*([^;)]+?)\)/i);
+    if (androidGenericMatch?.[1]) return androidGenericMatch[1].trim();
+
+    if (/\bMacintosh\b/i.test(userAgent)) return 'Mac';
+    if (/\bWindows\b/i.test(userAgent)) return 'Windows PC';
+
+    return null;
+  }
+
+  private buildTrackingScopePipeline(
+    creatorId: string,
+    from: Date | null,
+    to: Date | null,
+    communityScope: { hasFilter: boolean; lookupCommunityValues: Array<string | Types.ObjectId> },
+  ) {
+    const contentDoc = {
+      $ifNull: [
+        { $arrayElemAt: ['$course', 0] },
+        {
+          $ifNull: [
+            { $arrayElemAt: ['$challenge', 0] },
+            {
+              $ifNull: [
+                { $arrayElemAt: ['$session', 0] },
+                {
+                  $ifNull: [
+                    { $arrayElemAt: ['$event', 0] },
+                    {
+                      $ifNull: [
+                        { $arrayElemAt: ['$product', 0] },
+                        { $arrayElemAt: ['$post', 0] },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+
+    const pipeline: any[] = [];
+    if (from && to) {
+      pipeline.push({ $match: { timestamp: { $gte: from, $lte: to } } });
+    }
+
+    pipeline.push(
+      { $lookup: { from: 'cours', localField: 'contentId', foreignField: 'id', as: 'course' } },
+      { $lookup: { from: 'challenges', localField: 'contentId', foreignField: 'id', as: 'challenge' } },
+      { $lookup: { from: 'sessions', localField: 'contentId', foreignField: 'id', as: 'session' } },
+      { $lookup: { from: 'events', localField: 'contentId', foreignField: 'id', as: 'event' } },
+      { $lookup: { from: 'products', localField: 'contentId', foreignField: 'id', as: 'product' } },
+      { $lookup: { from: 'posts', localField: 'contentId', foreignField: 'id', as: 'post' } },
+      { $addFields: { contentDoc } },
+      { $addFields: { creatorIdResolved: { $ifNull: ['$contentDoc.creatorId', '$contentDoc.authorId'] } } },
+      { $match: { creatorIdResolved: this.getCreatorObjectId(creatorId) } },
+    );
+
+    if (communityScope.hasFilter) {
+      pipeline.push({ $match: this.buildLookupCommunityMatch('contentDoc.communityId', communityScope.lookupCommunityValues) });
+    }
+
+    return pipeline;
+  }
+
+  private async resolveLatestKnownIps(
+    tracking: any,
+    creatorId: string,
+    communityScope: { hasFilter: boolean; lookupCommunityValues: Array<string | Types.ObjectId> },
+    userIds: string[],
+  ): Promise<Map<string, string>> {
+    const normalizedUserIds = Array.from(new Set(userIds.filter((value) => Types.ObjectId.isValid(value))));
+    if (!normalizedUserIds.length) return new Map();
+
+    const objectIds = normalizedUserIds.map((value) => new Types.ObjectId(value));
+    const basePipeline = this.buildTrackingScopePipeline(creatorId, null, null, communityScope);
+
+    const rows = await tracking.aggregate([
+      ...basePipeline,
+      { $match: { userId: { $in: objectIds } } },
+      {
+        $project: {
+          userId: 1,
+          timestamp: 1,
+          ipAddress: {
+            $ifNull: [
+              '$metadata.ipAddress',
+              {
+                $ifNull: [
+                  '$metadata.ip',
+                  {
+                    $ifNull: [
+                      '$metadata.clientIp',
+                      {
+                        $ifNull: ['$metadata.remoteIp', '$metadata.ip_address'],
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      },
+      {
+        $match: {
+          ipAddress: {
+            $nin: [null, '', 'unknown', '(not set)', 'not set', '(not provided)', 'undefined', 'null'],
+          },
+        },
+      },
+      { $sort: { timestamp: -1 } },
+      { $group: { _id: '$userId', ipAddress: { $first: '$ipAddress' } } },
+      { $project: { _id: 0, userId: '$_id', ipAddress: 1 } },
+    ]).toArray();
+
+    const map = new Map<string, string>();
+    rows.forEach((row: any) => {
+      const userId = row?.userId ? row.userId.toString() : null;
+      const ipAddress = this.normalizeIpAddress(row?.ipAddress);
+      if (userId && ipAddress) {
+        map.set(userId, ipAddress);
+      }
+    });
+
+    return map;
+  }
+
+  private buildDeviceAggregatePipeline(basePipeline: any[]) {
+    return [
+      ...basePipeline,
+      { $addFields: { uaLower: { $toLower: { $ifNull: ['$metadata.userAgent', ''] } } } },
+      {
+        $project: {
+          userId: 1,
+          device: {
+            $ifNull: [
+              '$metadata.device',
+              {
+                $cond: [
+                  {
+                    $or: [
+                      { $regexMatch: { input: '$uaLower', regex: 'ipad|tablet|playbook|silk' } },
+                      {
+                        $and: [
+                          { $regexMatch: { input: '$uaLower', regex: 'android' } },
+                          { $not: [{ $regexMatch: { input: '$uaLower', regex: 'mobile' } }] },
+                        ],
+                      },
+                    ],
+                  },
+                  'tablet',
+                  {
+                    $cond: [
+                      { $regexMatch: { input: '$uaLower', regex: 'mobi|iphone|ipod|iemobile|blackberry|kindle|opera mini|windows phone|android' } },
+                      'mobile',
+                      'desktop',
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+          os: { $ifNull: ['$metadata.os', 'unknown'] },
+          browser: { $ifNull: ['$metadata.browser', 'unknown'] },
+        },
+      },
+      { $group: { _id: { device: '$device', os: '$os', browser: '$browser', userId: '$userId' } } },
+      { $group: { _id: { device: '$_id.device', os: '$_id.os', browser: '$_id.browser' }, count: { $sum: 1 } } },
+      { $project: { _id: 0, device: '$_id.device', os: '$_id.os', browser: '$_id.browser', count: 1 } },
+      { $sort: { count: -1 } },
+    ];
+  }
+
+  private buildDeviceDetailsPipeline(basePipeline: any[]) {
+    return [
+      ...basePipeline,
+      { $addFields: { uaLower: { $toLower: { $ifNull: ['$metadata.userAgent', ''] } } } },
+      {
+        $project: {
+          userId: 1,
+          timestamp: 1,
+          userAgent: { $ifNull: ['$metadata.userAgent', null] },
+          device: {
+            $ifNull: [
+              '$metadata.device',
+              {
+                $cond: [
+                  {
+                    $or: [
+                      { $regexMatch: { input: '$uaLower', regex: 'ipad|tablet|playbook|silk' } },
+                      {
+                        $and: [
+                          { $regexMatch: { input: '$uaLower', regex: 'android' } },
+                          { $not: [{ $regexMatch: { input: '$uaLower', regex: 'mobile' } }] },
+                        ],
+                      },
+                    ],
+                  },
+                  'tablet',
+                  {
+                    $cond: [
+                      { $regexMatch: { input: '$uaLower', regex: 'mobi|iphone|ipod|iemobile|blackberry|kindle|opera mini|windows phone|android' } },
+                      'mobile',
+                      'desktop',
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+          os: { $ifNull: ['$metadata.os', 'unknown'] },
+          browser: { $ifNull: ['$metadata.browser', 'unknown'] },
+          ipAddress: {
+            $ifNull: [
+              '$metadata.ipAddress',
+              {
+                $ifNull: [
+                  '$metadata.ip',
+                  { $ifNull: ['$metadata.clientIp', '$metadata.remoteIp'] },
+                ],
+              },
+            ],
+          },
+          deviceModel: {
+            $ifNull: [
+              '$metadata.deviceModel',
+              { $ifNull: ['$metadata.model', '$metadata.device_name'] },
+            ],
+          },
+        },
+      },
+      { $sort: { timestamp: -1 } },
+      {
+        $group: {
+          _id: {
+            userId: '$userId',
+            device: '$device',
+            os: '$os',
+            browser: '$browser',
+            ipAddress: '$ipAddress',
+          },
+          lastSeenAt: { $first: '$timestamp' },
+          eventsCount: { $sum: 1 },
+          userAgent: { $first: '$userAgent' },
+          deviceModel: { $first: '$deviceModel' },
+        },
+      },
+      { $lookup: { from: 'users', localField: '_id.userId', foreignField: '_id', as: 'user' } },
+      { $addFields: { user: { $arrayElemAt: ['$user', 0] } } },
+      {
+        $project: {
+          _id: 0,
+          userId: '$_id.userId',
+          userName: '$user.name',
+          userEmail: '$user.email',
+          device: '$_id.device',
+          os: '$_id.os',
+          browser: '$_id.browser',
+          ipAddress: '$_id.ipAddress',
+          lastSeenAt: 1,
+          eventsCount: 1,
+          userAgent: 1,
+          deviceModel: 1,
+        },
+      },
+      { $sort: { lastSeenAt: -1 } },
+      { $limit: 100 },
+    ];
+  }
+
+  private async queryTrackingDeviceDetails(tracking: any, pipeline: any[]) {
+    const rawRows = await tracking.aggregate(pipeline).toArray();
+    return rawRows.map((entry: any) => {
+      const userAgent = this.normalizeText(entry?.userAgent);
+      const explicitModel = this.normalizeText(entry?.deviceModel);
+      const inferredModel = this.extractDeviceModelFromUserAgent(userAgent);
+      const deviceModel = explicitModel || inferredModel;
+      return {
+        userId: entry?.userId ? entry.userId.toString() : null,
+        userName: this.normalizeText(entry?.userName),
+        userEmail: this.normalizeText(entry?.userEmail),
+        device: this.normalizeText(entry?.device),
+        deviceModel,
+        os: this.normalizeText(entry?.os),
+        browser: this.normalizeText(entry?.browser),
+        ipAddress: this.normalizeIpAddress(entry?.ipAddress),
+        lastSeenAt: entry?.lastSeenAt || null,
+        eventsCount: Number(entry?.eventsCount || 0),
+      };
+    });
+  }
+
   async getDevices(creatorId: string, from: Date, to: Date, communityId?: string, communitySlug?: string) {
     const communityScope = await this.resolveCommunityScope(creatorId, communityId, communitySlug);
     const key = this.cacheKey(creatorId, from.toISOString(), to.toISOString(), `devices:${communityScope.cacheKeyPart}`);
     const cached = this.getCache<any>(key);
     if (cached) return cached;
 
-    // Try GA4 first
+    const tracking = this.dbConnection.collection('trackingactions');
+    const queryTracking = async () => {
+      const basePipeline = this.buildTrackingScopePipeline(creatorId, from, to, communityScope);
+      let rows = await tracking.aggregate(this.buildDeviceAggregatePipeline(basePipeline)).toArray();
+      const meaningfulRows = rows.filter((row: any) => this.isMeaningfulDeviceValue(row?.device));
+      if (meaningfulRows.length > 0) {
+        rows = meaningfulRows;
+      }
+      let details = await this.queryTrackingDeviceDetails(
+        tracking,
+        this.buildDeviceDetailsPipeline(basePipeline),
+      );
+
+      const userIdsMissingIp = details
+        .filter((entry: any) => !entry?.ipAddress && typeof entry?.userId === 'string')
+        .map((entry: any) => entry.userId as string);
+
+      if (userIdsMissingIp.length > 0) {
+        const fallbackIps = await this.resolveLatestKnownIps(
+          tracking,
+          creatorId,
+          communityScope,
+          userIdsMissingIp,
+        );
+        details = details.map((entry: any) => {
+          if (entry?.ipAddress || !entry?.userId) return entry;
+          const fallbackIp = fallbackIps.get(entry.userId);
+          if (!fallbackIp) return entry;
+          return {
+            ...entry,
+            ipAddress: fallbackIp,
+          };
+        });
+      }
+
+      return { rows, details };
+    };
+
+    let trackingResult = await queryTracking();
+
+    let ga4Rows: any[] | null = null;
     try {
       const ga4Devices = await this.ga4ReportingService.getCreatorDevices(
         creatorId,
         from.toISOString().slice(0, 10),
         to.toISOString().slice(0, 10),
-        communityScope.ga4CommunityId
+        communityScope.ga4CommunityId,
       );
-      const isMeaningful = (device: string | undefined | null) => {
-        const v = (device || '').trim().toLowerCase();
-        return v !== '' && v !== 'unknown' && v !== '(not set)' && v !== 'not set' && v !== '(not provided)' && v !== 'undefined' && v !== 'null';
-      };
-      const meaningful = ga4Devices.filter(d => isMeaningful(d.device));
+
+      const meaningful = ga4Devices.filter((device) => this.isMeaningfulDeviceValue(device.device));
       if (meaningful.length > 0) {
-        const rows = meaningful.map(d => ({
-          device: d.device,
-          count: d.count,
-          // OS/Browser not available in this GA4 query, but frontend only uses device name for chart
-          os: 'N/A',
-          browser: 'N/A'
+        ga4Rows = meaningful.map((device) => ({
+          device: device.device,
+          count: device.count,
         }));
-        this.setCache(key, { rows }, 60 * 1000);
-        return { rows };
       }
-    } catch (e) {
-      // Ignore
+    } catch {
+      // Ignore GA4 errors and rely on Mongo tracking data.
     }
 
-    const tracking = this.dbConnection.collection('trackingactions');
-
-    const buildPipeline = () => {
-      const pipeline: any[] = [
-        { $match: { timestamp: { $gte: from, $lte: to } } },
-        { $lookup: { from: 'cours', localField: 'contentId', foreignField: 'id', as: 'course' } },
-        { $lookup: { from: 'challenges', localField: 'contentId', foreignField: 'id', as: 'challenge' } },
-        { $addFields: { contentDoc: { $ifNull: [{ $arrayElemAt: ['$course', 0] }, { $arrayElemAt: ['$challenge', 0] }] } } },
-        { $match: { 'contentDoc.creatorId': this.getCreatorObjectId(creatorId) } },
-      ];
-
-      if (communityScope.hasFilter) {
-        pipeline.push({ $match: this.buildLookupCommunityMatch('contentDoc.communityId', communityScope.lookupCommunityValues) });
-      }
-
-      pipeline.push(
-        { $addFields: { uaLower: { $toLower: { $ifNull: ['$metadata.userAgent', ''] } } } },
-        { $project: { userId: 1, device: { $ifNull: ['$metadata.device', { $cond: [{ $or: [{ $regexMatch: { input: '$uaLower', regex: 'ipad|tablet|playbook|silk' } }, { $and: [{ $regexMatch: { input: '$uaLower', regex: 'android' } }, { $not: [{ $regexMatch: { input: '$uaLower', regex: 'mobile' } }] }] }] }, 'tablet', { $cond: [{ $regexMatch: { input: '$uaLower', regex: 'mobi|iphone|ipod|iemobile|blackberry|kindle|opera mini|windows phone|android' } }, 'mobile', 'desktop'] }] }] }, os: { $ifNull: ['$metadata.os', 'unknown'] }, browser: { $ifNull: ['$metadata.browser', 'unknown'] } } },
-        // Count unique users per device bucket (Option A)
-        { $group: { _id: { device: '$device', os: '$os', browser: '$browser', userId: '$userId' } } },
-        { $group: { _id: { device: '$_id.device', os: '$_id.os', browser: '$_id.browser' }, count: { $sum: 1 } } },
-        { $project: { _id: 0, device: '$_id.device', os: '$_id.os', browser: '$_id.browser', count: 1 } },
-        { $sort: { count: -1 } },
-      );
-      return pipeline;
-    };
-
-    const isMeaningful = (device: string | undefined | null) => {
-      const v = (device || '').trim().toLowerCase();
-      return v !== '' && v !== 'unknown' && v !== '(not set)' && v !== 'not set' && v !== '(not provided)' && v !== 'undefined' && v !== 'null';
-    };
-
-    let rows = await tracking.aggregate(buildPipeline()).toArray();
-    const meaningfulRows = rows.filter(r => isMeaningful(r.device));
-    if (meaningfulRows.length > 0) {
-      rows = meaningfulRows;
-    }
-
-    // If nothing yet, backfill daily rollups (which also validates tracking) then retry
-    if (!rows.length) {
+    if (!ga4Rows?.length && !trackingResult.rows.length && !trackingResult.details.length) {
       await this.backfillForCreator(creatorId, 90);
-      rows = await tracking.aggregate(buildPipeline()).toArray();
+      trackingResult = await queryTracking();
     }
 
-    this.setCache(key, { rows }, 60 * 1000);
-    return { rows };
+    const result = {
+      rows: ga4Rows?.length ? ga4Rows : trackingResult.rows,
+      details: trackingResult.details,
+    };
+
+    this.setCache(key, result, 60 * 1000);
+    return result;
+  }
+
+  private isMeaningfulAttributionValue(value: unknown): boolean {
+    if (typeof value !== 'string') return false;
+    const normalized = value.trim().toLowerCase();
+    return (
+      normalized !== '' &&
+      normalized !== 'unknown' &&
+      normalized !== '(not set)' &&
+      normalized !== 'not set' &&
+      normalized !== '(not provided)' &&
+      normalized !== '(none)' &&
+      normalized !== 'none' &&
+      normalized !== 'undefined' &&
+      normalized !== 'null' &&
+      normalized !== 'n/a'
+    );
+  }
+
+  private normalizeAttributionValue(value: unknown): string | null {
+    if (!this.isMeaningfulAttributionValue(value)) return null;
+    return (value as string).trim();
+  }
+
+  private extractReferrerDomain(referrer: string | null): string | null {
+    if (!referrer) return null;
+    const raw = referrer.trim();
+    if (!raw) return null;
+    if (raw.toLowerCase() === 'direct' || raw.toLowerCase() === '(direct)') return null;
+
+    const normalizeHost = (host: string): string | null => {
+      const normalizedHost = host.trim().toLowerCase().replace(/^www\./, '');
+      return normalizedHost.length > 0 ? normalizedHost : null;
+    };
+
+    try {
+      const url = new URL(raw);
+      return normalizeHost(url.hostname);
+    } catch {
+      // Ignore, try to coerce host below.
+    }
+
+    try {
+      const url = new URL(`https://${raw}`);
+      return normalizeHost(url.hostname);
+    } catch {
+      // Ignore, fallback below.
+    }
+
+    if (/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(raw)) {
+      return normalizeHost(raw);
+    }
+
+    return null;
+  }
+
+  private resolveReferrerChannel(input: {
+    domain: string | null;
+    utmSource: string | null;
+    utmMedium: string | null;
+    rawReferrer: string | null;
+  }): 'direct' | 'search' | 'social' | 'email' | 'paid' | 'referral' {
+    const domain = (input.domain || '').toLowerCase();
+    const source = (input.utmSource || '').toLowerCase();
+    const medium = (input.utmMedium || '').toLowerCase();
+    const referrer = (input.rawReferrer || '').toLowerCase();
+
+    const hasDirectHint =
+      source === 'direct' ||
+      source === '(direct)' ||
+      medium === 'direct' ||
+      referrer === 'direct' ||
+      referrer === '(direct)';
+    if (hasDirectHint || (!domain && !source && !medium && !referrer)) return 'direct';
+
+    if (
+      /email|newsletter/.test(medium) ||
+      /email|newsletter/.test(source) ||
+      domain.includes('mail.google.com')
+    ) {
+      return 'email';
+    }
+
+    if (/cpc|ppc|paid|display|affiliate|sponsored/.test(medium)) return 'paid';
+
+    const socialDomains = [
+      'facebook.com',
+      'instagram.com',
+      'linkedin.com',
+      'twitter.com',
+      'x.com',
+      'tiktok.com',
+      'youtube.com',
+      'reddit.com',
+      'pinterest.com',
+      'snapchat.com',
+      'telegram.org',
+      't.me',
+      'discord.com',
+      'whatsapp.com',
+    ];
+    if (
+      /social/.test(medium) ||
+      socialDomains.some((value) => domain.endsWith(value)) ||
+      /facebook|instagram|linkedin|twitter|x|tiktok|youtube|reddit|pinterest|snapchat|telegram|discord|whatsapp/.test(source)
+    ) {
+      return 'social';
+    }
+
+    const searchDomains = ['google.', 'bing.com', 'duckduckgo.com', 'yahoo.', 'baidu.com', 'yandex.', 'ecosia.org'];
+    if (
+      /organic|search|seo/.test(medium) ||
+      searchDomains.some((value) => domain.includes(value)) ||
+      /google|bing|duckduckgo|yahoo|baidu|yandex|ecosia/.test(source)
+    ) {
+      return 'search';
+    }
+
+    return 'referral';
+  }
+
+  private resolveReferrerSourceName(input: {
+    domain: string | null;
+    utmSource: string | null;
+    rawReferrer: string | null;
+  }): string {
+    if (input.domain) return input.domain;
+    if (input.utmSource) return input.utmSource;
+    if (input.rawReferrer) return input.rawReferrer;
+    return 'Direct';
+  }
+
+  private formatReferrerRows(rows: any[]) {
+    return rows
+      .map((row: any) => {
+        const rawReferrer = this.normalizeAttributionValue(row?.referrer);
+        const utmSource = this.normalizeAttributionValue(row?.utm_source);
+        const utmMedium = this.normalizeAttributionValue(row?.utm_medium);
+        const utmCampaign = this.normalizeAttributionValue(row?.utm_campaign);
+        const domain = this.extractReferrerDomain(rawReferrer);
+        const channel = this.resolveReferrerChannel({
+          domain,
+          utmSource,
+          utmMedium,
+          rawReferrer,
+        });
+        const source = this.resolveReferrerSourceName({
+          domain,
+          utmSource,
+          rawReferrer,
+        });
+        const count = Number(row?.count || 0);
+        const uniqueUsers = Number.isFinite(Number(row?.uniqueUsers))
+          ? Number(row?.uniqueUsers)
+          : undefined;
+        const lastSeenAt = row?.lastSeenAt || null;
+
+        return {
+          source,
+          channel,
+          domain,
+          referrer: rawReferrer,
+          utm_source: utmSource,
+          utm_medium: utmMedium,
+          utm_campaign: utmCampaign,
+          count,
+          uniqueUsers,
+          lastSeenAt,
+        };
+      })
+      .filter((row: any) => row.count > 0)
+      .sort((a: any, b: any) => b.count - a.count)
+      .slice(0, 50);
+  }
+
+  private summarizeReferrerRows(rows: any[], provider: 'ga4' | 'tracking') {
+    const totalEvents = rows.reduce((acc: number, row: any) => acc + Number(row?.count || 0), 0);
+    const channelTotals = rows.reduce((acc: Record<string, number>, row: any) => {
+      const channel = row?.channel || 'referral';
+      acc[channel] = (acc[channel] || 0) + Number(row?.count || 0);
+      return acc;
+    }, {});
+
+    const topChannel = (Object.entries(channelTotals) as Array<[string, number]>)
+      .sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+
+    return {
+      provider,
+      totalEvents,
+      sources: rows.length,
+      topChannel,
+      topSource: rows[0]?.source || null,
+    };
   }
 
   async getReferrers(creatorId: string, from: Date, to: Date, communityId?: string, communitySlug?: string) {
@@ -1283,15 +1804,18 @@ export class AnalyticsService {
         communityScope.ga4CommunityId
       );
       if (ga4Referrers.length > 0) {
-        const rows = ga4Referrers.map(r => ({
+        const rows = this.formatReferrerRows(ga4Referrers.map(r => ({
           referrer: r.referrer,
           count: r.count,
-          utm_source: r.referrer,
-          utm_medium: 'N/A',
-          utm_campaign: 'N/A'
-        }));
-        this.setCache(key, { rows });
-        return { rows };
+          utm_source: null,
+          utm_medium: null,
+          utm_campaign: null,
+        })));
+        if (rows.length > 0) {
+          const result = { rows, summary: this.summarizeReferrerRows(rows, 'ga4') };
+          this.setCache(key, result, 60 * 1000);
+          return result;
+        }
       }
     } catch (e) {
       // Ignore
@@ -1300,26 +1824,47 @@ export class AnalyticsService {
     const tracking = this.dbConnection.collection('trackingactions');
 
     const buildPipeline = () => {
-      const pipeline: any[] = [
-        { $match: { timestamp: { $gte: from, $lte: to } } },
-        { $lookup: { from: 'cours', localField: 'contentId', foreignField: 'id', as: 'course' } },
-        { $lookup: { from: 'challenges', localField: 'contentId', foreignField: 'id', as: 'challenge' } },
-        { $addFields: { contentDoc: { $ifNull: [{ $arrayElemAt: ['$course', 0] }, { $arrayElemAt: ['$challenge', 0] }] } } },
-        { $match: { 'contentDoc.creatorId': this.getCreatorObjectId(creatorId) } },
-      ];
-
-      if (communityScope.hasFilter) {
-        pipeline.push({ $match: this.buildLookupCommunityMatch('contentDoc.communityId', communityScope.lookupCommunityValues) });
-      }
-
-      pipeline.push(
-        { $project: { referrer: '$metadata.referrer', utm_source: '$metadata.utm_source', utm_medium: '$metadata.utm_medium', utm_campaign: '$metadata.utm_campaign' } },
-        { $group: { _id: { referrer: '$referrer', utm_source: '$utm_source', utm_medium: '$utm_medium', utm_campaign: '$utm_campaign' }, count: { $sum: 1 } } },
-        { $project: { _id: 0, referrer: '$_id.referrer', utm_source: '$_id.utm_source', utm_medium: '$_id.utm_medium', utm_campaign: '$_id.utm_campaign', count: 1 } },
+      const basePipeline = this.buildTrackingScopePipeline(creatorId, from, to, communityScope);
+      return [
+        ...basePipeline,
+        {
+          $project: {
+            userId: 1,
+            timestamp: 1,
+            referrer: '$metadata.referrer',
+            utm_source: '$metadata.utm_source',
+            utm_medium: '$metadata.utm_medium',
+            utm_campaign: '$metadata.utm_campaign',
+          },
+        },
+        {
+          $group: {
+            _id: {
+              referrer: '$referrer',
+              utm_source: '$utm_source',
+              utm_medium: '$utm_medium',
+              utm_campaign: '$utm_campaign',
+            },
+            count: { $sum: 1 },
+            users: { $addToSet: '$userId' },
+            lastSeenAt: { $max: '$timestamp' },
+          },
+        },
+        {
+          $project: {
+            _id: 0,
+            referrer: '$_id.referrer',
+            utm_source: '$_id.utm_source',
+            utm_medium: '$_id.utm_medium',
+            utm_campaign: '$_id.utm_campaign',
+            count: 1,
+            uniqueUsers: { $size: '$users' },
+            lastSeenAt: 1,
+          },
+        },
         { $sort: { count: -1 } },
-        { $limit: 50 },
-      );
-      return pipeline;
+        { $limit: 100 },
+      ];
     };
 
     let rows = await tracking.aggregate(buildPipeline()).toArray();
@@ -1329,8 +1874,14 @@ export class AnalyticsService {
       rows = await tracking.aggregate(buildPipeline()).toArray();
     }
 
-    this.setCache(key, { rows });
-    return { rows };
+    const formattedRows = this.formatReferrerRows(rows);
+    const result = {
+      rows: formattedRows,
+      summary: this.summarizeReferrerRows(formattedRows, 'tracking'),
+    };
+
+    this.setCache(key, result, 60 * 1000);
+    return result;
   }
 
   async exportCsv(creatorId: string, scope: 'overview' | 'courses' | 'challenges' | 'sessions' | 'events' | 'products' | 'posts', from: Date, to: Date, communityId?: string, communitySlug?: string) {
