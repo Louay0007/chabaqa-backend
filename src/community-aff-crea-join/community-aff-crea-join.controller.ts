@@ -9,6 +9,7 @@ import {
   UseGuards,
   Request,
   Param,
+  Res,
   HttpCode,
   HttpStatus,
   ValidationPipe,
@@ -42,6 +43,7 @@ import { PaginatedResponseDto } from '../common/dto/paginated-response.dto';
 import { diskStorage } from 'multer';
 import { extname } from 'path';
 import { v4 as uuidv4 } from 'uuid';
+import { Response } from 'express';
 
 @ApiTags('Community Management')
 @Controller('community-aff-crea-join')
@@ -636,6 +638,8 @@ export class CommunityAffCreaJoinController {
    * Authentification: JWT obligatoire
    */
   @Post('join-by-invite')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
   @HttpCode(HttpStatus.OK)
   @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))
   @ApiOperation({
@@ -690,6 +694,8 @@ export class CommunityAffCreaJoinController {
    * Authentification: JWT obligatoire
    */
   @Post('generate-invite')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
   @HttpCode(HttpStatus.OK)
   @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))
   @ApiOperation({
@@ -709,7 +715,7 @@ export class CommunityAffCreaJoinController {
         message: 'Lien d\'invitation généré avec succès',
         data: {
           inviteCode: 'abc123DEF456',
-          inviteLink: 'http://localhost:3000/community-aff-crea-join/join-by-invite/abc123DEF456'
+          inviteLink: 'https://chabaqa.com/invite/abc123DEF456'
         }
       }
     }
@@ -732,8 +738,7 @@ export class CommunityAffCreaJoinController {
   ) {
     try {
       const userId = req.user._id;
-      const baseUrl = `${req.protocol}://${req.get('host')}`;
-      const inviteData = await this.communityService.generateInviteLink(generateInviteDto, userId, baseUrl);
+      const inviteData = await this.communityService.generateInviteLink(generateInviteDto, userId);
 
       return {
         success: true,
@@ -857,10 +862,10 @@ export class CommunityAffCreaJoinController {
    * Authentification: JWT obligatoire
    */
   @Get('join-by-invite/:inviteCode')
-  @HttpCode(HttpStatus.OK)
+  @HttpCode(HttpStatus.FOUND)
   @ApiOperation({
-    summary: 'Accéder à une invitation via lien direct',
-    description: 'Permet à un utilisateur de rejoindre une communauté directement via un lien d\'invitation'
+    summary: 'Compatibilité anciens liens d\'invitation',
+    description: 'Redirige les anciens liens backend vers la route frontend /invite/:inviteCode'
   })
   @ApiParam({
     name: 'inviteCode',
@@ -868,38 +873,16 @@ export class CommunityAffCreaJoinController {
     example: 'abc123DEF456'
   })
   @ApiResponse({
-    status: HttpStatus.OK,
-    description: 'Communauté rejointe avec succès via lien direct'
-  })
-  @ApiResponse({
-    status: HttpStatus.NOT_FOUND,
-    description: 'Code d\'invitation invalide ou expiré'
-  })
-  @ApiResponse({
-    status: HttpStatus.CONFLICT,
-    description: 'Vous êtes déjà membre de cette communauté'
-  })
-  @ApiResponse({
-    status: HttpStatus.FORBIDDEN,
-    description: 'Communauté inactive'
+    status: HttpStatus.FOUND,
+    description: 'Redirection vers la page d\'invitation frontend'
   })
   async joinByInviteLink(
     @Param('inviteCode') inviteCode: string,
-    @Request() req: any
+    @Res() res: Response,
   ) {
-    try {
-      const userId = req.user._id;
-      const joinByInviteDto: JoinByInviteDto = { inviteCode };
-      const community = await this.communityService.joinByInvite(joinByInviteDto, userId);
-
-      return {
-        success: true,
-        message: 'Vous avez rejoint la communauté avec succès via le lien d\'invitation',
-        data: community
-      };
-    } catch (error) {
-      throw error;
-    }
+    const frontendBase = (process.env.FRONTEND_URL || 'https://chabaqa.com').replace(/\/+$/, '');
+    const destination = `${frontendBase}/invite/${encodeURIComponent(inviteCode)}`;
+    return res.redirect(HttpStatus.FOUND, destination);
   }
 
   @Get(':id/members')
@@ -1104,9 +1087,13 @@ export class CommunityAffCreaJoinController {
     status: HttpStatus.NOT_FOUND,
     description: 'Communauté non trouvée'
   })
-  async getCommunityById(@Param('id') communityId: string) {
+  async getCommunityById(@Param('id') communityId: string, @Request() req: any) {
     try {
-      const community = await this.communityService.getCommunityById(communityId);
+      const viewerId = req?.user?._id || req?.user?.userId;
+      const community = await this.communityService.getCommunityForViewer(
+        communityId,
+        viewerId ? String(viewerId) : undefined,
+      );
 
       return {
         success: true,
@@ -1123,6 +1110,8 @@ export class CommunityAffCreaJoinController {
    * Route: POST /community-aff-crea-join/:id/checkout
    */
   @Post(':id/checkout')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Acheter l\'adhésion à une communauté (paid community)' })
   @ApiQuery({ name: 'promoCode', required: false, type: String })
@@ -1140,6 +1129,8 @@ export class CommunityAffCreaJoinController {
    * Route: POST /community-aff-crea-join/checkout-private/:inviteCode
    */
   @Post('checkout-private/:inviteCode')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ 
     summary: 'Checkout for private community using invite code',

@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Query, Get, BadRequestException, UnauthorizedException, ForbiddenException, Req, UseGuards, UseInterceptors, UploadedFile, Param, Logger } from '@nestjs/common';
+import { Controller, Post, Body, Query, Get, BadRequestException, UnauthorizedException, ForbiddenException, InternalServerErrorException, Req, UseGuards, UseInterceptors, UploadedFile, Param, Logger } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import { extname, join } from 'path';
@@ -256,6 +256,75 @@ export class PaymentController {
     return items;
   }
 
+  private getFrontendBaseUrl(): string {
+    const base = (process.env.FRONTEND_URL || 'https://chabaqa.com').trim();
+    return base.replace(/\/+$/, '');
+  }
+
+  private buildInviteLink(inviteCode: string): string {
+    return `${this.getFrontendBaseUrl()}/invite/${encodeURIComponent(inviteCode)}`;
+  }
+
+  private normalizeInviteCode(value?: string): string {
+    return typeof value === 'string' ? value.trim() : '';
+  }
+
+  private async generateUniqueInviteCode(): Promise<string> {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    for (let attempt = 0; attempt < 12; attempt++) {
+      let code = '';
+      for (let i = 0; i < 12; i++) {
+        code += chars.charAt(Math.floor(Math.random() * chars.length));
+      }
+      const exists = await this.communityModel.exists({ inviteCode: code });
+      if (!exists) {
+        return code;
+      }
+    }
+    throw new InternalServerErrorException('Unable to generate unique invite code');
+  }
+
+  private async ensurePrivateInviteData(community: CommunityDocument): Promise<void> {
+    if (!community.isPrivate) {
+      return;
+    }
+
+    let changed = false;
+    if (!community.inviteCode) {
+      community.inviteCode = await this.generateUniqueInviteCode();
+      changed = true;
+    }
+
+    const canonicalInviteLink = this.buildInviteLink(community.inviteCode);
+    if (community.inviteLink !== canonicalInviteLink) {
+      community.inviteLink = canonicalInviteLink;
+      changed = true;
+    }
+
+    if (changed) {
+      await community.save();
+    }
+  }
+
+  private async assertPrivateInviteAccess(
+    community: CommunityDocument,
+    inviteCode?: string,
+  ): Promise<string | undefined> {
+    if (!community.isPrivate) {
+      return undefined;
+    }
+
+    await this.ensurePrivateInviteData(community);
+    const normalizedInviteCode = this.normalizeInviteCode(inviteCode);
+    if (!normalizedInviteCode || normalizedInviteCode !== community.inviteCode) {
+      throw new ForbiddenException(
+        'Cette communauté est privée. Vous devez utiliser un lien d\'invitation valide.',
+      );
+    }
+
+    return normalizedInviteCode;
+  }
+
   @Post('init/community')
   @ApiOperation({ summary: 'Initiate Flouci payment for community membership' })
   @ApiQuery({ name: 'promoCode', required: false })
@@ -263,12 +332,14 @@ export class PaymentController {
   @ApiBearerAuth()
   async initCommunityPayment(
     @Body('communityId') communityId: string,
+    @Body('inviteCode') inviteCode: string | undefined,
     @Req() req: any,
     @Query('promoCode') promoCode?: string,
   ) {
     const userId = (req.user?._id || req.user?.sub || '').toString();
     const community = await this.communityModel.findById(communityId);
     if (!community) throw new BadRequestException('Communauté non trouvée');
+    const validatedInviteCode = await this.assertPrivateInviteAccess(community, inviteCode);
 
     const price = community.fees_of_join || 0;
     if (price <= 0) throw new BadRequestException('Communauté gratuite');
@@ -287,6 +358,10 @@ export class PaymentController {
     }
 
     const breakdown = await this.feeService.calculateForAmount(amount, community.createur.toString());
+    const metadata: Record<string, any> = {};
+    if (validatedInviteCode) {
+      metadata.inviteCode = validatedInviteCode;
+    }
     const pendingOrder = await this.orderModel.create({
       buyerId: new Types.ObjectId(userId),
       creatorId: community.createur,
@@ -301,6 +376,7 @@ export class PaymentController {
       promoCode: appliedCode,
       discountDT,
       status: 'pending',
+      metadata,
     });
 
     const successUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-success?scope=community&id=${communityId}`;
@@ -310,7 +386,12 @@ export class PaymentController {
       amountTND: amount,
       successUrl,
       failUrl,
-      metadata: { userId, contentType: 'community', contentId: communityId },
+      metadata: {
+        userId,
+        contentType: 'community',
+        contentId: communityId,
+        ...(validatedInviteCode ? { inviteCode: validatedInviteCode } : {}),
+      },
     });
     if (!init.success) throw new BadRequestException(init.error);
     pendingOrder.paymentId = init.paymentId;
@@ -530,6 +611,10 @@ export class PaymentController {
     const offlineMode = (process.env.PAYMENT_MODE || 'instant') === 'offline';
     const event = await this.eventModel.findById(eventId);
     if (!event) throw new BadRequestException('Événement non trouvé');
+    const alreadyRegistered = (event.attendees || []).some((attendee: any) => attendee?.userId?.toString() === userId);
+    if (alreadyRegistered) {
+      throw new BadRequestException('Vous êtes déjà inscrit à cet événement');
+    }
     const ticket = event.tickets.find(t => t.type === ticketType);
     if (!ticket || (ticket.price || 0) <= 0) throw new BadRequestException('Billet invalide ou gratuit');
     let amount = ticket.price || 0; let discountDT = 0; let appliedCode: string | undefined;
@@ -658,12 +743,14 @@ export class PaymentController {
   @ApiBearerAuth()
   async initStripeLinkCommunityPayment(
     @Body('communityId') communityId: string,
+    @Body('inviteCode') inviteCode: string | undefined,
     @Req() req: any,
     @Query('promoCode') promoCode?: string,
   ) {
     const userId = (req.user?._id || req.user?.sub || '').toString();
     const community = await this.communityModel.findById(communityId);
     if (!community) throw new BadRequestException('Community not found');
+    const validatedInviteCode = await this.assertPrivateInviteAccess(community, inviteCode);
 
     const price = community.fees_of_join || 0;
     if (price <= 0) throw new BadRequestException('Free community');
@@ -682,6 +769,10 @@ export class PaymentController {
     }
 
     const breakdown = await this.feeService.calculateForAmount(amount, community.createur.toString());
+    const metadata: Record<string, any> = {};
+    if (validatedInviteCode) {
+      metadata.inviteCode = validatedInviteCode;
+    }
     const pendingOrder = await this.orderModel.create({
       buyerId: new Types.ObjectId(userId),
       creatorId: community.createur,
@@ -696,6 +787,7 @@ export class PaymentController {
       promoCode: appliedCode,
       discountDT,
       status: 'pending',
+      metadata,
     });
 
     const successUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-success?scope=community&id=${communityId}&provider=stripe&sessionId={CHECKOUT_SESSION_ID}`;
@@ -713,7 +805,8 @@ export class PaymentController {
         userId,
         contentType: 'community',
         contentId: communityId,
-        orderId: pendingOrder._id.toString()
+        orderId: pendingOrder._id.toString(),
+        ...(validatedInviteCode ? { inviteCode: validatedInviteCode } : {}),
       },
       lineItems: [{
         name: `Join ${community.name}`,
@@ -928,6 +1021,10 @@ export class PaymentController {
     const userId = (req.user?._id || req.user?.sub || '').toString();
     const event = await this.eventModel.findOne({ id: eventId }) || await this.eventModel.findById(eventId);
     if (!event) throw new BadRequestException('Event not found');
+    const alreadyRegistered = (event.attendees || []).some((attendee: any) => attendee?.userId?.toString() === userId);
+    if (alreadyRegistered) {
+      throw new BadRequestException('Vous êtes déjà inscrit à cet événement');
+    }
 
     const ticket = event.tickets.find(t => t.type === ticketType || t.id === ticketType);
     if (!ticket) throw new BadRequestException('Ticket type not found');
@@ -1277,6 +1374,11 @@ export class PaymentController {
     return message.includes('la date de la session est obligatoire');
   }
 
+  private isAlreadyRegisteredEventError(error: any): boolean {
+    const message = this.getErrorMessage(error).toLowerCase();
+    return message.includes('déjà inscrit') || message.includes('already registered');
+  }
+
   private async findSessionByAnyId(sessionId: string, dbSession: any = null): Promise<SessionDocument | null> {
     let sessionDoc = await this.sessionModel.findOne({ id: sessionId }).session(dbSession);
     if (!sessionDoc && Types.ObjectId.isValid(sessionId)) {
@@ -1322,7 +1424,15 @@ export class PaymentController {
       case TrackableContentType.EVENT:
         // Use metadata ticketType if available
         const ticketType = order.metadata?.ticketType || 'standard';
-        await this.eventService.registerAttendee(order.contentId, ticketType, order.buyerId.toString(), order.promoCode);
+        try {
+          await this.eventService.registerAttendee(order.contentId, ticketType, order.buyerId.toString(), order.promoCode);
+        } catch (error: any) {
+          if (this.isAlreadyRegisteredEventError(error)) {
+            this.logger.warn(`Skipping duplicate event registration for order ${order._id}: buyer already registered`);
+            break;
+          }
+          throw error;
+        }
         break;
 
       case TrackableContentType.SESSION:
@@ -1756,6 +1866,7 @@ export class PaymentController {
   @UseInterceptors(FileInterceptor('proof', { storage: manualProofStorage }))
   async initManualCommunityPayment(
     @Body('communityId') communityId: string,
+    @Body('inviteCode') inviteCode: string | undefined,
     @Req() req: any,
     @UploadedFile() file: Express.Multer.File,
     @Query('promoCode') promoCode?: string,
@@ -1765,6 +1876,7 @@ export class PaymentController {
     const userId = (req.user?._id || req.user?.sub || '').toString();
     const community = await this.communityModel.findById(communityId);
     if (!community) throw new BadRequestException('Community not found');
+    const validatedInviteCode = await this.assertPrivateInviteAccess(community, inviteCode);
 
     const price = community.fees_of_join || 0;
     if (price <= 0) throw new BadRequestException('Free community');
@@ -1802,7 +1914,10 @@ export class PaymentController {
       discountDT,
       status: 'pending_verification',
       paymentMethod: 'manual',
-      paymentProof: uploadResult.url
+      paymentProof: uploadResult.url,
+      metadata: {
+        ...(validatedInviteCode ? { inviteCode: validatedInviteCode } : {}),
+      },
     });
 
     return {
@@ -2283,6 +2398,30 @@ export class PaymentController {
     }
 
     try {
+      const creatorFilter: any = Types.ObjectId.isValid(userId)
+        ? new Types.ObjectId(userId)
+        : userId;
+      const pendingOrder = await this.orderModel.findOne({
+        _id: orderId,
+        paymentMethod: 'manual',
+        status: 'pending_verification',
+        creatorId: creatorFilter,
+      });
+      if (!pendingOrder) {
+        throw new BadRequestException('Order not found or access denied');
+      }
+
+      if (action === 'approve' && pendingOrder.contentType === TrackableContentType.COMMUNITY) {
+        const privateCommunity = await this.communityModel.findById(pendingOrder.contentId);
+        if (!privateCommunity) {
+          throw new BadRequestException('Community not found');
+        }
+        await this.assertPrivateInviteAccess(
+          privateCommunity,
+          (pendingOrder as any)?.metadata?.inviteCode,
+        );
+      }
+
       const order = await this.manualPaymentService.verifyPayment(orderId, userId, action);
 
       const buyer = await this.userModel.findById(order.buyerId).select('email name').exec();
@@ -2294,6 +2433,9 @@ export class PaymentController {
           if (community) {
             community.addMember(order.buyerId);
             await community.save();
+            await this.userModel.findByIdAndUpdate(order.buyerId, {
+              $addToSet: { joinedCommunities: community._id },
+            });
           }
         } else if (order.contentType === TrackableContentType.SUBSCRIPTION) {
           // contentId holds plan tier string

@@ -233,7 +233,13 @@ export class SessionController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Récupérer les réservations d\'un utilisateur' })
   @ApiResponse({ status: 200, description: 'Réservations de l\'utilisateur récupérées avec succès', type: UserBookingsResponseDto })
-  async getUserBookings(@Request() req: any): Promise<UserBookingsResponseDto> {
+  @ApiQuery({ name: 'communityId', required: false, description: 'Filtrer les réservations par ID de communauté' })
+  @ApiQuery({ name: 'communitySlug', required: false, description: 'Filtrer les réservations par slug de communauté' })
+  async getUserBookings(
+    @Request() req: any,
+    @Query('communityId') communityId?: string,
+    @Query('communitySlug') communitySlug?: string,
+  ): Promise<UserBookingsResponseDto> {
     const userId = req.user._id || req.user.userId || req.user.sub;
     console.log(`[getUserBookings Controller] User from JWT: ${JSON.stringify({ _id: req.user._id, userId: req.user.userId, sub: req.user.sub })}`);
     console.log(`[getUserBookings Controller] Resolved userId: ${userId}`);
@@ -241,7 +247,7 @@ export class SessionController {
     // First sync any missing bookings from paid orders
     await this.sessionService.syncBookingsFromPaidOrders(userId);
     // Then return the bookings
-    return this.sessionService.getUserBookings(userId);
+    return this.sessionService.getUserBookings(userId, { communityId, communitySlug });
   }
 
   @Post('bookings/cleanup-duplicates')

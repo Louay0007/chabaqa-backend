@@ -929,8 +929,6 @@ export class EventService {
       // Chercher tous les événements où l'utilisateur est inscrit comme participant
       const events = await this.eventModel.find({
         'attendees.userId': new Types.ObjectId(userId),
-        isPublished: true,
-        isActive: true
       })
       .populate('communityId', 'name slug')
       .populate('creatorId', 'name email profile_picture photo_profil')

@@ -1094,14 +1094,45 @@ export class SessionService {
   /**
    * Récupérer les réservations d'un utilisateur
    */
-  async getUserBookings(userId: string): Promise<UserBookingsResponseDto> {
+  async getUserBookings(
+    userId: string,
+    options?: {
+      communityId?: string;
+      communitySlug?: string;
+    },
+  ): Promise<UserBookingsResponseDto> {
     console.log(`[getUserBookings] Fetching bookings for user: ${userId}`);
     
     // Create ObjectId for comparison
     const userObjectId = new Types.ObjectId(userId);
-    
+
+    const normalizedCommunityId = String(options?.communityId || '').trim();
+    const normalizedCommunitySlug = String(options?.communitySlug || '').trim();
+    let scopedCommunityId = normalizedCommunityId;
+
+    if (!scopedCommunityId && normalizedCommunitySlug) {
+      const scopedCommunity = await this.communityModel
+        .findOne({ slug: normalizedCommunitySlug })
+        .select('_id')
+        .lean();
+
+      if (scopedCommunity?._id) {
+        scopedCommunityId = scopedCommunity._id.toString();
+      } else {
+        return { bookings: [], total: 0 };
+      }
+    }
+
+    const query: any = { 'bookings.userId': userObjectId };
+    if (scopedCommunityId) {
+      query.communityId = Types.ObjectId.isValid(scopedCommunityId)
+        ? new Types.ObjectId(scopedCommunityId).toString()
+        : scopedCommunityId;
+      console.log(`[getUserBookings] Applying community filter: ${query.communityId}`);
+    }
+
     const sessions = await this.sessionModel
-      .find({ 'bookings.userId': userObjectId })
+      .find(query)
       .populate('creatorId', 'name email profile_picture photo_profil')
       .exec();
 

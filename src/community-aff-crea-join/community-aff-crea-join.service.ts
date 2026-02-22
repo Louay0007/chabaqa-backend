@@ -34,6 +34,73 @@ export class CommunityAffCreaJoinService {
     return connection.modelNames().includes(modelName) ? (connection.model(modelName) as Model<T>) : null;
   }
 
+  private getFrontendBaseUrl(): string {
+    const base = (process.env.FRONTEND_URL || 'https://chabaqa.com').trim();
+    return base.replace(/\/+$/, '');
+  }
+
+  private buildInviteLink(inviteCode: string): string {
+    return `${this.getFrontendBaseUrl()}/invite/${encodeURIComponent(inviteCode)}`;
+  }
+
+  private async generateUniqueInviteCode(): Promise<string> {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    for (let attempt = 0; attempt < 12; attempt++) {
+      let code = '';
+      for (let i = 0; i < 12; i++) {
+        code += chars.charAt(Math.floor(Math.random() * chars.length));
+      }
+
+      const existing = await this.communityModel.exists({ inviteCode: code });
+      if (!existing) {
+        return code;
+      }
+    }
+
+    throw new InternalServerErrorException('Impossible de générer un code d\'invitation unique');
+  }
+
+  private async ensurePrivateInviteData(community: CommunityDocument, regenerate = false): Promise<boolean> {
+    if (!community.isPrivate) {
+      return false;
+    }
+
+    let changed = false;
+
+    if (regenerate || !community.inviteCode) {
+      community.inviteCode = await this.generateUniqueInviteCode();
+      changed = true;
+    }
+
+    const canonicalLink = this.buildInviteLink(community.inviteCode);
+    if (community.inviteLink !== canonicalLink) {
+      community.inviteLink = canonicalLink;
+      changed = true;
+    }
+
+    return changed;
+  }
+
+  private normalizeViewerId(value?: string): string | null {
+    if (!value || typeof value !== 'string') return null;
+    const trimmed = value.trim();
+    return /^[0-9a-fA-F]{24}$/.test(trimmed) ? trimmed : null;
+  }
+
+  private canViewInviteSecrets(community: CommunityDocument, viewerId?: string): boolean {
+    const normalizedViewerId = this.normalizeViewerId(viewerId);
+    if (!normalizedViewerId) {
+      return false;
+    }
+
+    const viewerObjectId = new Types.ObjectId(normalizedViewerId);
+    const isCreator = community.createur?.equals?.(viewerObjectId);
+    const isAdmin = Array.isArray(community.admins)
+      ? community.admins.some((adminId: any) => adminId?.equals?.(viewerObjectId))
+      : false;
+    return Boolean(isCreator || isAdmin);
+  }
+
   /**
    * Créer une nouvelle communauté
    * @param createCommunityDto - Données de la communauté à créer selon l'interface CommunityFormData
@@ -109,6 +176,7 @@ export class CommunityAffCreaJoinService {
       const feeAmount = parseFloat(communityDataAvecLogo.feeAmount) || 0;
 
       // Mapper les données de CommunityFormData vers le schéma Community - 100% compatible frontend
+      const isPrivate = communityDataAvecLogo.status === 'private';
       const communityData = {
         name: communityDataAvecLogo.name,
         slug: uniqueSlug,
@@ -116,7 +184,7 @@ export class CommunityAffCreaJoinService {
         country: communityDataAvecLogo.country,
 
         // Mappage des paramètres d'accès
-        isPrivate: communityDataAvecLogo.status === 'private',
+        isPrivate,
         fees_of_join: communityDataAvecLogo.joinFee === 'paid' ? feeAmount : 0,
         currency: communityDataAvecLogo.currency,
 
@@ -147,6 +215,7 @@ export class CommunityAffCreaJoinService {
           heroLayout: 'centered',
           headerStyle: 'default',
           contentWidth: 'normal',
+          visibility: isPrivate ? 'private' : 'public',
           showStats: true,
           showHero: true,
           showFeatures: true,
@@ -213,14 +282,8 @@ export class CommunityAffCreaJoinService {
 
       const community = new this.communityModel(communityData);
 
-      // Générer automatiquement un inviteCode unique pour éviter les conflits
-      community.inviteCode = community.generateInviteCode();
-
-      // Si la communauté est privée, générer un lien d'invitation par défaut
       if (community.isPrivate) {
-        // Use a default base URL if not available, will be updated when generated properly via API
-        const baseUrl = process.env.FRONTEND_URL || 'https://chabaqa.com';
-        community.inviteLink = `${baseUrl}/invite/${community.inviteCode}`;
+        await this.ensurePrivateInviteData(community);
       }
 
       const savedCommunity = await community.save();
@@ -279,7 +342,9 @@ export class CommunityAffCreaJoinService {
       await this.updateCommunityRanks();
 
       // Transformer la réponse pour être 100% compatible avec le frontend
-      const transformedCommunity = this.transformCommunityForFrontend(populatedCommunity);
+      const transformedCommunity = this.transformCommunityForFrontend(populatedCommunity, {
+        includeInviteSecrets: true,
+      });
       
       return {
         community: transformedCommunity,
@@ -365,6 +430,8 @@ export class CommunityAffCreaJoinService {
       heroLayout: settings.heroLayout || 'centered',
       headerStyle: settings.headerStyle || 'default',
       contentWidth: settings.contentWidth || 'normal',
+      visibility: settings.visibility === 'private' ? 'private' : 'public',
+      allowInvites: settings.allowInvites ?? true,
       showStats: settings.showStats ?? true,
       showHero: settings.showHero ?? true,
       showFeatures: settings.showFeatures ?? true,
@@ -414,8 +481,12 @@ export class CommunityAffCreaJoinService {
     };
   }
 
-  private transformCommunityForFrontend(community: CommunityDocument): any {
+  private transformCommunityForFrontend(
+    community: CommunityDocument,
+    options: { includeInviteSecrets?: boolean } = {},
+  ): any {
     const normalizedSettings = this.normalizeCommunitySettings(community.name, community.settings || {});
+    const includeInviteSecrets = Boolean(options.includeInviteSecrets);
     const membersArrayCount = Array.isArray((community as any).members)
       ? (community as any).members.length
       : 0;
@@ -538,6 +609,8 @@ export class CommunityAffCreaJoinService {
         heroLayout: normalizedSettings.heroLayout,
         headerStyle: normalizedSettings.headerStyle,
         contentWidth: normalizedSettings.contentWidth,
+        visibility: community.isPrivate ? 'private' : 'public',
+        allowInvites: normalizedSettings.allowInvites,
         showStats: normalizedSettings.showStats,
         showHero: normalizedSettings.showHero,
         showFeatures: normalizedSettings.showFeatures,
@@ -581,8 +654,12 @@ export class CommunityAffCreaJoinService {
       isActive: community.isActive,
       isPrivate: community.isPrivate,
       isVerified: community.isVerified,
-      inviteCode: community.inviteCode,
-      inviteLink: community.inviteLink,
+      ...(includeInviteSecrets
+        ? {
+            inviteCode: community.inviteCode,
+            inviteLink: community.inviteLink,
+          }
+        : {}),
       rank: community.rank,
       fees_of_join: community.fees_of_join,
       currency: community.currency,
@@ -598,7 +675,7 @@ export class CommunityAffCreaJoinService {
   async getAllCommunities(): Promise<any[]> {
     try {
       const communities = await this.communityModel
-        .find({ isActive: true })
+        .find({ isActive: true, isPrivate: false })
         .populate('createur', 'name email profile_picture photo_profil avatar photo')
         .populate('members', 'name email profile_picture photo_profil avatar photo')
         .populate('admins', 'name email profile_picture photo_profil avatar photo')
@@ -606,7 +683,7 @@ export class CommunityAffCreaJoinService {
         .exec();
 
       // Transformer toutes les communautés pour le frontend
-      return communities.map(community => this.transformCommunityForFrontend(community));
+      return communities.map((community) => this.transformCommunityForFrontend(community));
     } catch (error) {
       console.error('Erreur lors de la récupération des communautés:', error);
       throw new InternalServerErrorException('Erreur lors de la récupération des communautés');
@@ -634,7 +711,9 @@ export class CommunityAffCreaJoinService {
         .sort({ createdAt: -1 })
         .exec();
 
-      return communities.map(community => this.transformCommunityForFrontend(community));
+      return communities.map((community) =>
+        this.transformCommunityForFrontend(community, { includeInviteSecrets: true }),
+      );
 
     } catch (error) {
       if (error instanceof NotFoundException) {
@@ -667,7 +746,11 @@ export class CommunityAffCreaJoinService {
         .sort({ createdAt: -1 })
         .exec();
 
-      return communities.map(community => this.transformCommunityForFrontend(community));
+      return communities.map((community) =>
+        this.transformCommunityForFrontend(community, {
+          includeInviteSecrets: this.canViewInviteSecrets(community, userId),
+        }),
+      );
 
     } catch (error) {
       if (error instanceof NotFoundException) {
@@ -705,7 +788,9 @@ export class CommunityAffCreaJoinService {
         .sort({ createdAt: -1 })
         .exec();
 
-      return communities.map(community => this.transformCommunityForFrontend(community));
+      return communities.map((community) =>
+        this.transformCommunityForFrontend(community, { includeInviteSecrets: true }),
+      );
 
     } catch (error) {
       if (error instanceof NotFoundException) {
@@ -859,10 +944,25 @@ export class CommunityAffCreaJoinService {
         (community as any).type = updateData.type;
       }
 
+      const incomingSettings = (updateData as any)?.settings || {};
+      const settingsVisibility =
+        typeof incomingSettings.visibility === 'string'
+          ? incomingSettings.visibility.toLowerCase()
+          : null;
+      const settingsIsPublic =
+        typeof incomingSettings.isPublic === 'boolean' ? incomingSettings.isPublic : null;
+
+      if (settingsVisibility === 'private') {
+        community.isPrivate = true;
+      } else if (settingsVisibility === 'public') {
+        community.isPrivate = false;
+      } else if (settingsIsPublic !== null) {
+        community.isPrivate = !settingsIsPublic;
+      }
+
       // Merge settings object (design/layout/advanced options)
       if (updateData.settings && typeof updateData.settings === 'object') {
         const currentSettings = this.normalizeCommunitySettings(community.name, (community.settings || {}) as any);
-        const incomingSettings = updateData.settings as any;
         const mergedSettings: any = {
           ...currentSettings,
           ...incomingSettings,
@@ -908,10 +1008,21 @@ export class CommunityAffCreaJoinService {
           }
         }
 
+        mergedSettings.visibility = community.isPrivate ? 'private' : 'public';
+        mergedSettings.allowInvites = community.isPrivate ? true : Boolean(mergedSettings.allowInvites ?? true);
+
         community.settings = this.normalizeCommunitySettings(community.name, mergedSettings);
       } else {
         // Auto-backfill defaults for older communities even when no settings update is sent
-        community.settings = this.normalizeCommunitySettings(community.name, (community.settings || {}) as any);
+        const normalizedSettings = this.normalizeCommunitySettings(
+          community.name,
+          (community.settings || {}) as any,
+        );
+        community.settings = {
+          ...normalizedSettings,
+          visibility: community.isPrivate ? 'private' : 'public',
+          allowInvites: community.isPrivate ? true : Boolean(normalizedSettings.allowInvites ?? true),
+        } as any;
       }
 
       // Keep pricing sub-document consistent when available
@@ -928,10 +1039,17 @@ export class CommunityAffCreaJoinService {
         }
       }
 
+      if (community.isPrivate) {
+        await this.ensurePrivateInviteData(community);
+      } else {
+        community.inviteCode = null as any;
+        community.inviteLink = null as any;
+      }
+
       await community.save();
 
       const refreshed = await this.getCommunityById(community._id.toString());
-      return this.transformCommunityForFrontend(refreshed);
+      return this.transformCommunityForFrontend(refreshed, { includeInviteSecrets: true });
     } catch (error) {
       if (
         error instanceof NotFoundException ||
@@ -1005,14 +1123,36 @@ export class CommunityAffCreaJoinService {
   /**
    * Checkout pour adhésion à une communauté payante
    */
-  async checkoutCommunityMembership(communityId: string, userId: string, promoCode?: string, isInviteValidated: boolean = false): Promise<{ message: string }> {
+  async checkoutCommunityMembership(
+    communityId: string,
+    userId: string,
+    promoCode?: string,
+    isInviteValidated: boolean = false,
+    inviteCode?: string,
+  ): Promise<{ message: string }> {
     const community = await this.communityModel.findById(communityId);
     if (!community) {
       throw new NotFoundException('Communauté non trouvée');
     }
 
-    if (community.isPrivate && !isInviteValidated) {
-      throw new ForbiddenException('Cette communauté est privée. Veuillez utiliser le lien d\'invitation pour rejoindre.');
+    const normalizedInviteCode = typeof inviteCode === 'string' ? inviteCode.trim() : '';
+
+    if (community.isPrivate) {
+      const inviteChanged = await this.ensurePrivateInviteData(community);
+      if (inviteChanged) {
+        await community.save();
+      }
+
+      const inviteMatches =
+        normalizedInviteCode.length > 0 &&
+        typeof community.inviteCode === 'string' &&
+        normalizedInviteCode === community.inviteCode;
+
+      if (!isInviteValidated && !inviteMatches) {
+        throw new ForbiddenException(
+          'Cette communauté est privée. Vous devez utiliser un lien d\'invitation pour la rejoindre.',
+        );
+      }
     }
 
     if (community.members.includes(new Types.ObjectId(userId))) {
@@ -1042,6 +1182,10 @@ export class CommunityAffCreaJoinService {
     }
 
     const breakdown = await this.feeService.calculateForAmount(effective, community.createur.toString());
+    const metadata: Record<string, any> = {};
+    if (community.isPrivate && community.inviteCode) {
+      metadata.inviteCode = community.inviteCode;
+    }
     await this.orderModel.create({
       buyerId: new Types.ObjectId(userId),
       creatorId: community.createur,
@@ -1054,7 +1198,8 @@ export class CommunityAffCreaJoinService {
       creatorNetDT: breakdown.creatorNetDT,
       promoCode: appliedCode,
       discountDT,
-      status: 'paid'
+      status: 'paid',
+      metadata,
     });
 
     community.addMember(new Types.ObjectId(userId));
@@ -1134,7 +1279,7 @@ export class CommunityAffCreaJoinService {
       return await this.communityModel
         .find({ isPrivate: false, isActive: true })
         .populate('createur', 'name email profile_picture photo_profil')
-        .select('-members -admins -moderateurs') // Masquer les listes de membres pour l'affichage public
+        .select('-members -admins -moderateurs -inviteCode -inviteLink') // Masquer les listes de membres pour l'affichage public
         .sort({ createdAt: -1 })
         .exec();
 
@@ -1336,7 +1481,8 @@ export class CommunityAffCreaJoinService {
       }
 
       // Trouver la communauté par le code d'invitation
-      const community = await this.communityModel.findOne({ inviteCode: joinData.inviteCode });
+      const normalizedInviteCode = String(joinData.inviteCode || '').trim();
+      const community = await this.communityModel.findOne({ inviteCode: normalizedInviteCode });
       if (!community) {
         throw new NotFoundException('Code d\'invitation invalide ou expiré');
       }
@@ -1424,10 +1570,9 @@ export class CommunityAffCreaJoinService {
    * Générer un lien d'invitation pour une communauté
    * @param generateData - Données avec l'ID de la communauté
    * @param userId - ID de l'utilisateur (doit être admin/créateur)
-   * @param baseUrl - URL de base pour construire le lien complet
    * @returns Le lien d'invitation généré
    */
-  async generateInviteLink(generateData: GenerateInviteDto, userId: string, baseUrl: string): Promise<{ inviteCode: string, inviteLink: string }> {
+  async generateInviteLink(generateData: GenerateInviteDto, userId: string): Promise<{ inviteCode: string, inviteLink: string }> {
     try {
       // Vérifier si l'utilisateur existe
       const user = await this.userModel.findById(userId);
@@ -1449,19 +1594,16 @@ export class CommunityAffCreaJoinService {
         throw new ForbiddenException('Seuls les créateurs et administrateurs peuvent générer des liens d\'invitation');
       }
 
-      // Générer un nouveau code si nécessaire
-      if (!community.inviteCode || generateData.regenerate) {
-        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-        let newCode = '';
-        for (let i = 0; i < 12; i++) {
-          newCode += chars.charAt(Math.floor(Math.random() * chars.length));
-        }
-        community.inviteCode = newCode;
+      if (!community.isPrivate) {
+        throw new ForbiddenException(
+          'Seules les communautés privées peuvent utiliser des liens d\'invitation.',
+        );
       }
 
-      // Générer le lien d'invitation
-      community.inviteLink = `${baseUrl}/community-aff-crea-join/join-by-invite/${community.inviteCode}`;
-      await community.save();
+      const changed = await this.ensurePrivateInviteData(community, Boolean(generateData.regenerate));
+      if (changed) {
+        await community.save();
+      }
 
       return {
         inviteCode: community.inviteCode,
@@ -1486,9 +1628,10 @@ export class CommunityAffCreaJoinService {
    */
   async validateInviteCode(inviteCode: string): Promise<any> {
     try {
-      const community = await this.communityModel.findOne({ inviteCode })
+      const normalizedInviteCode = String(inviteCode || '').trim();
+      const community = await this.communityModel.findOne({ inviteCode: normalizedInviteCode })
         .populate('createur', 'name profile_picture photo_profil')
-        .select('name description short_description coverImage photo_de_couverture logo fees_of_join price priceType currency membersCount isPrivate isActive')
+        .select('name slug description short_description coverImage photo_de_couverture logo fees_of_join price priceType currency membersCount isPrivate isActive')
         .exec();
 
       if (!community) {
@@ -1501,7 +1644,9 @@ export class CommunityAffCreaJoinService {
 
       // Transform for frontend preview
       const preview = {
+        communityId: community._id.toString(),
         _id: community._id,
+        slug: community.slug,
         name: community.name,
         description: community.short_description,
         logo: this.uploadService.ensureAbsoluteUrl(community.logo),
@@ -1535,7 +1680,8 @@ export class CommunityAffCreaJoinService {
    * Checkout for private community via invite
    */
   async checkoutPrivateCommunity(inviteCode: string, userId: string, promoCode?: string): Promise<{ message: string }> {
-    const community = await this.communityModel.findOne({ inviteCode });
+    const normalizedInviteCode = String(inviteCode || '').trim();
+    const community = await this.communityModel.findOne({ inviteCode: normalizedInviteCode });
     if (!community) {
       throw new NotFoundException('Code d\'invitation invalide');
     }
@@ -1550,7 +1696,13 @@ export class CommunityAffCreaJoinService {
     }
 
     // Reuse existing checkout logic logic but bypassed privacy check because we have valid invite code
-    return this.checkoutCommunityMembership(community._id.toString(), userId, promoCode, true);
+    return this.checkoutCommunityMembership(
+      community._id.toString(),
+      userId,
+      promoCode,
+      true,
+      normalizedInviteCode,
+    );
   }
 
   /**
@@ -2007,6 +2159,13 @@ export class CommunityAffCreaJoinService {
       console.error('❌ [DELETE-COMMUNITY] Error:', error);
       throw new InternalServerErrorException('Error deleting community');
     }
+  }
+
+  async getCommunityForViewer(idOrSlug: string, viewerId?: string): Promise<any> {
+    const community = await this.getCommunityById(idOrSlug);
+    return this.transformCommunityForFrontend(community, {
+      includeInviteSecrets: this.canViewInviteSecrets(community, viewerId),
+    });
   }
 
   /**
