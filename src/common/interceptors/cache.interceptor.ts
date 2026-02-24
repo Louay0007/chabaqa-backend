@@ -5,25 +5,31 @@ import {
   CallHandler,
   Logger,
 } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import { Observable, of } from 'rxjs';
 import { tap } from 'rxjs/operators';
 import { CacheService } from '../services/cache.service';
+import { CACHE_KEY_PREFIX, CACHE_TTL_KEY } from '../decorators/cache-ttl.decorator';
 
 /**
  * HTTP Cache Interceptor
- * Caches GET requests in Redis for faster response times
+ * Caches GET requests in Redis/in-memory for faster response times.
  */
 @Injectable()
 export class HttpCacheInterceptor implements NestInterceptor {
   private readonly logger = new Logger(HttpCacheInterceptor.name);
 
-  constructor(private cacheService: CacheService) {}
+  constructor(
+    private cacheService: CacheService,
+    private reflector: Reflector,
+  ) {}
 
   async intercept(
     context: ExecutionContext,
     next: CallHandler,
   ): Promise<Observable<any>> {
     const request = context.switchToHttp().getRequest();
+    const response = context.switchToHttp().getResponse();
     const { method, url, user } = request;
 
     // Only cache GET requests
@@ -31,7 +37,7 @@ export class HttpCacheInterceptor implements NestInterceptor {
       return next.handle();
     }
 
-    // Skip caching for authenticated user-specific endpoints
+    // Skip caching for authenticated/user-scoped or highly dynamic endpoints
     const skipPatterns = [
       '/my',
       '/me',
@@ -40,64 +46,132 @@ export class HttpCacheInterceptor implements NestInterceptor {
       '/dm/',
       '/wallet',
       '/admin/',
-      '/challenges/',
     ];
 
-    if (skipPatterns.some(pattern => url.includes(pattern))) {
+    if (skipPatterns.some((pattern) => String(url).includes(pattern))) {
       return next.handle();
     }
 
-    // Create cache key
-    const cacheKey = this.getCacheKey(url, user);
+    const userId = this.extractUserId(user);
+    const hasAuthHeader = Boolean(request?.headers?.authorization);
+    // Guard against accidental cache sharing for authenticated requests
+    // where user payload cannot be resolved.
+    if (hasAuthHeader && !userId) {
+      return next.handle();
+    }
 
-    // Try to get from cache
+    const customKeyPrefix = this.reflector.getAllAndOverride<string>(
+      CACHE_KEY_PREFIX,
+      [context.getHandler(), context.getClass()],
+    );
+    const customTtl = this.reflector.getAllAndOverride<number>(
+      CACHE_TTL_KEY,
+      [context.getHandler(), context.getClass()],
+    );
+
+    const cacheKey = this.getCacheKey(url, request, userId, customKeyPrefix);
+
     const cachedResponse = await this.cacheService.get(cacheKey);
-    if (cachedResponse) {
+    if (cachedResponse !== undefined) {
       this.logger.debug(`Cache HIT: ${cacheKey}`);
       return of(cachedResponse);
     }
 
     this.logger.debug(`Cache MISS: ${cacheKey}`);
 
-    // If not in cache, execute request and cache the result
     return next.handle().pipe(
-      tap(async (response) => {
-        // Determine TTL based on endpoint
-        const ttl = this.getTTL(url);
-        await this.cacheService.set(cacheKey, response, ttl);
+      tap(async (payload) => {
+        // Do not cache failed HTTP responses.
+        if (typeof response?.statusCode === 'number' && response.statusCode >= 400) {
+          return;
+        }
+
+        // Do not cache obvious error-like payloads.
+        if (
+          payload?.error ||
+          payload?.errors ||
+          payload?.exception ||
+          payload?.success === false ||
+          payload?.ok === false ||
+          payload?.statusCode >= 400
+        ) {
+          return;
+        }
+
+        const ttl = customTtl ?? this.getTTL(String(url));
+        await this.cacheService.set(cacheKey, payload, ttl);
         this.logger.debug(`Cached response for ${cacheKey} (TTL: ${ttl}s)`);
       }),
     );
   }
 
-  private getCacheKey(url: string, user?: any): string {
-    // Remove query parameters for consistent caching
-    const baseUrl = url.split('?')[0];
-    return `http:${baseUrl}`;
+  private getCacheKey(
+    url: string,
+    request: any,
+    userId?: string,
+    customPrefix?: string,
+  ): string {
+    const [path, queryString] = String(url).split('?');
+    const query = new URLSearchParams(queryString || '');
+
+    const normalizedQuery = [...query.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([k, v]) => `${k}=${v}`)
+      .join('&');
+
+    const prefix = customPrefix || 'http';
+    const queryPart = normalizedQuery ? `?${normalizedQuery}` : '';
+    const userPart = userId ? `:u:${userId}` : '';
+    const lang = request?.headers?.['accept-language']
+      ? `:lang:${String(request.headers['accept-language'])}`
+      : '';
+
+    return `${prefix}:${path}${queryPart}${userPart}${lang}`;
+  }
+
+  private extractUserId(user?: any): string | undefined {
+    const raw = user?._id ?? user?.id ?? user?.sub ?? user?.userId;
+    if (!raw) return undefined;
+    const normalized = String(raw).trim();
+    return normalized.length > 0 ? normalized : undefined;
   }
 
   private getTTL(url: string): number {
-    // Static content - 1 hour
+    // User-scoped dashboard-style endpoints should refresh quickly.
+    if (
+      url.includes('/user/') ||
+      url.includes('/by-user/') ||
+      url.includes('/bookings/user') ||
+      url.includes('/bookings/creator')
+    ) {
+      return 60; // 1 minute
+    }
+
+    // Creator analytics should be fast but fresh.
+    if (url.includes('/analytics/creator')) {
+      return 90; // 1.5 minutes
+    }
+
+    // More static listing/explore endpoints
     if (url.includes('/communities') || url.includes('/explore')) {
       return 3600; // 1 hour
     }
 
-    // Feedback/ratings - 5 minutes
-    if (url.includes('/feedback') || url.includes('/stats')) {
+    // Aggregate/statistics endpoints
+    if (url.includes('/feedback') || url.includes('/stats') || url.includes('/analytics')) {
       return 300; // 5 minutes
     }
 
-    // Courses/content - 15 minutes
+    // Catalog/content pages
     if (url.includes('/cours') || url.includes('/products') || url.includes('/events')) {
       return 900; // 15 minutes
     }
 
-    // Posts - 2 minutes
+    // Feed-like endpoints
     if (url.includes('/posts')) {
       return 120; // 2 minutes
     }
 
-    // Default - 5 minutes
-    return 300;
+    return 300; // default 5 minutes
   }
 }

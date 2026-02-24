@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Query, UseGuards, Request } from '@nestjs/common';
+import { Controller, Get, Post, Body, Query, UseGuards, Request, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags, ApiQuery } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AchievementService } from './achievement.service';
@@ -11,6 +11,17 @@ import { AchievementResponseDto, UserAchievementResponseDto, AchievementWithProg
 @ApiBearerAuth()
 export class AchievementController {
   constructor(private readonly achievementService: AchievementService) {}
+
+  private resolveRequestUserId(req?: any): string | undefined {
+    const rawUserId =
+      req?.user?._id
+      || req?.user?.userId
+      || req?.user?.sub
+      || req?.user?.id;
+    if (!rawUserId) return undefined;
+    const normalizedUserId = String(rawUserId).trim();
+    return normalizedUserId.length > 0 ? normalizedUserId : undefined;
+  }
 
   @Post()
   @ApiOperation({
@@ -41,7 +52,9 @@ export class AchievementController {
     @Request() req: any,
     @Query('communitySlug') communitySlug?: string,
   ): Promise<AchievementWithProgressDto[]> {
-    return this.achievementService.getUserAchievementsWithProgress(req.user.userId, communitySlug);
+    const userId = this.resolveRequestUserId(req);
+    if (!userId) throw new UnauthorizedException();
+    return this.achievementService.getUserAchievementsWithProgress(userId, communitySlug);
   }
 
   @Post('check')
@@ -54,12 +67,15 @@ export class AchievementController {
     @Request() req: any,
     @Query('communitySlug') communitySlug: string,
   ): Promise<UserAchievementResponseDto[]> {
+    const userId = this.resolveRequestUserId(req);
+    if (!userId) throw new UnauthorizedException();
+
     // Get community ID from slug
     const community = await this.achievementService['communityModel'].findOne({ slug: communitySlug });
     if (!community) {
-      throw new Error('Community not found');
+      throw new NotFoundException('Community not found');
     }
 
-    return this.achievementService.checkAchievements(req.user.userId, community._id.toString());
+    return this.achievementService.checkAchievements(userId, community._id.toString());
   }
 }

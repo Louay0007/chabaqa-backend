@@ -21,6 +21,7 @@ const logger = new Logger('CacheModule');
           const redisPassword = configService.get<string>('REDIS_PASSWORD', '');
           const redisDb = configService.get<number>('REDIS_DB', 0);
           const redisTtl = configService.get<number>('REDIS_TTL', 300);
+          const redisTtlMs = redisTtl * 1000;
           
           logger.log(`🔴 Redis cache enabled - connecting to ${redisHost}:${redisPort}`);
           
@@ -30,14 +31,14 @@ const logger = new Logger('CacheModule');
             port: redisPort,
             password: redisPassword || undefined,
             db: redisDb,
-            ttl: redisTtl,
+            ttl: redisTtlMs,
             isGlobal: true,
           };
         }
         
         logger.log('💾 Using in-memory cache (Redis disabled)');
         return {
-          ttl: configService.get<number>('REDIS_TTL', 300),
+          ttl: configService.get<number>('REDIS_TTL', 300) * 1000,
           max: 1000, // Maximum number of items in cache
           isGlobal: true,
         };

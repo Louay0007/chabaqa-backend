@@ -20,6 +20,7 @@ import { PromoService } from '../common/services/promo.service';
 import { NotificationService } from '../notification/notification.service';
 import { AchievementService } from '../achievement/achievement.service';
 import { UploadService } from '../upload/upload.service';
+import { CacheService } from '../common/services/cache.service';
 
 @Injectable()
 
@@ -40,7 +41,19 @@ export class CoursService {
     private readonly notificationService: NotificationService,
     private readonly achievementService: AchievementService,
     private readonly uploadService: UploadService,
+    private readonly cacheService: CacheService,
   ) { }
+
+  private async invalidateCourseCaches(creatorId?: string): Promise<void> {
+    const patterns = ['http:/api/cours*', 'http:/api/communities*'];
+    if (creatorId) {
+      patterns.push(`creator-analytics:${creatorId}:*`);
+    }
+
+    await Promise.allSettled(
+      patterns.map((pattern) => this.cacheService.deletePattern(pattern)),
+    );
+  }
 
   private async resolveCourseDocument(courseId: string): Promise<CoursDocument> {
     let cours: CoursDocument | null = null;
@@ -483,6 +496,7 @@ export class CoursService {
     // Ajouter le cours à la communauté
     community.ajouterCours(coursEnregistre._id);
     await community.save();
+    await this.invalidateCourseCaches(coursEnregistre.creatorId?.toString?.());
 
     return await this.transformerEnReponse(coursEnregistre);
   }
@@ -736,13 +750,17 @@ export class CoursService {
           const completedChapters = enrollment.progression?.filter((p: any) => p.isCompleted).length || 0;
           const progress = totalChapters > 0 ? Math.round((completedChapters / totalChapters) * 100) : 0;
 
-          // Unified Tracking Sync: Ensure course progress is in the global system
-          this.trackingService.updateProgress(
+          // Unified Tracking Sync: ensure course progress is reflected globally without emitting START actions.
+          const trackingCourseId = String(course.id || course._id);
+          this.trackingService.syncProgressSnapshot(
             userId,
-            course._id.toString(),
+            trackingCourseId,
             TrackableContentType.COURSE,
-            progress,
-            { completedChapters, totalChapters }
+            {
+              progressPercent: progress,
+              isCompleted: totalChapters > 0 && completedChapters >= totalChapters,
+              metadata: { completedChapters, totalChapters },
+            },
           ).catch(err => console.error('⚠️ [COURS-SERVICE] Sync failed:', err.message));
 
           return {
@@ -867,6 +885,7 @@ export class CoursService {
     }
 
     const saved = await cours.save();
+    await this.invalidateCourseCaches(cours.creatorId?.toString?.());
     return await this.transformerEnReponse(saved);
   }
 
@@ -881,6 +900,7 @@ export class CoursService {
 
     cours.togglePublication();
     await cours.save();
+    await this.invalidateCourseCaches(cours.creatorId?.toString?.());
 
     // Send notification to community members when a course is published
     if (cours.isPublished) {
@@ -919,6 +939,7 @@ export class CoursService {
 
     // Supprimer le cours
     await this.coursModel.findByIdAndDelete(coursId);
+    await this.invalidateCourseCaches(cours.creatorId?.toString?.());
 
     return {
       message: 'Cours supprimé avec succès'
@@ -1206,6 +1227,7 @@ export class CoursService {
     }
 
     const saved = await cours.save();
+    await this.invalidateCourseCaches(cours.creatorId?.toString?.());
     return await this.transformerEnReponse(saved);
   }
 
@@ -1266,6 +1288,7 @@ export class CoursService {
     }
 
     const saved = await cours.save();
+    await this.invalidateCourseCaches(cours.creatorId?.toString?.());
     return await this.transformerEnReponse(saved);
   }
 
@@ -1318,6 +1341,7 @@ export class CoursService {
 
       cours.sections.push(nouvelleSection as any);
       const coursEnregistre = await cours.save();
+      await this.invalidateCourseCaches(cours.creatorId?.toString?.());
       return await this.transformerEnReponse(coursEnregistre);
     } catch (error) {
       if (error instanceof NotFoundException || error instanceof ForbiddenException) {
@@ -1405,6 +1429,7 @@ export class CoursService {
 
       // 6. Sauvegarder le cours
       const coursEnregistre = await cours.save();
+      await this.invalidateCourseCaches(cours.creatorId?.toString?.());
 
       console.log(`   ✅ Chapitre ajouté avec succès à la section`);
       console.log(`   📊 Nombre total de chapitres dans la section: ${section.chapitres.length}`);
@@ -1465,6 +1490,7 @@ export class CoursService {
 
       // 5. Sauvegarder le cours
       const coursEnregistre = await cours.save();
+      await this.invalidateCourseCaches(cours.creatorId?.toString?.());
 
       console.log(`   ✅ Section supprimée avec succès`);
       console.log(`   📊 Nombre total de sections restantes: ${coursEnregistre.sections.length}`);
@@ -1544,6 +1570,7 @@ export class CoursService {
 
       // 6. Sauvegarder le cours
       const coursEnregistre = await cours.save();
+      await this.invalidateCourseCaches(cours.creatorId?.toString?.());
 
       console.log(`   ✅ Chapitre supprimé avec succès`);
       console.log(`   📊 Nombre total de chapitres restants dans la section: ${section.chapitres.length}`);
@@ -1601,6 +1628,7 @@ export class CoursService {
       // 3. Mettre à jour le thumbnail
       cours.thumbnail = thumbnailUrl;
       const coursEnregistre = await cours.save();
+      await this.invalidateCourseCaches(cours.creatorId?.toString?.());
 
       console.log('   ✅ Thumbnail mis à jour avec succès');
 
@@ -1664,6 +1692,7 @@ export class CoursService {
       // 5. Mettre à jour l'URL vidéo
       chapitre.videoUrl = videoUrl;
       const coursEnregistre = await cours.save();
+      await this.invalidateCourseCaches(cours.creatorId?.toString?.());
 
       console.log('   ✅ URL vidéo mise à jour avec succès');
 
@@ -1779,6 +1808,7 @@ export class CoursService {
       chapitre.ressources.sort((a, b) => a.ordre - b.ordre);
 
       const coursEnregistre = await cours.save();
+      await this.invalidateCourseCaches(cours.creatorId?.toString?.());
 
       console.log('   ✅ Ressource ajoutée avec succès');
 
@@ -2288,6 +2318,7 @@ export class CoursService {
       // 6. Ajouter la référence de l'inscription au cours
       cours.ajouterInscription(inscriptionEnregistree._id);
       await cours.save({ session });
+      await this.invalidateCourseCaches(cours.creatorId?.toString?.());
 
       console.log('   ✅ Référence ajoutée au cours');
 
@@ -2402,42 +2433,48 @@ export class CoursService {
    * Mettre à jour le temps de visionnage d'un cours
    */
   async updateCoursWatchTime(coursId: string, userId: string, additionalTime: number) {
-    return await this.trackingService.updateWatchTime(userId, coursId, TrackableContentType.COURSE, additionalTime);
+    const { trackingId } = await this.resolveCourseTrackingId(coursId);
+    return await this.trackingService.updateWatchTime(userId, trackingId, TrackableContentType.COURSE, additionalTime);
   }
 
   /**
    * Enregistrer un like sur un cours
    */
   async trackCoursLike(coursId: string, userId: string, metadata: Record<string, any> = {}) {
-    return await this.trackingService.trackLike(userId, coursId, TrackableContentType.COURSE, metadata);
+    const { trackingId } = await this.resolveCourseTrackingId(coursId);
+    return await this.trackingService.trackLike(userId, trackingId, TrackableContentType.COURSE, metadata);
   }
 
   /**
    * Enregistrer un partage d'un cours
    */
   async trackCoursShare(coursId: string, userId: string, metadata: Record<string, any> = {}) {
-    return await this.trackingService.trackShare(userId, coursId, TrackableContentType.COURSE, metadata);
+    const { trackingId } = await this.resolveCourseTrackingId(coursId);
+    return await this.trackingService.trackShare(userId, trackingId, TrackableContentType.COURSE, metadata);
   }
 
   /**
    * Enregistrer un téléchargement d'un cours
    */
   async trackCoursDownload(coursId: string, userId: string, metadata: Record<string, any> = {}) {
-    return await this.trackingService.trackDownload(userId, coursId, TrackableContentType.COURSE, metadata);
+    const { trackingId } = await this.resolveCourseTrackingId(coursId);
+    return await this.trackingService.trackDownload(userId, trackingId, TrackableContentType.COURSE, metadata);
   }
 
   /**
    * Ajouter un bookmark d'un cours
    */
   async addCoursBookmark(coursId: string, userId: string, bookmarkId: string) {
-    return await this.trackingService.addBookmark(userId, coursId, TrackableContentType.COURSE, bookmarkId);
+    const { trackingId } = await this.resolveCourseTrackingId(coursId);
+    return await this.trackingService.addBookmark(userId, trackingId, TrackableContentType.COURSE, bookmarkId);
   }
 
   /**
    * Retirer un bookmark d'un cours
    */
   async removeCoursBookmark(coursId: string, userId: string, bookmarkId: string) {
-    return await this.trackingService.removeBookmark(userId, coursId, TrackableContentType.COURSE, bookmarkId);
+    const { trackingId } = await this.resolveCourseTrackingId(coursId);
+    return await this.trackingService.removeBookmark(userId, trackingId, TrackableContentType.COURSE, bookmarkId);
   }
 
   /**
@@ -2503,11 +2540,21 @@ export class CoursService {
     });
 
     // 2. Get content tracking progress (views, watch time, etc.)
-    const contentProgress = await this.trackingService.getProgress(
+    const trackingId = String(cours.id || courseObjectId.toString());
+    let contentProgress = await this.trackingService.getProgress(
       userId,
-      courseObjectId.toString(),
+      trackingId,
       TrackableContentType.COURSE,
     );
+
+    // Legacy fallback for progress rows tracked with Mongo _id.
+    if (!contentProgress && trackingId !== courseObjectId.toString()) {
+      contentProgress = await this.trackingService.getProgress(
+        userId,
+        courseObjectId.toString(),
+        TrackableContentType.COURSE,
+      );
+    }
 
     // 3. Calculate calculated progress percentage
     let progressPercentage = 0;
@@ -2641,7 +2688,7 @@ export class CoursService {
   /**
    * Obtenir les actions récentes d'un utilisateur sur les cours
    */
-  async getUserCoursRecentActions(userId: string, limit: number = 20) {
+  async getUserCoursRecentActions(userId: string, limit: number = 20): Promise<any[]> {
     return await this.trackingService.getUserRecentActions(userId, TrackableContentType.COURSE, limit);
   }
 
@@ -2685,6 +2732,7 @@ export class CoursService {
       }
 
       const coursEnregistre = await cours.save();
+      await this.invalidateCourseCaches(cours.creatorId?.toString?.());
 
       console.log('   ✅ Progression séquentielle mise à jour avec succès');
       console.log(`   🔒 Sequential Progression: ${coursEnregistre.sequentialProgression}`);

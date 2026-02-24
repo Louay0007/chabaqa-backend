@@ -9,7 +9,10 @@ import {
   Query,
   UseGuards,
   Request,
-  UseInterceptors
+  UseInterceptors,
+  Logger,
+  NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -35,7 +38,47 @@ import { HttpCacheInterceptor } from '../common/interceptors/cache.interceptor';
 @Controller('posts')
 @UseInterceptors(HttpCacheInterceptor)
 export class PostController {
+  private readonly logger = new Logger(PostController.name);
+  private readonly isDebugLoggingEnabled = process.env.NODE_ENV !== 'production';
+
   constructor(private readonly postService: PostService) {}
+
+  private resolveRequestUserId(req?: any, explicitUserId?: string): string | undefined {
+    const rawUserId = explicitUserId
+      || req?.user?._id
+      || req?.user?.userId
+      || req?.user?.sub
+      || req?.user?.id;
+    if (!rawUserId) return undefined;
+    const normalizedUserId = String(rawUserId).trim();
+    return normalizedUserId.length > 0 ? normalizedUserId : undefined;
+  }
+
+  private assertDebugEndpointsEnabled(): void {
+    const explicitlyEnabled = process.env.ENABLE_POST_DEBUG_ENDPOINTS === 'true';
+    if (process.env.NODE_ENV === 'production' && !explicitlyEnabled) {
+      throw new NotFoundException();
+    }
+  }
+
+  private serializeLogArg(arg: unknown): string {
+    if (typeof arg === 'string') return arg;
+    if (arg instanceof Error) return arg.stack || arg.message;
+    try {
+      return JSON.stringify(arg);
+    } catch {
+      return String(arg);
+    }
+  }
+
+  private logDebug(...args: unknown[]): void {
+    if (!this.isDebugLoggingEnabled) return;
+    this.logger.debug(args.map((arg) => this.serializeLogArg(arg)).join(' '));
+  }
+
+  private logError(...args: unknown[]): void {
+    this.logger.error(args.map((arg) => this.serializeLogArg(arg)).join(' '));
+  }
 
   @Post()
   @UseGuards(JwtAuthGuard)
@@ -54,13 +97,15 @@ export class PostController {
     @Body() createPostDto: CreatePostDto,
     @Request() req,
   ): Promise<{ success: boolean; data: PostResponseDto }> {
-    const userId = req.user._id || req.user.userId;
-    console.log('📝 [POST-CONTROLLER] Create post request received:', {
+    const userId = this.resolveRequestUserId(req);
+    this.logDebug('Create post request received', {
       body: createPostDto,
       userId,
       user: req.user
     });
-    
+
+    if (!userId) throw new UnauthorizedException();
+
     const post = await this.postService.create(createPostDto, userId);
     return { success: true, data: post };
   }
@@ -126,7 +171,7 @@ export class PostController {
   ): Promise<{ success: boolean; data: PostListResponseDto }> {
     const tagsArray = tags ? tags.split(',') : undefined;
     // Try to get userId from query param, or from authenticated user
-    const effectiveUserId = userId || req?.user?.userId || req?.user?._id;
+    const effectiveUserId = this.resolveRequestUserId(req, userId);
     const posts = await this.postService.findAll(
       page || 1,
       limit || 10,
@@ -139,10 +184,36 @@ export class PostController {
     return { success: true, data: posts };
   }
 
+  @Get('user/bookmarks')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: "Récupérer les posts favoris de l'utilisateur" })
+  @ApiResponse({
+    status: 200,
+    description: 'Posts favoris récupérés avec succès',
+    type: PostListResponseDto,
+  })
+  @ApiResponse({ status: 401, description: 'Non autorisé' })
+  async getUserBookmarks(
+    @Request() req,
+    @Query('page') page?: number,
+    @Query('limit') limit?: number,
+  ): Promise<{ success: boolean; data: PostListResponseDto }> {
+    const userId = this.resolveRequestUserId(req);
+    if (!userId) throw new UnauthorizedException();
+    const bookmarks = await this.postService.getUserBookmarks(
+      userId,
+      page || 1,
+      limit || 20,
+    );
+    return { success: true, data: bookmarks };
+  }
+
   @Get('user/:userId')
   @ApiOperation({ summary: "Récupérer les posts d'un utilisateur" })
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({ name: 'communityId', required: false, type: String, description: "Filtrer par communauté" })
   @ApiQuery({ name: 'currentUserId', required: false, type: String, description: 'ID de l\'utilisateur connecté pour vérifier les likes' })
   @ApiResponse({
     status: 200,
@@ -153,15 +224,17 @@ export class PostController {
     @Param('userId') userId: string,
     @Query('page') page?: number,
     @Query('limit') limit?: number,
+    @Query('communityId') communityId?: string,
     @Query('currentUserId') currentUserId?: string,
     @Request() req?: any,
   ): Promise<{ success: boolean; data: PostListResponseDto }> {
     // Try to get currentUserId from query param, or from authenticated user
-    const effectiveUserId = currentUserId || req?.user?.userId || req?.user?._id;
+    const effectiveUserId = this.resolveRequestUserId(req, currentUserId);
     const posts = await this.postService.findByUser(
       userId,
       page || 1,
       limit || 10,
+      communityId,
       effectiveUserId,
     );
     return { success: true, data: posts };
@@ -184,13 +257,13 @@ export class PostController {
     @Query('userId') userId?: string,
     @Request() req?: any,
   ): Promise<{ success: boolean; data: PostListResponseDto }> {
-    console.log('📝 [POST-CONTROLLER] Find posts by community request:', {
+    this.logDebug('Find posts by community request', {
       communityId,
       page: page || 1,
       limit: limit || 10,
       userId
     });
-    
+
     try {
       // Validate input parameters
       if (!communityId || communityId.trim() === '') {
@@ -198,7 +271,7 @@ export class PostController {
       }
 
       // Try to get userId from query param, or from authenticated user
-      const effectiveUserId = userId || req?.user?.userId || req?.user?._id;
+      const effectiveUserId = this.resolveRequestUserId(req, userId);
 
       const posts = await this.postService.findByCommunity(
         communityId.trim(),
@@ -206,10 +279,10 @@ export class PostController {
         limit || 10,
         effectiveUserId,
       );
-      console.log('✅ [POST-CONTROLLER] Successfully found posts:', posts.posts.length);
+      this.logDebug('Successfully found posts by community', { count: posts.posts.length });
       return { success: true, data: posts };
     } catch (error: any) {
-      console.error('❌ [POST-CONTROLLER] Error in findByCommunity:', {
+      this.logError('Error in findByCommunity', {
         error: error.message,
         stack: error.stack,
         communityId,
@@ -266,7 +339,8 @@ export class PostController {
     @Body() updatePostDto: UpdatePostDto,
     @Request() req,
   ): Promise<{ success: boolean; data: PostResponseDto }> {
-    const userId = req.user._id || req.user.userId || req.user.sub;
+    const userId = this.resolveRequestUserId(req);
+    if (!userId) throw new UnauthorizedException();
     const post = await this.postService.update(
       id,
       updatePostDto,
@@ -287,7 +361,8 @@ export class PostController {
     @Param('id') id: string,
     @Request() req,
   ): Promise<{ success: boolean; message: string }> {
-    const userId = req.user._id || req.user.userId || req.user.sub;
+    const userId = this.resolveRequestUserId(req);
+    if (!userId) throw new UnauthorizedException();
     const result = await this.postService.remove(id, userId);
     return { success: true, message: result.message };
   }
@@ -332,10 +407,12 @@ export class PostController {
     @Body() createCommentDto: CreatePostCommentDto,
     @Request() req,
   ): Promise<{ success: boolean; data: PostCommentResponseDto }> {
+    const userId = this.resolveRequestUserId(req);
+    if (!userId) throw new UnauthorizedException();
     const comment = await this.postService.addComment(
       postId,
       createCommentDto,
-      req.user._id || req.user.userId,
+      userId,
     );
     return { success: true, data: comment };
   }
@@ -353,10 +430,12 @@ export class PostController {
     @Param('commentId') commentId: string,
     @Request() req,
   ): Promise<{ success: boolean; message: string }> {
+    const userId = this.resolveRequestUserId(req);
+    if (!userId) throw new UnauthorizedException();
     const result = await this.postService.removeComment(
       postId,
       commentId,
-      req.user._id || req.user.userId,
+      userId,
     );
     return { success: true, message: result.message };
   }
@@ -380,11 +459,13 @@ export class PostController {
     @Body('content') content: string,
     @Request() req,
   ): Promise<{ success: boolean; data: PostCommentResponseDto }> {
+    const userId = this.resolveRequestUserId(req);
+    if (!userId) throw new UnauthorizedException();
     const comment = await this.postService.updateComment(
       postId,
       commentId,
       content,
-      req.user._id || req.user.userId,
+      userId,
     );
     return { success: true, data: comment };
   }
@@ -400,7 +481,9 @@ export class PostController {
     @Param('id') id: string,
     @Request() req,
   ): Promise<{ success: boolean; message: string }> {
-    await this.postService.bookmarkPost(id, req.user.userId);
+    const userId = this.resolveRequestUserId(req);
+    if (!userId) throw new UnauthorizedException();
+    await this.postService.bookmarkPost(id, userId);
     return { success: true, message: 'Post ajouté aux favoris' };
   }
 
@@ -415,31 +498,10 @@ export class PostController {
     @Param('id') id: string,
     @Request() req,
   ): Promise<{ success: boolean; message: string }> {
-    await this.postService.unbookmarkPost(id, req.user.userId);
+    const userId = this.resolveRequestUserId(req);
+    if (!userId) throw new UnauthorizedException();
+    await this.postService.unbookmarkPost(id, userId);
     return { success: true, message: 'Post retiré des favoris' };
-  }
-
-  @Get('user/bookmarks')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: "Récupérer les posts favoris de l'utilisateur" })
-  @ApiResponse({
-    status: 200,
-    description: 'Posts favoris récupérés avec succès',
-    type: PostListResponseDto,
-  })
-  @ApiResponse({ status: 401, description: 'Non autorisé' })
-  async getUserBookmarks(
-    @Request() req,
-    @Query('page') page?: number,
-    @Query('limit') limit?: number,
-  ): Promise<{ success: boolean; data: PostListResponseDto }> {
-    const bookmarks = await this.postService.getUserBookmarks(
-      req.user.userId,
-      page || 1,
-      limit || 20,
-    );
-    return { success: true, data: bookmarks };
   }
 
   @Post(':id/like')
@@ -458,7 +520,10 @@ export class PostController {
     @Param('id') postId: string,
     @Request() req,
   ): Promise<{ success: boolean; data: PostStatsResponseDto }> {
-    const userId = req.user._id || req.user.userId;
+    const userId = this.resolveRequestUserId(req);
+    if (!userId) {
+      throw new UnauthorizedException();
+    }
     const stats = await this.postService.likePost(postId, userId);
     return { success: true, data: stats };
   }
@@ -479,7 +544,10 @@ export class PostController {
     @Param('id') postId: string,
     @Request() req,
   ): Promise<{ success: boolean; data: PostStatsResponseDto }> {
-    const userId = req.user._id || req.user.userId;
+    const userId = this.resolveRequestUserId(req);
+    if (!userId) {
+      throw new UnauthorizedException();
+    }
     const stats = await this.postService.unlikePost(postId, userId);
     return { success: true, data: stats };
   }
@@ -495,7 +563,10 @@ export class PostController {
     @Param('id') postId: string,
     @Request() req,
   ): Promise<{ success: boolean; data: PostStatsResponseDto }> {
-    const userId = req.user._id || req.user.userId;
+    const userId = this.resolveRequestUserId(req);
+    if (!userId) {
+      throw new UnauthorizedException();
+    }
     const stats = await this.postService.sharePost(postId, userId);
     return { success: true, data: stats };
   }
@@ -504,11 +575,12 @@ export class PostController {
   @ApiOperation({ summary: 'Compter tous les posts (debug)' })
   @ApiResponse({ status: 200, description: 'Nombre de posts' })
   async getPostsCount(): Promise<{ success: boolean; data: { total: number } }> {
+    this.assertDebugEndpointsEnabled();
     try {
       const total = await this.postService.countAllPosts();
       return { success: true, data: { total } };
     } catch (error) {
-      console.error('❌ [POST-CONTROLLER] Error counting posts:', error);
+      this.logError('Error counting posts', error);
       throw error;
     }
   }
@@ -519,9 +591,10 @@ export class PostController {
   @ApiOperation({ summary: 'Créer un post de test (debug)' })
   @ApiResponse({ status: 201, description: 'Post de test créé' })
   async createSamplePost(@Request() req): Promise<{ success: boolean; data: any }> {
+    this.assertDebugEndpointsEnabled();
     try {
-      console.log('🧪 [POST-CONTROLLER] Creating sample post for user:', req.user);
-      
+      this.logDebug('Creating sample post for user', req.user);
+
       // Create a sample post using the authenticated user
       const samplePostData = {
         title: 'Test Post',
@@ -530,10 +603,12 @@ export class PostController {
         tags: ['test', 'debug']
       };
 
-      const post = await this.postService.create(samplePostData, req.user.userId || req.user.sub);
+      const userId = this.resolveRequestUserId(req);
+      if (!userId) throw new UnauthorizedException();
+      const post = await this.postService.create(samplePostData, userId);
       return { success: true, data: post };
     } catch (error: any) {
-      console.error('❌ [POST-CONTROLLER] Error creating sample post:', error);
+      this.logError('Error creating sample post', error);
       return { success: false, data: { error: error.message } };
     }
   }
@@ -542,15 +617,16 @@ export class PostController {
   @ApiOperation({ summary: 'Inspecter les posts et utilisateurs (debug)' })
   @ApiResponse({ status: 200, description: 'Informations de debug' })
   async inspectCommunityPosts(@Param('communityId') communityId: string): Promise<{ success: boolean; data: any }> {
+    this.assertDebugEndpointsEnabled();
     try {
-      console.log('🔍 [POST-CONTROLLER] Inspecting community posts:', communityId);
-      
+      this.logDebug('Inspecting community posts', { communityId });
+
       // Step 1: Check basic counts
       const totalPosts = await this.postService['postModel'].countDocuments({});
       const communityPosts = await this.postService['postModel'].countDocuments({ communityId });
       const totalUsers = await this.postService['userModel'].countDocuments({});
-      
-      console.log('📊 Basic counts:', { totalPosts, communityPosts, totalUsers });
+
+      this.logDebug('Basic counts', { totalPosts, communityPosts, totalUsers });
 
       // Step 2: Get raw posts without population
       const rawPosts = await this.postService['postModel']
@@ -558,7 +634,7 @@ export class PostController {
         .limit(3)
         .exec();
 
-      console.log('📋 Raw posts:', rawPosts.map(p => ({
+      this.logDebug('Raw posts', rawPosts.map(p => ({
         id: p.id,
         title: p.title,
         authorId: p.authorId,
@@ -573,7 +649,7 @@ export class PostController {
         .limit(3)
         .exec();
 
-      console.log('👥 Populated posts:', populatedPosts.map(p => ({
+      this.logDebug('Populated posts', populatedPosts.map(p => ({
         id: p.id,
         title: p.title,
         authorId: p.authorId,
@@ -590,7 +666,7 @@ export class PostController {
         .limit(5)
         .exec();
 
-      console.log('👤 Sample users:', users.map(u => ({
+      this.logDebug('Sample users', users.map(u => ({
         id: u._id.toString(),
         name: u.name,
         email: u.email
@@ -621,7 +697,7 @@ export class PostController {
         }
       }
 
-      console.log('🔍 Manual lookup results:', manualLookupResults);
+      this.logDebug('Manual lookup results', manualLookupResults);
 
       const debugInfo = {
         step1_counts: { totalPosts, communityPosts, totalUsers },
@@ -647,10 +723,10 @@ export class PostController {
         diagnosis: this.diagnoseIssue(totalPosts, totalUsers, populatedPosts, users)
       };
 
-      console.log('🎯 [POST-CONTROLLER] Complete debug info:', debugInfo);
+      this.logDebug('Complete debug info', debugInfo);
       return { success: true, data: debugInfo };
     } catch (error: any) {
-      console.error('❌ [POST-CONTROLLER] Error inspecting posts:', error);
+      this.logError('Error inspecting posts', error);
       return { success: false, data: { error: error.message } };
     }
   }
@@ -678,13 +754,14 @@ export class PostController {
   @ApiOperation({ summary: 'Test le flux complet de transformation (debug)' })
   @ApiResponse({ status: 200, description: 'Test du flux' })
   async testCompleteFlow(@Param('communityId') communityId: string): Promise<{ success: boolean; data: any }> {
+    this.assertDebugEndpointsEnabled();
     try {
-      console.log('🧪 [POST-CONTROLLER] Testing complete flow for community:', communityId);
-      
+      this.logDebug('Testing complete flow for community', { communityId });
+
       // Use the actual service method that the frontend calls
       const result = await this.postService.findByCommunity(communityId, 1, 5);
-      
-      console.log('🎯 [POST-CONTROLLER] Service returned:', {
+
+      this.logDebug('Service returned', {
         postsCount: result.posts.length,
         samplePost: result.posts[0] ? {
           id: result.posts[0].id,
@@ -696,7 +773,7 @@ export class PostController {
 
       return { success: true, data: { serviceResult: result } };
     } catch (error: any) {
-      console.error('❌ [POST-CONTROLLER] Error testing flow:', error);
+      this.logError('Error testing flow', error);
       return { success: false, data: { error: error.message } };
     }
   }
@@ -714,8 +791,10 @@ export class PostController {
   async getPostStats(
     @Param('id') postId: string,
     @Query('userId') userId?: string,
+    @Request() req?: any,
   ): Promise<{ success: boolean; data: PostStatsResponseDto }> {
-    const stats = await this.postService.getPostStats(postId, userId);
+    const effectiveUserId = this.resolveRequestUserId(req, userId);
+    const stats = await this.postService.getPostStats(postId, effectiveUserId);
     return { success: true, data: stats };
   }
 }

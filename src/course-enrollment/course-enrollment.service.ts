@@ -58,6 +58,71 @@ export class CourseEnrollmentService {
     return course;
   }
 
+  private getCourseTrackingId(course: CoursDocument): string {
+    return course?.id ? String(course.id) : String(course._id);
+  }
+
+  private computeEnrollmentCourseProgress(
+    course: CoursDocument,
+    enrollment: CourseEnrollmentDocument,
+  ): { totalChapters: number; completedChapters: number; progressPercent: number; isCompleted: boolean } {
+    const totalChapters =
+      course.sections?.reduce(
+        (acc: number, section: any) => acc + (section?.chapitres?.length || 0),
+        0,
+      ) || 0;
+
+    const completedChapters =
+      enrollment.progression?.filter((p) => p?.isCompleted).length || 0;
+
+    const progressPercent =
+      totalChapters > 0
+        ? Math.round((completedChapters / totalChapters) * 100)
+        : 0;
+
+    const isCompleted = totalChapters > 0 && completedChapters >= totalChapters;
+
+    return { totalChapters, completedChapters, progressPercent, isCompleted };
+  }
+
+  private async syncEnrollmentTrackingProgress(
+    userId: string,
+    course: CoursDocument,
+    enrollment: CourseEnrollmentDocument,
+    metadata: Record<string, any> = {},
+  ): Promise<void> {
+    try {
+      const trackingId = this.getCourseTrackingId(course);
+      const snapshot = this.computeEnrollmentCourseProgress(course, enrollment);
+
+      await this.trackingService.syncProgressSnapshot(
+        userId,
+        trackingId,
+        TrackableContentType.COURSE,
+        {
+          progressPercent: snapshot.progressPercent,
+          watchTime: (enrollment.progression || []).reduce(
+            (acc, p) => acc + Math.max(0, Number(p?.watchTime || 0)),
+            0,
+          ),
+          isCompleted: snapshot.isCompleted || Boolean(enrollment.completedAt),
+          completedAt: enrollment.completedAt || undefined,
+          lastAccessedAt: enrollment.updatedAt || new Date(),
+          metadata: {
+            completedChapters: snapshot.completedChapters,
+            totalChapters: snapshot.totalChapters,
+            ...metadata,
+          },
+        },
+      );
+    } catch (error) {
+      console.error(
+        `⚠️ [CourseEnrollmentService] Failed to sync tracking progress for course ${course?.id || course?._id}:`,
+        (error as any)?.message || error,
+      );
+    }
+  }
+
   /**
    * Démarrer un chapitre pour un utilisateur
    */
@@ -139,9 +204,12 @@ export class CourseEnrollmentService {
     }
 
     // Vérifier si une progression existe déjà pour ce chapitre
-    let progress = enrollment.progression.find(
+    const existingProgress = enrollment.progression.find(
       (p) => p.chapterId === chapterId,
     );
+    const hadWatchBefore = Number(existingProgress?.watchTime ?? 0) > 0;
+    const wasCompletedBefore = Boolean(existingProgress?.isCompleted);
+    let progress = existingProgress;
 
     if (!progress) {
       console.log(
@@ -176,6 +244,47 @@ export class CourseEnrollmentService {
 
     // Sauvegarder l'inscription
     await enrollment.save();
+
+    const trackingCourseId = this.getCourseTrackingId(course);
+    const chapterWatchTime = Number(progress?.watchTime ?? 0);
+    const chapterJustCompleted = !wasCompletedBefore && Boolean(progress?.isCompleted);
+
+    if (!hadWatchBefore && chapterWatchTime > 0) {
+      try {
+        await this.trackingService.trackChapterStart(
+          userId,
+          trackingCourseId,
+          chapterId,
+          { source: 'chapter_start_endpoint' },
+        );
+      } catch (error) {
+        console.error(
+          `⚠️ [CourseEnrollmentService] Failed to track chapter start for ${chapterId}:`,
+          (error as any)?.message || error,
+        );
+      }
+    }
+
+    if (chapterJustCompleted) {
+      try {
+        await this.trackingService.trackChapterComplete(
+          userId,
+          trackingCourseId,
+          chapterId,
+          { source: 'chapter_start_endpoint' },
+        );
+      } catch (error) {
+        console.error(
+          `⚠️ [CourseEnrollmentService] Failed to track chapter completion for ${chapterId}:`,
+          (error as any)?.message || error,
+        );
+      }
+    }
+
+    await this.syncEnrollmentTrackingProgress(userId, course, enrollment, {
+      lastChapterId: chapterId,
+      source: 'chapter_start_endpoint',
+    });
 
     console.log(
       `✅ [CourseEnrollmentService] Chapitre ${chapterId} démarré avec succès`,
@@ -235,6 +344,8 @@ export class CourseEnrollmentService {
         userId: enrollment.userId.toString(),
         courseId: courseIdValue,
         progress,
+        totalChapters,
+        isCompleted: totalChapters > 0 && chaptersCompleted >= totalChapters,
         completedChapters:
           enrollment.progression
             ?.filter((p) => p?.isCompleted)
@@ -392,6 +503,16 @@ export class CourseEnrollmentService {
       throw new NotFoundException('Inscription au cours non trouvée');
     }
 
+    const chapterProgressBefore = new Map(
+      (enrollment.progression || []).map((p) => [
+        p.chapterId,
+        {
+          isCompleted: Boolean(p?.isCompleted),
+          watchTime: Number(p?.watchTime || 0),
+        },
+      ]),
+    );
+
     // Vérifier l'accès séquentiel si activé
     if (course.sequentialProgression) {
       console.log(
@@ -426,9 +547,12 @@ export class CourseEnrollmentService {
       );
     }
 
-    let progress = enrollment.progression.find(
+    const existingProgress = enrollment.progression.find(
       (p) => p.chapterId === chapterId,
     );
+    const hadWatchBefore = Number(existingProgress?.watchTime ?? 0) > 0;
+    const wasCompletedBefore = Boolean(existingProgress?.isCompleted);
+    let progress = existingProgress;
     if (!progress) {
       progress = {
         id: new Types.ObjectId().toString(),
@@ -450,6 +574,46 @@ export class CourseEnrollmentService {
     }
 
     await enrollment.save();
+
+    const trackingCourseId = this.getCourseTrackingId(course);
+    const chapterJustCompleted = !wasCompletedBefore && Boolean(progress?.isCompleted);
+
+    if (!hadWatchBefore && chapterJustCompleted) {
+      try {
+        await this.trackingService.trackChapterStart(
+          userId,
+          trackingCourseId,
+          chapterId,
+          { source: 'manual_chapter_complete' },
+        );
+      } catch (error) {
+        console.error(
+          `⚠️ [CourseEnrollmentService] Failed to track implicit chapter start for ${chapterId}:`,
+          (error as any)?.message || error,
+        );
+      }
+    }
+
+    if (chapterJustCompleted) {
+      try {
+        await this.trackingService.trackChapterComplete(
+          userId,
+          trackingCourseId,
+          chapterId,
+          { source: 'manual_chapter_complete' },
+        );
+      } catch (error) {
+        console.error(
+          `⚠️ [CourseEnrollmentService] Failed to track chapter completion for ${chapterId}:`,
+          (error as any)?.message || error,
+        );
+      }
+    }
+
+    await this.syncEnrollmentTrackingProgress(userId, course, enrollment, {
+      lastChapterId: chapterId,
+      source: 'manual_chapter_complete',
+    });
 
     // Check for achievements
     if (course.communityId) {
@@ -565,6 +729,9 @@ export class CourseEnrollmentService {
       enrollment.progression.push(progress);
     }
 
+    const hadWatchBefore = Number(progress.watchTime ?? 0) > 0;
+    const wasCompletedBefore = Boolean(progress.isCompleted);
+
     const normalizedWatchTimeSeconds = Math.floor(watchTime);
     const currentProgression = Number(progress.watchTime ?? 0);
     
@@ -605,12 +772,6 @@ export class CourseEnrollmentService {
 
     // Auto-complete chapter if watch time reaches threshold
     let isAutoCompleted = false;
-    // Ensure isCompleted is NEVER reverted to false by a watch update
-    if (progress.isCompleted) {
-       // If it was already completed, keep it completed.
-       // Even if watchPercentage calculation below says otherwise (e.g. video duration changed).
-       isAutoCompleted = true; // effectively treat as "still completed"
-    }
 
     progress.lastAccessedAt = new Date();
     progress.updatedAt = new Date();
@@ -680,9 +841,48 @@ export class CourseEnrollmentService {
     }
 
     await enrollment.save();
+    const trackingCourseId = this.getCourseTrackingId(course);
+    const chapterJustCompleted = !wasCompletedBefore && Boolean(progress.isCompleted);
+
+    if (!hadWatchBefore && Number(progress.watchTime ?? 0) > 0) {
+      try {
+        await this.trackingService.trackChapterStart(
+          userId,
+          trackingCourseId,
+          chapterId,
+          { source: 'watch_time_update' },
+        );
+      } catch (error) {
+        console.error(
+          `⚠️ [CourseEnrollmentService] Failed to track chapter start for ${chapterId}:`,
+          (error as any)?.message || error,
+        );
+      }
+    }
+
+    if (chapterJustCompleted) {
+      try {
+        await this.trackingService.trackChapterComplete(
+          userId,
+          trackingCourseId,
+          chapterId,
+          { source: isAutoCompleted ? 'watch_time_auto_complete' : 'watch_time_update' },
+        );
+      } catch (error) {
+        console.error(
+          `⚠️ [CourseEnrollmentService] Failed to track chapter completion for ${chapterId}:`,
+          (error as any)?.message || error,
+        );
+      }
+    }
+
+    await this.syncEnrollmentTrackingProgress(userId, course, enrollment, {
+      lastChapterId: chapterId,
+      source: isAutoCompleted ? 'watch_time_auto_complete' : 'watch_time_update',
+    });
 
     // Check for achievements if chapter was auto-completed
-    if (isAutoCompleted && course && course.communityId) {
+    if (chapterJustCompleted && course && course.communityId) {
       try {
         console.log(
           `🏆 [CourseEnrollmentService] Checking achievements for user ${userId} in community ${course.communityId}`,
@@ -760,6 +960,18 @@ export class CourseEnrollmentService {
 
     if (totalChapters === 0) {
       throw new BadRequestException('Cette section ne contient aucun chapitre');
+    }
+
+    const chapterProgressBefore = new Map<
+      string,
+      { isCompleted: boolean; watchTime: number }
+    >();
+    for (const chapter of sectionChapters) {
+      const previous = enrollment.progression.find((p) => p.chapterId === chapter.id);
+      chapterProgressBefore.set(chapter.id, {
+        isCompleted: Boolean(previous?.isCompleted),
+        watchTime: Number(previous?.watchTime || 0),
+      });
     }
 
     // Vérifier la progression de chaque chapitre
@@ -843,6 +1055,50 @@ export class CourseEnrollmentService {
 
     // Sauvegarder l'inscription
     await enrollment.save();
+
+    const trackingCourseId = this.getCourseTrackingId(course);
+    for (const chapter of sectionChapters) {
+      const before = chapterProgressBefore.get(chapter.id);
+      const current = enrollment.progression.find((p) => p.chapterId === chapter.id);
+      const becameCompleted = !Boolean(before?.isCompleted) && Boolean(current?.isCompleted);
+
+      if (!becameCompleted) continue;
+
+      if (!before || Number(before.watchTime || 0) <= 0) {
+        try {
+          await this.trackingService.trackChapterStart(
+            userId,
+            trackingCourseId,
+            chapter.id,
+            { source: 'section_complete' },
+          );
+        } catch (error) {
+          console.error(
+            `⚠️ [CourseEnrollmentService] Failed to track implicit chapter start for ${chapter.id}:`,
+            (error as any)?.message || error,
+          );
+        }
+      }
+
+      try {
+        await this.trackingService.trackChapterComplete(
+          userId,
+          trackingCourseId,
+          chapter.id,
+          { source: 'section_complete' },
+        );
+      } catch (error) {
+        console.error(
+          `⚠️ [CourseEnrollmentService] Failed to track chapter completion for ${chapter.id}:`,
+          (error as any)?.message || error,
+        );
+      }
+    }
+
+    await this.syncEnrollmentTrackingProgress(userId, course, enrollment, {
+      sectionId,
+      source: 'section_complete',
+    });
 
     console.log(`   ✅ Section "${section.titre}" marquée comme complète`);
 
@@ -1018,18 +1274,20 @@ export class CourseEnrollmentService {
     // Authoritative analytics tracking: emit course COMPLETE only after full validation succeeds
     // Use the course custom id (course.id) so analytics rollups can $lookup into cours.id
     try {
-      if (course?.id) {
-        await this.trackingService.trackComplete(
-          userId,
-          String(course.id),
-          TrackableContentType.COURSE,
-          {},
-        );
-      }
+      await this.trackingService.trackComplete(
+        userId,
+        this.getCourseTrackingId(course),
+        TrackableContentType.COURSE,
+        {},
+      );
     } catch (e) {
       // Tracking should not break completion
       console.error('⚠️ [CourseEnrollmentService] Failed to track course completion:', (e as any)?.message || e);
     }
+
+    await this.syncEnrollmentTrackingProgress(userId, course, enrollment, {
+      source: 'course_complete',
+    });
 
     // Check for achievements
     if (course.communityId) {

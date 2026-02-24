@@ -28,6 +28,9 @@ export class AnalyticsDaily {
   completes: number;
 
   @Prop({ type: Number, default: 0 })
+  chapterCompletes: number;
+
+  @Prop({ type: Number, default: 0 })
   likes: number;
 
   @Prop({ type: Number, default: 0 })

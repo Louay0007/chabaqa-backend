@@ -2,17 +2,71 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
 import { ConfigService } from '@nestjs/config';
+import { RedisClientType, createClient } from 'redis';
 
 @Injectable()
 export class CacheService {
   private readonly logger = new Logger(CacheService.name);
   private readonly isRedisEnabled: boolean;
+  private readonly defaultTtlSeconds: number;
+  private redisClient: RedisClientType | null = null;
+  private redisConnectPromise: Promise<void> | null = null;
 
   constructor(
     @Inject(CACHE_MANAGER) private cacheManager: Cache,
     private configService: ConfigService,
   ) {
     this.isRedisEnabled = this.configService.get<string>('REDIS_ENABLED') === 'true';
+    this.defaultTtlSeconds = this.configService.get<number>('REDIS_TTL', 300);
+
+    if (this.isRedisEnabled) {
+      const host = this.configService.get<string>('REDIS_HOST', '127.0.0.1');
+      const port = this.configService.get<number>('REDIS_PORT', 6379);
+      const password = this.configService.get<string>('REDIS_PASSWORD', '');
+      const db = this.configService.get<number>('REDIS_DB', 0);
+
+      this.redisClient = createClient({
+        socket: { host, port },
+        password: password || undefined,
+        database: db,
+      });
+
+      this.redisClient.on('error', (error) => {
+        this.logger.error('Redis client error:', error);
+      });
+
+      this.redisConnectPromise = this.redisClient.connect()
+        .then(() => {
+          this.logger.log(`Redis client connected to ${host}:${port} (db=${db})`);
+        })
+        .catch((error) => {
+          this.logger.error('Failed to connect Redis client:', error);
+          this.redisConnectPromise = null;
+        });
+    }
+  }
+
+  private async ensureRedisConnected(): Promise<boolean> {
+    if (!this.isRedisEnabled || !this.redisClient) return false;
+
+    if (this.redisClient.isOpen) return true;
+
+    if (this.redisConnectPromise) {
+      await this.redisConnectPromise;
+      return this.redisClient.isOpen;
+    }
+
+    this.redisConnectPromise = this.redisClient.connect()
+      .then(() => {
+        this.redisConnectPromise = null;
+      })
+      .catch((error) => {
+        this.logger.error('Failed to reconnect Redis client:', error);
+        this.redisConnectPromise = null;
+      });
+
+    await this.redisConnectPromise;
+    return this.redisClient.isOpen;
   }
 
   /**
@@ -27,7 +81,18 @@ export class CacheService {
    */
   async set(key: string, value: any, ttl?: number): Promise<void> {
     try {
-      await this.cacheManager.set(key, value, ttl);
+      if (await this.ensureRedisConnected()) {
+        const ttlSeconds = Math.max(1, Math.floor(ttl ?? this.defaultTtlSeconds));
+        await this.redisClient!.set(key, JSON.stringify(value), { EX: ttlSeconds });
+        this.logger.debug(`Cache set: ${key}`);
+        return;
+      }
+
+      // Fallback to in-memory cache-manager if Redis is unavailable.
+      const ttlMs = typeof ttl === 'number'
+        ? Math.max(1, Math.floor(ttl * 1000))
+        : Math.max(1, Math.floor(this.defaultTtlSeconds * 1000));
+      await this.cacheManager.set(key, value, ttlMs as any);
       this.logger.debug(`Cache set: ${key}`);
     } catch (error) {
       this.logger.error(`Cache set error for key ${key}:`, error);
@@ -40,6 +105,24 @@ export class CacheService {
    */
   async get<T>(key: string): Promise<T | undefined> {
     try {
+      if (await this.ensureRedisConnected()) {
+        const raw = await this.redisClient!.get(key);
+        if (raw === null) {
+          this.logger.debug(`Cache miss: ${key}`);
+          return undefined;
+        }
+
+        try {
+          const value = JSON.parse(raw) as T;
+          this.logger.debug(`Cache hit: ${key}`);
+          return value;
+        } catch {
+          // Backward compatibility if any non-JSON values exist.
+          this.logger.debug(`Cache hit: ${key}`);
+          return raw as unknown as T;
+        }
+      }
+
       const value = await this.cacheManager.get<T>(key);
       if (value !== null && value !== undefined) {
         this.logger.debug(`Cache hit: ${key}`);
@@ -59,6 +142,12 @@ export class CacheService {
    */
   async delete(key: string): Promise<void> {
     try {
+      if (await this.ensureRedisConnected()) {
+        await this.redisClient!.del(key);
+        this.logger.debug(`Cache deleted: ${key}`);
+        return;
+      }
+
       await this.cacheManager.del(key);
       this.logger.debug(`Cache deleted: ${key}`);
     } catch (error) {
@@ -72,26 +161,17 @@ export class CacheService {
    */
   async clear(): Promise<void> {
     try {
-      if (this.isRedisEnabled) {
-        // For Redis, use the store's reset method or flush
-        const store = (this.cacheManager as any).store;
-        if (store && typeof store.reset === 'function') {
-          await store.reset();
-          this.logger.log('Redis cache cleared successfully');
-        } else if (store && store.getClient) {
-          const client = store.getClient();
-          if (client && typeof client.flushDb === 'function') {
-            await client.flushDb();
-            this.logger.log('Redis database flushed successfully');
-          }
-        }
-      } else {
-        // For in-memory cache, use reset if available
-        const store = (this.cacheManager as any).store;
-        if (store && typeof store.reset === 'function') {
-          await store.reset();
-          this.logger.log('In-memory cache cleared successfully');
-        }
+      if (await this.ensureRedisConnected()) {
+        await this.redisClient!.flushDb();
+        this.logger.log('Redis database flushed successfully');
+        return;
+      }
+
+      // For in-memory cache, use reset if available
+      const store = (this.cacheManager as any).store;
+      if (store && typeof store.reset === 'function') {
+        await store.reset();
+        this.logger.log('In-memory cache cleared successfully');
       }
     } catch (error) {
       this.logger.error('Cache clear error:', error);
@@ -121,6 +201,11 @@ export class CacheService {
    */
   async has(key: string): Promise<boolean> {
     try {
+      if (await this.ensureRedisConnected()) {
+        const exists = await this.redisClient!.exists(key);
+        return exists === 1;
+      }
+
       const value = await this.cacheManager.get(key);
       return value !== null && value !== undefined;
     } catch (error) {
@@ -212,18 +297,29 @@ export class CacheService {
     }
 
     try {
-      const store = (this.cacheManager as any).store;
-      if (store && store.getClient) {
-        const client = store.getClient();
-        if (client && typeof client.keys === 'function') {
-          const keys = await client.keys(pattern);
+      if (await this.ensureRedisConnected()) {
+        let cursor = 0;
+        let deleted = 0;
+
+        do {
+          const result = await this.redisClient!.scan(cursor, {
+            MATCH: pattern,
+            COUNT: 500,
+          });
+
+          cursor = result.cursor;
+          const keys = result.keys;
           if (keys.length > 0) {
-            await Promise.all(keys.map(key => this.delete(key)));
-            this.logger.debug(`Deleted ${keys.length} keys matching pattern: ${pattern}`);
-            return keys.length;
+            deleted += await this.redisClient!.del(keys);
           }
+        } while (cursor !== 0);
+
+        if (deleted > 0) {
+          this.logger.debug(`Deleted ${deleted} keys matching pattern: ${pattern}`);
         }
+        return deleted;
       }
+
       return 0;
     } catch (error) {
       this.logger.error(`Error deleting pattern ${pattern}:`, error);
@@ -242,25 +338,17 @@ export class CacheService {
         type: this.isRedisEnabled ? 'redis' : 'memory',
       };
 
-      if (this.isRedisEnabled) {
-        const store = (this.cacheManager as any).store;
-        if (store && store.getClient) {
-          const client = store.getClient();
-          if (client && typeof client.info === 'function') {
-            try {
-              const info = await client.info('memory');
-              stats.redisInfo = info;
-            } catch {
-              // Redis info not available
-            }
-          }
-          if (client && typeof client.dbSize === 'function') {
-            try {
-              stats.keyCount = await client.dbSize();
-            } catch {
-              // DB size not available
-            }
-          }
+      if (await this.ensureRedisConnected()) {
+        try {
+          stats.redisInfo = await this.redisClient!.info('memory');
+        } catch {
+          // Redis info not available
+        }
+
+        try {
+          stats.keyCount = await this.redisClient!.dbSize();
+        } catch {
+          // DB size not available
         }
       }
 

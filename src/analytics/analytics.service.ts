@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { AnalyticsDaily, AnalyticsDailyDocument } from '../schema/analytics-daily.schema';
@@ -9,18 +9,23 @@ import { Cours, CoursSchema } from '../schema/course.schema';
 import { InjectConnection } from '@nestjs/mongoose';
 import { Connection } from 'mongoose';
 import { Ga4ReportingService } from '../ga4/ga4-reporting.service';
+import { CacheService } from '../common/services/cache.service';
 
 
 @Injectable()
 export class AnalyticsService {
+  private readonly logger = new Logger(AnalyticsService.name);
   private cache: Map<string, { data: any; expiresAt: number }>; // simple TTL cache
   private readonly creatorObjectIdCache = new Map<string, Types.ObjectId>();
+  private readonly analyticsRedisPrefix = 'creator-analytics';
+  private readonly defaultCacheTtlMs = 60 * 1000;
 
   constructor(
     @InjectModel(AnalyticsDaily.name) private readonly dailyModel: Model<AnalyticsDailyDocument>,
     private readonly subscriptionService: SubscriptionService,
     @InjectConnection() private readonly dbConnection: Connection,
     private readonly ga4ReportingService: Ga4ReportingService,
+    private readonly cacheService: CacheService,
   ) {
     this.cache = new Map();
   }
@@ -29,18 +34,48 @@ export class AnalyticsService {
     return `${userId}:${from}:${to}:${scope}`;
   }
 
-  private setCache(key: string, value: any, ttlMs = 10 * 60 * 1000) {
-    this.cache.set(key, { data: value, expiresAt: Date.now() + ttlMs });
+  private getRedisCacheKey(key: string): string {
+    return `${this.analyticsRedisPrefix}:${key}`;
   }
 
-  private getCache<T>(key: string): T | null {
+  private setCache(key: string, value: any, ttlMs = this.defaultCacheTtlMs) {
+    this.cache.set(key, { data: value, expiresAt: Date.now() + ttlMs });
+    const ttlSeconds = Math.max(1, Math.ceil(ttlMs / 1000));
+    void this.cacheService.set(this.getRedisCacheKey(key), value, ttlSeconds);
+  }
+
+  private async getCache<T>(key: string): Promise<T | null> {
     const entry = this.cache.get(key);
-    if (!entry) return null;
-    if (Date.now() > entry.expiresAt) {
+    if (entry) {
+      if (Date.now() <= entry.expiresAt) {
+        return entry.data as T;
+      }
       this.cache.delete(key);
-      return null;
     }
-    return entry.data as T;
+
+    const redisValue = await this.cacheService.get<T>(this.getRedisCacheKey(key));
+    if (redisValue !== undefined) {
+      // Keep a short in-process hot cache layer to avoid repetitive deserialization.
+      this.cache.set(key, { data: redisValue, expiresAt: Date.now() + this.defaultCacheTtlMs });
+      return redisValue;
+    }
+
+    return null;
+  }
+
+  private async invalidateCreatorCache(creatorId: string): Promise<void> {
+    const localPrefix = `${creatorId}:`;
+    for (const key of this.cache.keys()) {
+      if (key.startsWith(localPrefix)) {
+        this.cache.delete(key);
+      }
+    }
+
+    const pattern = `${this.analyticsRedisPrefix}:${creatorId}:*`;
+    const deleted = await this.cacheService.deletePattern(pattern);
+    if (deleted > 0) {
+      this.logger.debug(`Invalidated ${deleted} creator analytics cache key(s) for ${creatorId}`);
+    }
   }
 
   private getCreatorObjectId(creatorId: string): Types.ObjectId {
@@ -130,7 +165,7 @@ export class AnalyticsService {
 
   async getCommunities(creatorId: string, from: Date, to: Date) {
     const key = this.cacheKey(creatorId, from.toISOString(), to.toISOString(), 'communities');
-    const cached = this.getCache<any>(key);
+    const cached = await this.getCache<any>(key);
     if (cached) return cached;
 
     // Get communities analytics
@@ -166,7 +201,7 @@ export class AnalyticsService {
     }
     const communityScope = await this.resolveCommunityScope(creatorId, communityId, communitySlug);
     const key = this.cacheKey(creatorId, from.toISOString(), to.toISOString(), `overview:${communityScope.cacheKeyPart}`);
-    const cached = this.getCache<any>(key);
+    const cached = await this.getCache<any>(key);
     if (cached) return this.shapeOverview(cached, plan);
 
     const match = {
@@ -177,6 +212,25 @@ export class AnalyticsService {
     if (communityScope.hasFilter) {
       this.setDailyCommunityFilter(match, communityScope.communityIdStrings);
     }
+
+    const chapterIdExpr = { $ifNull: ['$metadata.chapterId', ''] };
+    const isCourseCompleteActionExpr = {
+      $and: [
+        { $eq: ['$actionType', TrackingActionType.COMPLETE] },
+        { $eq: [chapterIdExpr, ''] },
+      ],
+    };
+    const isChapterCompleteActionExpr = {
+      $or: [
+        { $eq: ['$actionType', TrackingActionType.CHAPTER_COMPLETE] },
+        {
+          $and: [
+            { $eq: ['$actionType', TrackingActionType.COMPLETE] },
+            { $ne: [chapterIdExpr, ''] },
+          ],
+        },
+      ],
+    };
 
     // Try GA4 first for interaction counts
     let ga4Totals: any = null;
@@ -205,6 +259,7 @@ export class AnalyticsService {
           views: { $sum: '$views' },
           starts: { $sum: '$starts' },
           completes: { $sum: '$completes' },
+          chapterCompletes: { $sum: '$chapterCompletes' },
           likes: { $sum: '$likes' },
           shares: { $sum: '$shares' },
           downloads: { $sum: '$downloads' },
@@ -227,6 +282,7 @@ export class AnalyticsService {
             views: { $sum: '$views' },
             starts: { $sum: '$starts' },
             completes: { $sum: '$completes' },
+            chapterCompletes: { $sum: '$chapterCompletes' },
             likes: { $sum: '$likes' },
             shares: { $sum: '$shares' },
             downloads: { $sum: '$downloads' },
@@ -243,6 +299,7 @@ export class AnalyticsService {
       views: 0,
       starts: 0,
       completes: 0,
+      chapterCompletes: 0,
       likes: 0,
       shares: 0,
       downloads: 0,
@@ -255,6 +312,7 @@ export class AnalyticsService {
       mongoTotals.views +
       mongoTotals.starts +
       mongoTotals.completes +
+      mongoTotals.chapterCompletes +
       mongoTotals.likes +
       mongoTotals.shares +
       mongoTotals.downloads +
@@ -310,7 +368,8 @@ export class AnalyticsService {
               _id: null,
               views: { $sum: { $cond: [{ $eq: ['$actionType', 'view'] }, 1, 0] } },
               starts: { $sum: { $cond: [{ $eq: ['$actionType', 'start'] }, 1, 0] } },
-              completes: { $sum: { $cond: [{ $eq: ['$actionType', 'complete'] }, 1, 0] } },
+              completes: { $sum: { $cond: [isCourseCompleteActionExpr, 1, 0] } },
+              chapterCompletes: { $sum: { $cond: [isChapterCompleteActionExpr, 1, 0] } },
               likes: { $sum: { $cond: [{ $eq: ['$actionType', 'like'] }, 1, 0] } },
               shares: { $sum: { $cond: [{ $eq: ['$actionType', 'share'] }, 1, 0] } },
               downloads: { $sum: { $cond: [{ $eq: ['$actionType', 'download'] }, 1, 0] } },
@@ -325,10 +384,13 @@ export class AnalyticsService {
       trackingTotals = trackingAgg?.[0] || null;
     }
 
+    const resolvedChapterCompletes =
+      Number(trackingTotals?.chapterCompletes ?? mongoTotals.chapterCompletes ?? 0) || 0;
+
     const totals = ga4Totals
-      ? { ...ga4Totals, watchTime: mongoTotals.watchTime }
+      ? { ...ga4Totals, watchTime: mongoTotals.watchTime, chapterCompletes: resolvedChapterCompletes }
       : trackingTotals
-        ? { ...trackingTotals, watchTime: mongoTotals.watchTime }
+        ? { ...trackingTotals, watchTime: mongoTotals.watchTime, chapterCompletes: resolvedChapterCompletes }
         : mongoTotals;
 
 
@@ -423,7 +485,7 @@ export class AnalyticsService {
   async getCourses(creatorId: string, from: Date, to: Date, communityId?: string, communitySlug?: string) {
     const communityScope = await this.resolveCommunityScope(creatorId, communityId, communitySlug);
     const key = this.cacheKey(creatorId, from.toISOString(), to.toISOString(), `courses:${communityScope.cacheKeyPart}`);
-    const cached = this.getCache<any>(key);
+    const cached = await this.getCache<any>(key);
     if (cached) return cached;
 
     const match = {
@@ -436,6 +498,30 @@ export class AnalyticsService {
       this.setDailyCommunityFilter(match, communityScope.communityIdStrings);
     }
 
+    const chapterIdExpr = { $ifNull: ['$metadata.chapterId', ''] };
+    const isChapterStartActionExpr = {
+      $or: [
+        { $eq: ['$actionType', TrackingActionType.CHAPTER_START] },
+        {
+          $and: [
+            { $eq: ['$actionType', TrackingActionType.START] },
+            { $ne: [chapterIdExpr, ''] },
+          ],
+        },
+      ],
+    };
+    const isChapterCompleteActionExpr = {
+      $or: [
+        { $eq: ['$actionType', TrackingActionType.CHAPTER_COMPLETE] },
+        {
+          $and: [
+            { $eq: ['$actionType', TrackingActionType.COMPLETE] },
+            { $ne: [chapterIdExpr, ''] },
+          ],
+        },
+      ],
+    };
+
     let byCourse = await this.dailyModel.aggregate([
       { $match: match },
       {
@@ -444,6 +530,7 @@ export class AnalyticsService {
           views: { $sum: '$views' },
           starts: { $sum: '$starts' },
           completes: { $sum: '$completes' },
+          chapterCompletes: { $sum: '$chapterCompletes' },
           watchTime: { $sum: '$watchTime' },
           ratingsCount: { $sum: '$ratingsCount' },
         },
@@ -455,6 +542,7 @@ export class AnalyticsService {
           views: 1,
           starts: 1,
           completes: 1,
+          chapterCompletes: 1,
           watchTime: 1,
           ratingsCount: 1,
           completionRate: {
@@ -477,6 +565,7 @@ export class AnalyticsService {
             views: { $sum: '$views' },
             starts: { $sum: '$starts' },
             completes: { $sum: '$completes' },
+            chapterCompletes: { $sum: '$chapterCompletes' },
             watchTime: { $sum: '$watchTime' },
             ratingsCount: { $sum: '$ratingsCount' },
           },
@@ -488,6 +577,7 @@ export class AnalyticsService {
             views: 1,
             starts: 1,
             completes: 1,
+            chapterCompletes: 1,
             watchTime: 1,
             ratingsCount: 1,
             completionRate: {
@@ -514,12 +604,13 @@ export class AnalyticsService {
 
         // Use GA4 stats but preserve watchTime from Mongo
         byCourse = ga4Stats.map(s => {
-          const m = mongoMap.get(s.contentId) || { watchTime: 0 };
+          const m = mongoMap.get(s.contentId) || { watchTime: 0, chapterCompletes: 0 };
           return {
             contentId: s.contentId,
             views: s.views,
             starts: s.starts,
             completes: s.completes,
+            chapterCompletes: Number((m as any)?.chapterCompletes || 0),
             watchTime: m.watchTime,
             ratingsCount: s.ratingsCount,
             completionRate: s.starts > 0 ? s.completes / s.starts : 0
@@ -550,8 +641,54 @@ export class AnalyticsService {
       }));
     }
 
-    // Chapter funnel (drop-offs) from trackingactions metadata if available (chapterId)
     const tracking = this.dbConnection.collection('trackingactions');
+
+    const chapterCompletesByCourse = await tracking
+      .aggregate([
+        { $match: { timestamp: { $gte: from, $lte: to }, contentType: 'course' } },
+        { $lookup: { from: 'cours', localField: 'contentId', foreignField: 'id', as: 'course' } },
+        { $unwind: '$course' },
+        { $match: { 'course.creatorId': this.getCreatorObjectId(creatorId) } },
+        ...(communityScope.hasFilter ? [{ $match: this.buildLookupCommunityMatch('course.communityId', communityScope.lookupCommunityValues) }] : []),
+        {
+          $group: {
+            _id: '$contentId',
+            chapterCompletes: { $sum: { $cond: [isChapterCompleteActionExpr, 1, 0] } },
+          },
+        },
+        { $project: { _id: 0, contentId: '$_id', chapterCompletes: 1 } },
+      ])
+      .toArray();
+
+    if (chapterCompletesByCourse.length > 0) {
+      const chapterCompletesMap = new Map(
+        chapterCompletesByCourse.map((entry: any) => [String(entry.contentId), Number(entry.chapterCompletes || 0)]),
+      );
+      const existingCourseIds = new Set(byCourse.map((entry: any) => String(entry.contentId)));
+      byCourse = byCourse.map((entry: any) => ({
+        ...entry,
+        chapterCompletes: chapterCompletesMap.get(String(entry.contentId)) ?? Number(entry.chapterCompletes || 0),
+      }));
+
+      for (const [contentId, chapterCompletes] of chapterCompletesMap.entries()) {
+        if (existingCourseIds.has(contentId)) continue;
+        byCourse.push({
+          contentId,
+          title: contentId,
+          views: 0,
+          starts: 0,
+          completes: 0,
+          chapterCompletes,
+          watchTime: 0,
+          ratingsCount: 0,
+          completionRate: 0,
+        });
+      }
+
+      byCourse.sort((a: any, b: any) => Number(b.views || 0) - Number(a.views || 0));
+    }
+
+    // Chapter funnel (drop-offs) from trackingactions metadata if available (chapterId)
     const funnelPipeline: any[] = [
       { $match: { timestamp: { $gte: from, $lte: to }, contentType: 'course' } },
       { $lookup: { from: 'cours', localField: 'contentId', foreignField: 'id', as: 'course' } },
@@ -564,14 +701,21 @@ export class AnalyticsService {
     }
 
     funnelPipeline.push(
-      { $project: { contentId: 1, actionType: 1, chapterId: '$metadata.chapterId' } },
-      { $match: { chapterId: { $exists: true, $ne: null } } },
+      {
+        $project: {
+          contentId: 1,
+          actionType: 1,
+          chapterId: '$metadata.chapterId',
+          chapterIdNormalized: chapterIdExpr,
+        },
+      },
+      { $match: { chapterIdNormalized: { $ne: '' } } },
       {
         $group: {
-          _id: { contentId: '$contentId', chapterId: '$chapterId' },
+          _id: { contentId: '$contentId', chapterId: '$chapterIdNormalized' },
           views: { $sum: { $cond: [{ $eq: ['$actionType', 'view'] }, 1, 0] } },
-          starts: { $sum: { $cond: [{ $eq: ['$actionType', 'start'] }, 1, 0] } },
-          completes: { $sum: { $cond: [{ $eq: ['$actionType', 'complete'] }, 1, 0] } },
+          starts: { $sum: { $cond: [isChapterStartActionExpr, 1, 0] } },
+          completes: { $sum: { $cond: [isChapterCompleteActionExpr, 1, 0] } },
         },
       },
       { $project: { _id: 0, contentId: '$_id.contentId', chapterId: '$_id.chapterId', views: 1, starts: 1, completes: 1, completionRate: { $cond: [{ $gt: ['$starts', 0] }, { $divide: ['$completes', '$starts'] }, 0] } } },
@@ -587,7 +731,7 @@ export class AnalyticsService {
   async getChallenges(creatorId: string, from: Date, to: Date, communityId?: string, communitySlug?: string) {
     const communityScope = await this.resolveCommunityScope(creatorId, communityId, communitySlug);
     const key = this.cacheKey(creatorId, from.toISOString(), to.toISOString(), `challenges:${communityScope.cacheKeyPart}`);
-    const cached = this.getCache<any>(key);
+    const cached = await this.getCache<any>(key);
     if (cached) return cached;
 
     const match = {
@@ -938,7 +1082,7 @@ export class AnalyticsService {
   async getSessions(creatorId: string, from: Date, to: Date, communityId?: string, communitySlug?: string) {
     const communityScope = await this.resolveCommunityScope(creatorId, communityId, communitySlug);
     const key = this.cacheKey(creatorId, from.toISOString(), to.toISOString(), `sessions:${communityScope.cacheKeyPart}`);
-    const cached = this.getCache<any>(key);
+    const cached = await this.getCache<any>(key);
     if (cached) return cached;
     const match = { creatorId: this.getCreatorObjectId(creatorId), date: { $gte: from, $lte: to }, contentType: 'session' } as any;
 
@@ -983,7 +1127,7 @@ export class AnalyticsService {
   async getEvents(creatorId: string, from: Date, to: Date, communityId?: string, communitySlug?: string) {
     const communityScope = await this.resolveCommunityScope(creatorId, communityId, communitySlug);
     const key = this.cacheKey(creatorId, from.toISOString(), to.toISOString(), `events:${communityScope.cacheKeyPart}`);
-    const cached = this.getCache<any>(key);
+    const cached = await this.getCache<any>(key);
     if (cached) return cached;
     const match = { creatorId: this.getCreatorObjectId(creatorId), date: { $gte: from, $lte: to }, contentType: 'event' } as any;
 
@@ -1027,7 +1171,7 @@ export class AnalyticsService {
   async getProducts(creatorId: string, from: Date, to: Date, communityId?: string, communitySlug?: string) {
     const communityScope = await this.resolveCommunityScope(creatorId, communityId, communitySlug);
     const key = this.cacheKey(creatorId, from.toISOString(), to.toISOString(), `products:${communityScope.cacheKeyPart}`);
-    const cached = this.getCache<any>(key);
+    const cached = await this.getCache<any>(key);
     if (cached) return cached;
     const match = { creatorId: this.getCreatorObjectId(creatorId), date: { $gte: from, $lte: to }, contentType: 'product' } as any;
 
@@ -1072,7 +1216,7 @@ export class AnalyticsService {
   async getPosts(creatorId: string, from: Date, to: Date, communityId?: string, communitySlug?: string) {
     const communityScope = await this.resolveCommunityScope(creatorId, communityId, communitySlug);
     const key = this.cacheKey(creatorId, from.toISOString(), to.toISOString(), `posts:${communityScope.cacheKeyPart}`);
-    const cached = this.getCache<any>(key);
+    const cached = await this.getCache<any>(key);
     if (cached) return cached;
     const match = { creatorId: this.getCreatorObjectId(creatorId), date: { $gte: from, $lte: to }, contentType: 'post' } as any;
 
@@ -1116,7 +1260,11 @@ export class AnalyticsService {
   }
 
   // Build daily rollups for a specific creator and day (UTC boundaries)
-  async rollupDayForCreator(creatorId: string, day: Date) {
+  async rollupDayForCreator(
+    creatorId: string,
+    day: Date,
+    options?: { skipInvalidation?: boolean },
+  ) {
     const start = new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), 0, 0, 0));
     const end = new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), 23, 59, 59, 999));
 
@@ -1124,6 +1272,31 @@ export class AnalyticsService {
 
     // Helper to build aggregate for a specific type
     const buildTypeAgg = async (type: string, collectionName: string) => {
+      const chapterIdExpr = { $ifNull: ['$metadata.chapterId', ''] };
+      const completesCondition =
+        type === 'course'
+          ? {
+              $and: [
+                { $eq: ['$actionType', TrackingActionType.COMPLETE] },
+                { $eq: [chapterIdExpr, ''] },
+              ],
+            }
+          : { $eq: ['$actionType', TrackingActionType.COMPLETE] };
+      const chapterCompletesCondition =
+        type === 'course'
+          ? {
+              $or: [
+                { $eq: ['$actionType', TrackingActionType.CHAPTER_COMPLETE] },
+                {
+                  $and: [
+                    { $eq: ['$actionType', TrackingActionType.COMPLETE] },
+                    { $ne: [chapterIdExpr, ''] },
+                  ],
+                },
+              ],
+            }
+          : false;
+
       return tracking.aggregate([
         { $match: { timestamp: { $gte: start, $lte: end }, contentType: type } },
         { $lookup: { from: collectionName, localField: 'contentId', foreignField: 'id', as: 'meta' } },
@@ -1135,7 +1308,8 @@ export class AnalyticsService {
             communityId: { $first: '$meta.communityId' },
             views: { $sum: { $cond: [{ $eq: ['$actionType', 'view'] }, 1, 0] } },
             starts: { $sum: { $cond: [{ $eq: ['$actionType', 'start'] }, 1, 0] } },
-            completes: { $sum: { $cond: [{ $eq: ['$actionType', 'complete'] }, 1, 0] } },
+            completes: { $sum: { $cond: [completesCondition, 1, 0] } },
+            chapterCompletes: { $sum: { $cond: [chapterCompletesCondition, 1, 0] } },
             likes: { $sum: { $cond: [{ $eq: ['$actionType', 'like'] }, 1, 0] } },
             shares: { $sum: { $cond: [{ $eq: ['$actionType', 'share'] }, 1, 0] } },
             downloads: { $sum: { $cond: [{ $eq: ['$actionType', 'download'] }, 1, 0] } },
@@ -1144,7 +1318,7 @@ export class AnalyticsService {
             users: { $addToSet: '$userId' },
           },
         },
-        { $project: { _id: 0, contentId: '$_id.contentId', communityId: 1, views: 1, starts: 1, completes: 1, likes: 1, shares: 1, downloads: 1, bookmarks: 1, ratingsCount: 1, uniqueUsers: { $size: '$users' } } },
+        { $project: { _id: 0, contentId: '$_id.contentId', communityId: 1, views: 1, starts: 1, completes: 1, chapterCompletes: 1, likes: 1, shares: 1, downloads: 1, bookmarks: 1, ratingsCount: 1, uniqueUsers: { $size: '$users' } } },
       ]).toArray();
     };
 
@@ -1171,7 +1345,9 @@ export class AnalyticsService {
       );
     }
 
-    this.cache.clear();
+    if (!options?.skipInvalidation) {
+      await this.invalidateCreatorCache(creatorId);
+    }
     return { updated: docs.length, date: start.toISOString() };
   }
 
@@ -1180,9 +1356,10 @@ export class AnalyticsService {
     let count = 0;
     for (let i = days; i >= 0; i--) {
       const day = new Date(today.getTime() - i * 24 * 3600 * 1000);
-      const r = await this.rollupDayForCreator(creatorId, day);
+      const r = await this.rollupDayForCreator(creatorId, day, { skipInvalidation: true });
       count += r.updated;
     }
+    await this.invalidateCreatorCache(creatorId);
     return { ok: true, updated: count };
   }
 
@@ -1519,7 +1696,7 @@ export class AnalyticsService {
   async getDevices(creatorId: string, from: Date, to: Date, communityId?: string, communitySlug?: string) {
     const communityScope = await this.resolveCommunityScope(creatorId, communityId, communitySlug);
     const key = this.cacheKey(creatorId, from.toISOString(), to.toISOString(), `devices:${communityScope.cacheKeyPart}`);
-    const cached = this.getCache<any>(key);
+    const cached = await this.getCache<any>(key);
     if (cached) return cached;
 
     const tracking = this.dbConnection.collection('trackingactions');
@@ -1792,7 +1969,7 @@ export class AnalyticsService {
   async getReferrers(creatorId: string, from: Date, to: Date, communityId?: string, communitySlug?: string) {
     const communityScope = await this.resolveCommunityScope(creatorId, communityId, communitySlug);
     const key = this.cacheKey(creatorId, from.toISOString(), to.toISOString(), `referrers:${communityScope.cacheKeyPart}`);
-    const cached = this.getCache<any>(key);
+    const cached = await this.getCache<any>(key);
     if (cached) return cached;
 
     // Try GA4 first
@@ -1896,6 +2073,7 @@ export class AnalyticsService {
         ['views', data.totals.views],
         ['starts', data.totals.starts],
         ['completes', data.totals.completes],
+        ['chapterCompletes', data.totals.chapterCompletes],
         ['likes', data.totals.likes],
         ['shares', data.totals.shares],
         ['downloads', data.totals.downloads],
@@ -1911,8 +2089,8 @@ export class AnalyticsService {
 
     if (scope === 'courses') {
       const res = await this.getCourses(creatorId, from, to, communityId, communitySlug);
-      const head = ['contentId', 'views', 'starts', 'completes', 'completionRate', 'watchTime', 'ratingsCount'];
-      const rows = [head, ...res.byCourse.map((c: any) => [c.contentId, c.views, c.starts, c.completes, c.completionRate, c.watchTime, c.ratingsCount])];
+      const head = ['contentId', 'views', 'starts', 'completes', 'chapterCompletes', 'completionRate', 'watchTime', 'ratingsCount'];
+      const rows = [head, ...res.byCourse.map((c: any) => [c.contentId, c.views, c.starts, c.completes, c.chapterCompletes || 0, c.completionRate, c.watchTime, c.ratingsCount])];
       return { filename: 'courses.csv', csv: this.toCsv(rows) };
     }
 
@@ -1970,6 +2148,7 @@ export class AnalyticsService {
       viewsTotal: Number(full?.totals?.views ?? 0) || 0,
       starts: Number(full?.totals?.starts ?? 0) || 0,
       completes: Number(full?.totals?.completes ?? 0) || 0,
+      chapterCompletes: Number(full?.totals?.chapterCompletes ?? 0) || 0,
       completions: Number(full?.totals?.completes ?? 0) || 0,
       completionRate:
         (Number(full?.totals?.starts ?? 0) || 0) > 0
@@ -1992,7 +2171,7 @@ export class AnalyticsService {
 
   async getCourseAnalytics(creatorId: string, courseId: string, from: Date, to: Date) {
     const key = this.cacheKey(creatorId, `${courseId}:${from.toISOString()}`, to.toISOString(), 'course');
-    const cached = this.getCache<any>(key);
+    const cached = await this.getCache<any>(key);
     if (cached) return cached;
 
     // Get course basic info
@@ -2019,11 +2198,48 @@ export class AnalyticsService {
         }
       },
       {
+        $addFields: {
+          chapterId: { $ifNull: ['$metadata.chapterId', ''] },
+        },
+      },
+      {
         $group: {
-          _id: '$actionType',
-          count: { $sum: 1 },
-          uniqueUsers: { $size: '$users' },
-          communityId: '$course.communityId'
+          _id: null,
+          views: { $sum: { $cond: [{ $eq: ['$actionType', TrackingActionType.VIEW] }, 1, 0] } },
+          starts: { $sum: { $cond: [{ $eq: ['$actionType', TrackingActionType.START] }, 1, 0] } },
+          completes: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    { $eq: ['$actionType', TrackingActionType.COMPLETE] },
+                    { $eq: ['$chapterId', ''] },
+                  ],
+                },
+                1,
+                0,
+              ],
+            },
+          },
+          chapterCompletes: {
+            $sum: {
+              $cond: [
+                {
+                  $or: [
+                    { $eq: ['$actionType', TrackingActionType.CHAPTER_COMPLETE] },
+                    {
+                      $and: [
+                        { $eq: ['$actionType', TrackingActionType.COMPLETE] },
+                        { $ne: ['$chapterId', ''] },
+                      ],
+                    },
+                  ],
+                },
+                1,
+                0,
+              ],
+            },
+          },
         }
       }
     ]).toArray();
@@ -2148,9 +2364,10 @@ export class AnalyticsService {
       courseTitle: course.titre,
       enrollmentCount: enrollments.length,
       totalRevenue: revenueStats,
-      views: courseTracking.find(t => t._id === 'view')?.count || 0,
-      starts: courseTracking.find(t => t._id === 'start')?.count || 0,
-      completes: courseTracking.find(t => t._id === 'complete')?.count || 0,
+      views: courseTracking?.[0]?.views || 0,
+      starts: courseTracking?.[0]?.starts || 0,
+      completes: courseTracking?.[0]?.completes || 0,
+      chapterCompletes: courseTracking?.[0]?.chapterCompletes || 0,
       completionRate: Math.round(completionRate * 100) / 100,
       dailyTrend: trendForCourse,
       chapterStats: chapterStats.map(stat => ({

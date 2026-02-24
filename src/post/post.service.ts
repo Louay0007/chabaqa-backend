@@ -3,6 +3,7 @@ import {
   NotFoundException,
   ForbiddenException,
   BadRequestException,
+  Logger,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -21,12 +22,38 @@ import {
 
 @Injectable()
 export class PostService {
+  private readonly logger = new Logger(PostService.name);
+  private readonly isDebugLoggingEnabled = process.env.NODE_ENV !== 'production';
+
   constructor(
     @InjectModel(Post.name) private postModel: Model<PostDocument>,
     @InjectModel(Community.name)
     private communityModel: Model<CommunityDocument>,
     @InjectModel(User.name) private userModel: Model<UserDocument>,
   ) { }
+
+  private serializeLogArg(arg: unknown): string {
+    if (typeof arg === 'string') return arg;
+    if (arg instanceof Error) return arg.stack || arg.message;
+    try {
+      return JSON.stringify(arg);
+    } catch {
+      return String(arg);
+    }
+  }
+
+  private logDebug(...args: unknown[]): void {
+    if (!this.isDebugLoggingEnabled) return;
+    this.logger.debug(args.map((arg) => this.serializeLogArg(arg)).join(' '));
+  }
+
+  private logWarn(...args: unknown[]): void {
+    this.logger.warn(args.map((arg) => this.serializeLogArg(arg)).join(' '));
+  }
+
+  private logError(...args: unknown[]): void {
+    this.logger.error(args.map((arg) => this.serializeLogArg(arg)).join(' '));
+  }
 
   /**
    * Créer un nouveau post
@@ -35,7 +62,7 @@ export class PostService {
     createPostDto: CreatePostDto,
     userId: string,
   ): Promise<PostResponseDto> {
-    console.log('🎯 [POST-SERVICE] Creating post with data:', {
+    this.logDebug('🎯 [POST-SERVICE] Creating post with data:', {
       communityId: createPostDto.communityId,
       userId,
       title: createPostDto.title
@@ -43,7 +70,7 @@ export class PostService {
 
     // Check if the user exists
     const userExists = await this.userModel.findById(userId).select('name email');
-    console.log('👤 [POST-SERVICE] User creating post:', {
+    this.logDebug('👤 [POST-SERVICE] User creating post:', {
       userId,
       userExists: !!userExists,
       userName: userExists?.name,
@@ -52,7 +79,7 @@ export class PostService {
 
     // Vérifier que la communauté existe
     const community = await this.communityModel.findById(createPostDto.communityId);
-    console.log('🏘️ [POST-SERVICE] Community found:', community ? community.name : 'NONE');
+    this.logDebug('🏘️ [POST-SERVICE] Community found:', community ? community.name : 'NONE');
 
     if (!community) {
       throw new NotFoundException('Communauté non trouvée');
@@ -98,7 +125,7 @@ export class PostService {
     });
 
     const savedPost = await post.save();
-    console.log(' [POST-SERVICE] Post saved with ID:', savedPost._id);
+    this.logDebug(' [POST-SERVICE] Post saved with ID:', savedPost._id);
 
     // Récupérer les informations complètes avec populated author
     const populatedPost = await this.postModel
@@ -106,7 +133,7 @@ export class PostService {
       .populate('authorId', 'name email profile_picture photo_profil')
       .exec();
 
-    console.log(' [POST-SERVICE] Post created with author data:', {
+    this.logDebug(' [POST-SERVICE] Post created with author data:', {
       postId: populatedPost!.id,
       authorId: populatedPost!.authorId,
       authorName: (populatedPost!.authorId as any)?.name,
@@ -128,14 +155,14 @@ export class PostService {
     search?: string,
     userId?: string,
   ): Promise<PostListResponseDto> {
-    console.log('🔍 [POST-SERVICE] FindAll called with:', { page, limit, communityId, authorId, tags, search });
+    this.logDebug('🔍 [POST-SERVICE] FindAll called with:', { page, limit, communityId, authorId, tags, search });
 
     const query: any = { isPublished: true };
 
     // Filtres
     if (communityId) {
       query.communityId = communityId;
-      console.log('🏘️ [POST-SERVICE] Filtering by community:', communityId);
+      this.logDebug('🏘️ [POST-SERVICE] Filtering by community:', communityId);
     }
     if (authorId) {
       query.authorId = new Types.ObjectId(authorId);
@@ -151,7 +178,7 @@ export class PostService {
       ];
     }
 
-    console.log('📋 [POST-SERVICE] Final query:', JSON.stringify(query, null, 2));
+    this.logDebug('📋 [POST-SERVICE] Final query:', JSON.stringify(query, null, 2));
 
     const skip = (page - 1) * limit;
 
@@ -167,7 +194,7 @@ export class PostService {
       this.postModel.countDocuments(query),
     ]);
 
-    console.log('📝 [POST-SERVICE] Posts fetched with population:', posts.map(p => ({
+    this.logDebug('📝 [POST-SERVICE] Posts fetched with population:', posts.map(p => ({
       id: p.id,
       authorId: p.authorId,
       authorName: (p.authorId as any)?.name || 'NOT_POPULATED',
@@ -176,9 +203,9 @@ export class PostService {
       likedByIds: p.likedBy?.map((id: Types.ObjectId) => id.toString()) || []
     })));
     
-    console.log('👤 [POST-SERVICE] Current userId for like check:', userId);
+    this.logDebug('👤 [POST-SERVICE] Current userId for like check:', userId);
 
-    console.log('📊 [POST-SERVICE] Query results:', {
+    this.logDebug('📊 [POST-SERVICE] Query results:', {
       postsFound: posts.length,
       totalCount: total,
       skip,
@@ -187,7 +214,7 @@ export class PostService {
 
     // Récupérer les informations des communautés
     const communityIds = [...new Set(posts.map((post) => post.communityId))];
-    console.log('🔍 [POST-SERVICE] Looking up communities for IDs:', communityIds);
+    this.logDebug('🔍 [POST-SERVICE] Looking up communities for IDs:', communityIds);
 
     let communities: CommunityDocument[] = [];
     try {
@@ -197,15 +224,15 @@ export class PostService {
             try {
               return new Types.ObjectId(id);
             } catch (error) {
-              console.warn('⚠️ [POST-SERVICE] Invalid ObjectId format:', id);
+              this.logWarn('⚠️ [POST-SERVICE] Invalid ObjectId format:', id);
               return null;
             }
           }).filter(Boolean)
         },
       });
-      console.log('✅ [POST-SERVICE] Found communities:', communities.length);
+      this.logDebug('✅ [POST-SERVICE] Found communities:', communities.length);
     } catch (error) {
-      console.error('❌ [POST-SERVICE] Error fetching communities:', error);
+      this.logError('❌ [POST-SERVICE] Error fetching communities:', error);
       communities = [];
     }
 
@@ -215,7 +242,7 @@ export class PostService {
           const community = communities.find((c) => c._id.toString() === post.communityId);
           return await this.transformToResponseDto(post, community, userId);
         } catch (error) {
-          console.error('❌ [POST-SERVICE] Error transforming post:', post.id, error);
+          this.logError('❌ [POST-SERVICE] Error transforming post:', post.id, error);
           // Return a basic post structure if transformation fails
           return {
             id: post.id,
@@ -240,6 +267,7 @@ export class PostService {
             likes: post.likes || 0,
             shareCount: post.shareCount || 0,
             isLikedByUser: false,
+            isBookmarkedByUser: false,
             isSharedByUser: false,
             comments: [],
             commentsCount: 0,
@@ -298,7 +326,7 @@ export class PostService {
     const postAuthorId = post.authorId?.toString() || '';
     const normalizedUserId = userId?.toString() || '';
     
-    console.log('🔐 [POST-SERVICE] Authorization check for update:', {
+    this.logDebug('🔐 [POST-SERVICE] Authorization check for update:', {
       postId: id,
       postAuthorId,
       normalizedUserId,
@@ -344,7 +372,7 @@ export class PostService {
     const postAuthorId = post.authorId?.toString() || '';
     const normalizedUserId = userId?.toString() || '';
     
-    console.log('🔐 [POST-SERVICE] Authorization check for delete:', {
+    this.logDebug('🔐 [POST-SERVICE] Authorization check for delete:', {
       postId: id,
       postAuthorId,
       normalizedUserId,
@@ -479,7 +507,7 @@ export class PostService {
     const postAuthorId = post.authorId?.toString() || '';
     const normalizedUserId = userId?.toString() || '';
     
-    console.log('🔐 [POST-SERVICE] Authorization check for comment delete:', {
+    this.logDebug('🔐 [POST-SERVICE] Authorization check for comment delete:', {
       commentId,
       commentAuthorId,
       postAuthorId,
@@ -527,7 +555,7 @@ export class PostService {
     const commentAuthorId = comment.userId?.toString() || '';
     const normalizedUserId = userId?.toString() || '';
     
-    console.log('🔐 [POST-SERVICE] Authorization check for comment update:', {
+    this.logDebug('🔐 [POST-SERVICE] Authorization check for comment update:', {
       commentId,
       commentAuthorId,
       normalizedUserId,
@@ -572,7 +600,7 @@ export class PostService {
     }
 
     const userIdObj = new Types.ObjectId(userId);
-    console.log('👍 [POST-SERVICE] Attempting to like post:', {
+    this.logDebug('👍 [POST-SERVICE] Attempting to like post:', {
       postId: post.id,
       userId: userId,
       userIdObj: userIdObj.toString(),
@@ -583,7 +611,7 @@ export class PostService {
     const wasLiked = post.likePost(userIdObj);
 
     if (!wasLiked) {
-      console.log('ℹ️ [POST-SERVICE] User already liked this post');
+      this.logDebug('ℹ️ [POST-SERVICE] User already liked this post');
       // Already liked - return current state without error
       return {
         postId: post.id,
@@ -595,14 +623,14 @@ export class PostService {
       };
     }
 
-    console.log('✅ [POST-SERVICE] Like added, saving...', {
+    this.logDebug('✅ [POST-SERVICE] Like added, saving...', {
       newLikedBy: post.likedBy.map((id: Types.ObjectId) => id.toString()),
       newLikes: post.likes
     });
     
     await post.save();
 
-    console.log('💾 [POST-SERVICE] Post saved successfully');
+    this.logDebug('💾 [POST-SERVICE] Post saved successfully');
 
     return {
       postId: post.id,
@@ -711,9 +739,10 @@ export class PostService {
     authorId: string,
     page: number = 1,
     limit: number = 10,
+    communityId?: string,
     currentUserId?: string,
   ): Promise<PostListResponseDto> {
-    return this.findAll(page, limit, undefined, authorId, undefined, undefined, currentUserId);
+    return this.findAll(page, limit, communityId, authorId, undefined, undefined, currentUserId);
   }
 
   /**
@@ -725,15 +754,15 @@ export class PostService {
     limit: number = 10,
     userId?: string,
   ): Promise<PostListResponseDto> {
-    console.log('🏘️ [POST-SERVICE] Finding posts for community:', communityId);
-    console.log('📄 [POST-SERVICE] Pagination:', { page, limit });
+    this.logDebug('🏘️ [POST-SERVICE] Finding posts for community:', communityId);
+    this.logDebug('📄 [POST-SERVICE] Pagination:', { page, limit });
 
     try {
       // First, let's check if any posts exist at all
       const totalPosts = await this.postModel.countDocuments({});
       const communityPosts = await this.postModel.countDocuments({ communityId });
 
-      console.log('📊 [POST-SERVICE] Database stats:', {
+      this.logDebug('📊 [POST-SERVICE] Database stats:', {
         totalPosts,
         communityPosts,
         communityId
@@ -741,7 +770,7 @@ export class PostService {
 
       // If no posts exist, return empty result
       if (totalPosts === 0) {
-        console.log('ℹ️ [POST-SERVICE] No posts in database, returning empty result');
+        this.logDebug('ℹ️ [POST-SERVICE] No posts in database, returning empty result');
         return {
           posts: [],
           pagination: {
@@ -754,10 +783,10 @@ export class PostService {
       }
 
       const result = await this.findAll(page, limit, communityId, undefined, undefined, undefined, userId);
-      console.log('✅ [POST-SERVICE] Found posts:', result.posts.length);
+      this.logDebug('✅ [POST-SERVICE] Found posts:', result.posts.length);
       return result;
     } catch (error) {
-      console.error('❌ [POST-SERVICE] Error in findByCommunity:', error);
+      this.logError('❌ [POST-SERVICE] Error in findByCommunity:', error);
 
       // Return empty result instead of throwing
       return {
@@ -781,7 +810,7 @@ export class PostService {
     userId?: string,
   ): Promise<PostResponseDto> {
     try {
-      console.log('🔄 [POST-SERVICE] Transforming post:', post.id);
+      this.logDebug('🔄 [POST-SERVICE] Transforming post:', post.id);
 
       // Transformer les commentaires avec error handling
       let comments: any[] = [];
@@ -802,7 +831,7 @@ export class PostService {
                 updatedAt: comment.updatedAt.toISOString(),
               };
             } catch (commentError) {
-              console.error('❌ [POST-SERVICE] Error transforming comment:', commentError);
+              this.logError('❌ [POST-SERVICE] Error transforming comment:', commentError);
               return {
                 id: comment.id,
                 content: comment.content,
@@ -816,27 +845,27 @@ export class PostService {
           }),
         );
       } catch (commentsError) {
-        console.error('❌ [POST-SERVICE] Error transforming comments:', commentsError);
+        this.logError('❌ [POST-SERVICE] Error transforming comments:', commentsError);
         comments = [];
       }
 
       // Récupérer les informations de l'auteur avec error handling
       let author: any = null;
       try {
-        console.log('👤 [POST-SERVICE] Fetching author for post:', post.id);
-        console.log('🔍 [POST-SERVICE] Author ID type:', typeof post.authorId);
-        console.log('🔍 [POST-SERVICE] Author ID value:', post.authorId);
+        this.logDebug('👤 [POST-SERVICE] Fetching author for post:', post.id);
+        this.logDebug('🔍 [POST-SERVICE] Author ID type:', typeof post.authorId);
+        this.logDebug('🔍 [POST-SERVICE] Author ID value:', post.authorId);
 
         // First try to get from populated data if available
         if (post.authorId && typeof post.authorId === 'object' && (post.authorId as any).name) {
           author = post.authorId;
-          console.log('✅ [POST-SERVICE] Using populated author data:', author.name);
+          this.logDebug('✅ [POST-SERVICE] Using populated author data:', author.name);
         } else {
           // Fallback to direct lookup
-          console.log('🔍 [POST-SERVICE] Performing direct user lookup for ID:', post.authorId);
+          this.logDebug('🔍 [POST-SERVICE] Performing direct user lookup for ID:', post.authorId);
 
           // Try multiple approaches to get user data
-          console.log('🔄 [POST-SERVICE] Trying multiple user lookup approaches...');
+          this.logDebug('🔄 [POST-SERVICE] Trying multiple user lookup approaches...');
 
           // Approach 1: Direct findById
           author = await this.userModel
@@ -844,7 +873,7 @@ export class PostService {
             .select('name email profile_picture photo_profil')
             .exec();
 
-          console.log('🔍 [POST-SERVICE] Approach 1 (direct lookup) result:', {
+          this.logDebug('🔍 [POST-SERVICE] Approach 1 (direct lookup) result:', {
             found: !!author,
             name: author?.name,
             email: author?.email,
@@ -854,7 +883,7 @@ export class PostService {
 
           // Approach 2: If first approach failed, try without select
           if (!author) {
-            console.log('🔄 [POST-SERVICE] Trying without select...');
+            this.logDebug('🔄 [POST-SERVICE] Trying without select...');
             const fullUser = await this.userModel.findById(post.authorId).exec();
             if (fullUser) {
               author = {
@@ -863,25 +892,25 @@ export class PostService {
                 profile_picture: fullUser.profile_picture || fullUser.photo_profil,
                 _id: fullUser._id
               };
-              console.log('✅ [POST-SERVICE] Approach 2 success:', author);
+              this.logDebug('✅ [POST-SERVICE] Approach 2 success:', author);
             } else {
-              console.log('❌ [POST-SERVICE] User not found with ID:', post.authorId);
+              this.logDebug('❌ [POST-SERVICE] User not found with ID:', post.authorId);
             }
           }
 
           // Approach 3: Check if authorId is valid ObjectId format
           if (!author) {
-            console.log('🔍 [POST-SERVICE] Checking if authorId is valid ObjectId format...');
+            this.logDebug('🔍 [POST-SERVICE] Checking if authorId is valid ObjectId format...');
             try {
               const isValidObjectId = Types.ObjectId.isValid(post.authorId);
-              console.log('🔍 [POST-SERVICE] Is valid ObjectId:', isValidObjectId);
+              this.logDebug('🔍 [POST-SERVICE] Is valid ObjectId:', isValidObjectId);
 
               if (isValidObjectId) {
                 // Try to find any user to see if the model works
                 const anyUser = await this.userModel.findOne().select('name email _id').exec();
-                console.log('🔍 [POST-SERVICE] Can find any user?', !!anyUser);
+                this.logDebug('🔍 [POST-SERVICE] Can find any user?', !!anyUser);
                 if (anyUser) {
-                  console.log('📝 [POST-SERVICE] Sample user found:', {
+                  this.logDebug('📝 [POST-SERVICE] Sample user found:', {
                     _id: anyUser._id,
                     name: anyUser.name,
                     email: anyUser.email
@@ -889,12 +918,12 @@ export class PostService {
                 }
               }
             } catch (objectIdError) {
-              console.error('❌ [POST-SERVICE] ObjectId validation error:', objectIdError);
+              this.logError('❌ [POST-SERVICE] ObjectId validation error:', objectIdError);
             }
           }
         }
       } catch (authorError) {
-        console.error('❌ [POST-SERVICE] Error fetching author:', authorError);
+        this.logError('❌ [POST-SERVICE] Error fetching author:', authorError);
       }
 
       // Get author name with multiple fallbacks
@@ -922,7 +951,7 @@ export class PostService {
         }
       }
 
-      console.log('👤 [POST-SERVICE] Final author name for post:', post.id, '->', authorName, 'Role:', authorRole);
+      this.logDebug('👤 [POST-SERVICE] Final author name for post:', post.id, '->', authorName, 'Role:', authorRole);
 
       // Helper function to safely get author ID as string
       const getAuthorIdString = (): string => {
@@ -933,7 +962,7 @@ export class PostService {
           }
           return (post.authorId as any)?.toString() || 'unknown';
         } catch (error) {
-          console.warn('⚠️ [POST-SERVICE] Error converting authorId to string:', error);
+          this.logWarn('⚠️ [POST-SERVICE] Error converting authorId to string:', error);
           return 'unknown';
         }
       };
@@ -945,7 +974,7 @@ export class PostService {
       if (userId) {
         try {
           const userObjectId = new Types.ObjectId(userId);
-          console.log('🔍 [POST-SERVICE] Checking if user liked post:', {
+          this.logDebug('🔍 [POST-SERVICE] Checking if user liked post:', {
             postId: post.id,
             userId: userId,
             userObjectId: userObjectId.toString(),
@@ -953,9 +982,28 @@ export class PostService {
             likedByCount: post.likedBy.length
           });
           isLikedByUser = post.isLikedBy(userObjectId);
-          console.log('✅ [POST-SERVICE] isLikedBy result:', isLikedByUser);
+          this.logDebug('✅ [POST-SERVICE] isLikedBy result:', isLikedByUser);
         } catch (error) {
-          console.warn('⚠️ [POST-SERVICE] Invalid userId for like check:', userId);
+          this.logWarn('⚠️ [POST-SERVICE] Invalid userId for like check:', userId);
+        }
+      }
+
+      let isBookmarkedByUser = false;
+      if (userId) {
+        try {
+          const userObjectId = new Types.ObjectId(userId);
+          isBookmarkedByUser = post.bookmarks.some((bookmarkId: Types.ObjectId) => bookmarkId.equals(userObjectId));
+        } catch (error) {
+          this.logWarn('⚠️ [POST-SERVICE] Invalid userId for bookmark check:', userId);
+        }
+      }
+
+      let isSharedByUser = false;
+      if (userId) {
+        try {
+          isSharedByUser = post.isSharedBy(new Types.ObjectId(userId));
+        } catch (error) {
+          this.logWarn('⚠️ [POST-SERVICE] Invalid userId for share check:', userId);
         }
       }
 
@@ -990,8 +1038,9 @@ export class PostService {
         isPublished: post.isPublished,
         likes: post.likes || 0,
         isLikedByUser,
+        isBookmarkedByUser,
         shareCount: post.shareCount || 0,
-        isSharedByUser: userId ? post.isSharedBy(new Types.ObjectId(userId)) : false,
+        isSharedByUser,
         comments,
         commentsCount: post.comments.length,
         tags: post.tags || [],
@@ -1002,11 +1051,11 @@ export class PostService {
         updatedAt: post.updatedAt.toISOString(),
       };
 
-      console.log('✅ [POST-SERVICE] Successfully transformed post:', post.id);
+      this.logDebug('✅ [POST-SERVICE] Successfully transformed post:', post.id);
       return result;
     } catch (error) {
-      console.error('❌ [POST-SERVICE] Critical error in transformToResponseDto:', error);
-      console.error('Post data:', {
+      this.logError('❌ [POST-SERVICE] Critical error in transformToResponseDto:', error);
+      this.logError('Post data:', {
         id: post.id,
         authorId: post.authorId,
         communityId: post.communityId,
@@ -1035,6 +1084,7 @@ export class PostService {
         },
         isPublished: post.isPublished || false,
         likes: post.likes || 0,
+        isBookmarkedByUser: false,
         shareCount: post.shareCount || 0,
         isLikedByUser: false,
         isSharedByUser: false,
@@ -1092,10 +1142,10 @@ export class PostService {
   async countAllPosts(): Promise<number> {
     try {
       const count = await this.postModel.countDocuments({});
-      console.log('📊 [POST-SERVICE] Total posts in database:', count);
+      this.logDebug('📊 [POST-SERVICE] Total posts in database:', count);
       return count;
     } catch (error) {
-      console.error('❌ [POST-SERVICE] Error counting posts:', error);
+      this.logError('❌ [POST-SERVICE] Error counting posts:', error);
       return 0;
     }
   }
@@ -1164,6 +1214,7 @@ export class PostService {
           isPublished: post.isPublished,
           likes: post.likedBy.length,
           isLikedByUser,
+          isBookmarkedByUser: true,
           shareCount: post.shareCount || 0,
           isSharedByUser: post.isSharedBy(userObjectId),
           comments: [], // Empty for list view - will be populated in detailed view

@@ -59,22 +59,22 @@ export class DataManagementService {
     const skip = (page - 1) * limit;
 
     // Execute query with pagination
-    let queryBuilder = model.find(query).sort(sort).skip(skip).limit(limit);
+    const queryBuilder = model.find(query).sort(sort).skip(skip).limit(limit);
 
     // Apply population if specified
     if (options?.populate) {
       if (Array.isArray(options.populate)) {
         options.populate.forEach((path) => {
-          queryBuilder = queryBuilder.populate(path);
+          queryBuilder.populate(path);
         });
       } else {
-        queryBuilder = queryBuilder.populate(options.populate);
+        queryBuilder.populate(options.populate);
       }
     }
 
     // Apply field selection if specified
     if (options?.select) {
-      queryBuilder = queryBuilder.select(options.select);
+      queryBuilder.select(options.select);
     }
 
     // Execute query and count
@@ -140,27 +140,27 @@ export class DataManagementService {
     const sort = FilterBuilder.buildSort(filterDto.sort);
 
     // Execute query
-    let queryBuilder = model.find(query).sort(sort);
+    const queryBuilder = model.find(query).sort(sort);
 
     // Apply limit if specified
     if (options?.limit) {
-      queryBuilder = queryBuilder.limit(options.limit);
+      queryBuilder.limit(options.limit);
     }
 
     // Apply population if specified
     if (options?.populate) {
       if (Array.isArray(options.populate)) {
         options.populate.forEach((path) => {
-          queryBuilder = queryBuilder.populate(path);
+          queryBuilder.populate(path);
         });
       } else {
-        queryBuilder = queryBuilder.populate(options.populate);
+        queryBuilder.populate(options.populate);
       }
     }
 
     // Apply field selection if specified
     if (options?.select) {
-      queryBuilder = queryBuilder.select(options.select);
+      queryBuilder.select(options.select);
     }
 
     return queryBuilder.exec();

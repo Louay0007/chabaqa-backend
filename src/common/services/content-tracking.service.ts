@@ -37,6 +37,24 @@ export class ContentTrackingService {
     private readonly ga4Service: Ga4Service,
   ) {}
 
+  private async findContentDocumentById(
+    model: Model<any>,
+    contentId: string,
+    select: string,
+  ): Promise<any | null> {
+    let doc: any | null = null;
+
+    if (Types.ObjectId.isValid(contentId)) {
+      doc = await model.findById(contentId).select(select).lean();
+    }
+
+    if (!doc) {
+      doc = await model.findOne({ id: contentId }).select(select).lean();
+    }
+
+    return doc;
+  }
+
   private normalizeMetadata(metadata: Record<string, any> = {}): Record<string, any> {
     if (!metadata || typeof metadata !== 'object') return {};
 
@@ -109,22 +127,22 @@ export class ContentTrackingService {
       let doc: any = null;
       switch (contentType) {
         case TrackableContentType.COURSE:
-          doc = await this.courseModel.findById(contentId).select('creatorId communityId').lean();
+          doc = await this.findContentDocumentById(this.courseModel, contentId, 'creatorId communityId');
           break;
         case TrackableContentType.CHALLENGE:
-          doc = await this.challengeModel.findById(contentId).select('creatorId communityId').lean();
+          doc = await this.findContentDocumentById(this.challengeModel, contentId, 'creatorId communityId');
           break;
         case TrackableContentType.SESSION:
-          doc = await this.sessionModel.findById(contentId).select('creatorId communityId').lean();
+          doc = await this.findContentDocumentById(this.sessionModel, contentId, 'creatorId communityId');
           break;
         case TrackableContentType.EVENT:
-          doc = await this.eventModel.findById(contentId).select('creatorId communityId').lean();
+          doc = await this.findContentDocumentById(this.eventModel, contentId, 'creatorId communityId');
           break;
         case TrackableContentType.PRODUCT:
-          doc = await this.productModel.findById(contentId).select('creatorId communityId').lean();
+          doc = await this.findContentDocumentById(this.productModel, contentId, 'creatorId communityId');
           break;
         case TrackableContentType.POST:
-          doc = await this.postModel.findById(contentId).select('authorId communityId').lean();
+          doc = await this.findContentDocumentById(this.postModel, contentId, 'authorId communityId');
           if (doc) {
              return { creatorId: doc.authorId?.toString(), communityId: doc.communityId?.toString() };
           }
@@ -148,22 +166,22 @@ export class ContentTrackingService {
       let doc: any = null;
       switch (contentType) {
         case TrackableContentType.COURSE:
-          doc = await this.courseModel.findById(contentId).select('titre slug thumbnail').lean();
+          doc = await this.findContentDocumentById(this.courseModel, contentId, 'titre slug thumbnail');
           return doc ? { title: doc.titre, slug: doc.slug, thumbnail: doc.thumbnail } : null;
         case TrackableContentType.CHALLENGE:
-          doc = await this.challengeModel.findById(contentId).select('title slug thumbnail').lean();
+          doc = await this.findContentDocumentById(this.challengeModel, contentId, 'title slug thumbnail');
           return doc ? { title: doc.title, slug: doc.slug, thumbnail: doc.thumbnail } : null;
         case TrackableContentType.SESSION:
-          doc = await this.sessionModel.findById(contentId).select('title slug thumbnail').lean();
+          doc = await this.findContentDocumentById(this.sessionModel, contentId, 'title slug thumbnail');
           return doc ? { title: doc.title, slug: doc.slug, thumbnail: doc.thumbnail } : null;
         case TrackableContentType.EVENT:
-          doc = await this.eventModel.findById(contentId).select('title slug thumbnail').lean();
+          doc = await this.findContentDocumentById(this.eventModel, contentId, 'title slug thumbnail');
           return doc ? { title: doc.title, slug: doc.slug, thumbnail: doc.thumbnail } : null;
         case TrackableContentType.PRODUCT:
-          doc = await this.productModel.findById(contentId).select('name slug images').lean();
+          doc = await this.findContentDocumentById(this.productModel, contentId, 'name slug images');
           return doc ? { title: doc.name, slug: doc.slug, thumbnail: doc.images?.[0] } : null;
         case TrackableContentType.POST:
-          doc = await this.postModel.findById(contentId).select('content').lean();
+          doc = await this.findContentDocumentById(this.postModel, contentId, 'content');
           return doc ? { title: doc.content?.substring(0, 50) + (doc.content?.length > 50 ? '...' : ''), slug: null, thumbnail: null } : null;
       }
     } catch (err) {
@@ -208,6 +226,63 @@ export class ContentTrackingService {
     return progress;
   }
 
+  async syncProgressSnapshot(
+    userId: string,
+    contentId: string,
+    contentType: TrackableContentType,
+    snapshot: {
+      progressPercent?: number;
+      watchTime?: number;
+      isCompleted?: boolean;
+      completedAt?: Date;
+      lastAccessedAt?: Date;
+      metadata?: Record<string, any>;
+    },
+  ): Promise<ContentProgressDocument> {
+    if (
+      snapshot.progressPercent !== undefined &&
+      (snapshot.progressPercent < 0 || snapshot.progressPercent > 100)
+    ) {
+      throw new BadRequestException('Progress must be between 0 and 100');
+    }
+
+    const progress = await this.getOrCreateProgress(userId, contentId, contentType);
+
+    if (snapshot.watchTime !== undefined && Number.isFinite(snapshot.watchTime) && snapshot.watchTime >= 0) {
+      progress.watchTime = Math.max(Number(progress.watchTime || 0), Math.floor(snapshot.watchTime));
+    }
+
+    if (!progress.metadata) {
+      progress.metadata = {};
+    }
+
+    if (snapshot.progressPercent !== undefined) {
+      progress.metadata.progressPercent = snapshot.progressPercent;
+    }
+
+    if (snapshot.metadata && typeof snapshot.metadata === 'object') {
+      progress.metadata = { ...progress.metadata, ...snapshot.metadata };
+    }
+
+    if (snapshot.isCompleted === true) {
+      progress.isCompleted = true;
+      if (snapshot.completedAt instanceof Date) {
+        progress.completedAt = snapshot.completedAt;
+      } else if (!progress.completedAt) {
+        progress.completedAt = new Date();
+      }
+    }
+
+    if (snapshot.lastAccessedAt instanceof Date) {
+      progress.lastAccessedAt = snapshot.lastAccessedAt;
+    } else {
+      progress.mettreAJourDernierAcces();
+    }
+
+    await progress.save();
+    return progress;
+  }
+
   /**
    * Enregistrer une action de tracking
    */
@@ -248,6 +323,8 @@ export class ContentTrackingService {
     if (actionType === TrackingActionType.VIEW) ga4EventName = 'content_view';
     else if (actionType === TrackingActionType.START) ga4EventName = 'content_start';
     else if (actionType === TrackingActionType.COMPLETE) ga4EventName = 'content_complete';
+    else if (actionType === TrackingActionType.CHAPTER_START) ga4EventName = 'content_chapter_start';
+    else if (actionType === TrackingActionType.CHAPTER_COMPLETE) ga4EventName = 'content_chapter_complete';
     else if (actionType === TrackingActionType.LIKE) ga4EventName = 'content_like';
     else if (actionType === TrackingActionType.SHARE) ga4EventName = 'content_share';
     else if (actionType === TrackingActionType.DOWNLOAD) ga4EventName = 'content_download';
@@ -354,6 +431,44 @@ export class ContentTrackingService {
     );
 
     return progress;
+  }
+
+  async trackChapterStart(
+    userId: string,
+    courseId: string,
+    chapterId: string,
+    metadata: Record<string, any> = {},
+  ): Promise<TrackingActionDocument> {
+    return await this.trackAction(
+      userId,
+      courseId,
+      TrackableContentType.COURSE,
+      TrackingActionType.CHAPTER_START,
+      {
+        chapterId,
+        progressScope: 'chapter',
+        ...metadata,
+      },
+    );
+  }
+
+  async trackChapterComplete(
+    userId: string,
+    courseId: string,
+    chapterId: string,
+    metadata: Record<string, any> = {},
+  ): Promise<TrackingActionDocument> {
+    return await this.trackAction(
+      userId,
+      courseId,
+      TrackableContentType.COURSE,
+      TrackingActionType.CHAPTER_COMPLETE,
+      {
+        chapterId,
+        progressScope: 'chapter',
+        ...metadata,
+      },
+    );
   }
 
   /**
@@ -756,7 +871,7 @@ export class ContentTrackingService {
     userId: string,
     contentType?: TrackableContentType,
     limit: number = 20,
-  ) {
+  ): Promise<any[]> {
     const filter: any = { userId: new Types.ObjectId(userId) };
     if (contentType) {
       filter.contentType = contentType;

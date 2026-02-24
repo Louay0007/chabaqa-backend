@@ -1043,7 +1043,7 @@ export class CoursController {
 		}
 	})
 	@ApiResponse({ status: 401, description: 'Non autorisé' })
-	async getUserRecentActions(@Query('limit') limit = '20', @Req() req) {
+	async getUserRecentActions(@Query('limit') limit = '20', @Req() req): Promise<any> {
 		const user = req.user as AuthenticatedUser;
 		return await this.coursService.getUserCoursRecentActions(user._id, Number(limit) || 20);
 	}

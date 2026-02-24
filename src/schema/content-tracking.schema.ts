@@ -23,6 +23,8 @@ export enum TrackingActionType {
   VIEW = 'view',
   START = 'start',
   COMPLETE = 'complete',
+  CHAPTER_START = 'chapter_start',
+  CHAPTER_COMPLETE = 'chapter_complete',
   LIKE = 'like',
   SHARE = 'share',
   DOWNLOAD = 'download',

@@ -18,6 +18,7 @@ import { GoogleCalendarService } from '../google-calendar/google-calendar.servic
 import { EmailService, SessionBookingEmailData } from '../email/email.service';
 import { Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import { CacheService } from '../common/services/cache.service';
 
 type MeetStatus = 'not_required' | 'pending' | 'created' | 'failed';
 type MeetProvisioningSource = 'book_session' | 'confirm_booking' | 'manual' | 'worker';
@@ -36,6 +37,7 @@ export class SessionService {
     private readonly policyService: PolicyService,
     private readonly googleCalendarService: GoogleCalendarService,
     private readonly emailService: EmailService,
+    private readonly cacheService: CacheService,
   ) { }
 
   /**
@@ -79,6 +81,17 @@ export class SessionService {
     // Exponential backoff capped at 60 minutes
     const minutes = Math.min(Math.pow(2, Math.max(0, retryCount - 1)), 60);
     return minutes * 60 * 1000;
+  }
+
+  private async invalidateSessionCaches(creatorId?: string): Promise<void> {
+    const patterns = ['http:/api/sessions*'];
+    if (creatorId) {
+      patterns.push(`creator-analytics:${creatorId}:*`);
+    }
+
+    await Promise.allSettled(
+      patterns.map((pattern) => this.cacheService.deletePattern(pattern)),
+    );
   }
 
   private async provisionMeetForBooking(params: {
@@ -413,6 +426,7 @@ export class SessionService {
     });
 
     const savedSession = await session.save();
+    await this.invalidateSessionCaches(normalizedCreatorId);
     return this.transformToResponseDto(savedSession, community);
   }
 
@@ -584,6 +598,7 @@ export class SessionService {
     // Mettre à jour la session
     Object.assign(session, updateSessionDto);
     const updatedSession = await session.save();
+    await this.invalidateSessionCaches(session.creatorId.toString());
 
     const community = await this.findCommunityById(session.communityId);
     return this.transformToResponseDto(updatedSession, community || undefined);
@@ -605,6 +620,7 @@ export class SessionService {
     // }
 
     await this.sessionModel.deleteOne({ id });
+    await this.invalidateSessionCaches(session.creatorId.toString());
   }
 
   /**
@@ -714,6 +730,7 @@ export class SessionService {
       }
     }
     await sessionDoc.save({ session });
+    await this.invalidateSessionCaches(sessionDoc.creatorId.toString());
 
     if (initialStatus === 'confirmed') {
       await this.provisionMeetForBooking({
@@ -807,6 +824,7 @@ export class SessionService {
         source: 'confirm_booking',
       });
     }
+    await this.invalidateSessionCaches(session.creatorId.toString());
 
     const refreshedBooking = this.getBookingById(session, bookingId);
 
@@ -872,6 +890,7 @@ export class SessionService {
     booking.updatedAt = new Date();
 
     await session.save();
+    await this.invalidateSessionCaches(session.creatorId.toString());
 
     const community = await this.communityModel.findOne({ id: session.communityId });
     return this.transformToResponseDto(session, community || undefined);
@@ -920,6 +939,7 @@ export class SessionService {
       source: 'manual',
       force: true,
     });
+    await this.invalidateSessionCaches(session.creatorId.toString());
 
     const updatedBooking = this.getBookingById(session, bookingId);
     return {
@@ -1086,6 +1106,7 @@ export class SessionService {
     booking.updatedAt = new Date();
 
     await session.save();
+    await this.invalidateSessionCaches(session.creatorId.toString());
 
     const community = await this.communityModel.findOne({ id: session.communityId });
     return this.transformToResponseDto(session, community || undefined);
@@ -1313,6 +1334,7 @@ export class SessionService {
             source: 'worker',
             force: true,
           });
+          await this.invalidateSessionCaches(session.creatorId.toString());
           synced++;
           console.log(`[syncBookingsFromPaidOrders] Created booking ${bookingId} for session ${session.id}, userId: ${userId}`);
           console.log(`[syncBookingsFromPaidOrders] Session now has ${session.bookings.length} bookings`);
@@ -1378,6 +1400,7 @@ export class SessionService {
         session.bookings = bookingsToKeep;
         session.markModified('bookings');
         await session.save();
+        await this.invalidateSessionCaches(session.creatorId.toString());
         sessionsProcessed++;
       }
     }
@@ -1595,6 +1618,7 @@ export class SessionService {
     session.advanceBookingDays = setAvailableHoursDto.advanceBookingDays || 30;
 
     await session.save();
+    await this.invalidateSessionCaches(session.creatorId.toString());
 
     return this.transformToAvailableHoursResponseDto(session);
   }
@@ -1620,6 +1644,7 @@ export class SessionService {
     // Générer les créneaux
     session.generateAvailableSlots(startDate, endDate);
     await session.save();
+    await this.invalidateSessionCaches(session.creatorId.toString());
 
     return this.transformToAvailableSlotsResponseDto(session);
   }
@@ -1765,6 +1790,7 @@ export class SessionService {
     }
 
     await session.save();
+    await this.invalidateSessionCaches(session.creatorId.toString());
     await this.provisionMeetForBooking({
       sessionDoc: session,
       bookingId: booking.id,
@@ -1845,6 +1871,7 @@ export class SessionService {
     }
 
     await session.save();
+    await this.invalidateSessionCaches(session.creatorId.toString());
 
     const community = await this.communityModel.findOne({ id: session.communityId });
     return this.transformToResponseDto(session, community || undefined);

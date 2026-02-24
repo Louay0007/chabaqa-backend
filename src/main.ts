@@ -11,6 +11,12 @@ import { WAFMiddleware } from './common/middleware/waf.middleware';
 import { AbsoluteUploadsUrlInterceptor } from './common/interceptors/absolute-uploads-url.interceptor';
 import { UploadService } from './upload/upload.service';
 import os from 'os';
+import { webcrypto } from 'node:crypto';
+
+// Compatibility for Node < 20 where globalThis.crypto may be undefined.
+if (!globalThis.crypto) {
+  (globalThis as any).crypto = webcrypto;
+}
 
 const getLocalNetworkIp = (): string => {
   const networkInterfaces = os.networkInterfaces();

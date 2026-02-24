@@ -162,6 +162,12 @@ export class PostResponseDto {
   isSharedByUser: boolean;
 
   @ApiProperty({
+    description: 'Indique si l\'utilisateur actuel a ajouté le post aux favoris',
+    example: false
+  })
+  isBookmarkedByUser: boolean;
+
+  @ApiProperty({
     description: 'Commentaires du post',
     type: [PostCommentResponseDto]
   })

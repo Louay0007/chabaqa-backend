@@ -40,6 +40,7 @@ import { UploadService } from '../upload/upload.service';
 import { TrackableContentType, TrackingActionType } from '../schema/content-tracking.schema';
 import { AnalyticsDaily, AnalyticsDailyDocument } from '../schema/analytics-daily.schema';
 import { Ga4Service } from '../ga4/ga4.service';
+import { CacheService } from '../common/services/cache.service';
 
 @Injectable()
 export class ChallengeService {
@@ -56,7 +57,19 @@ export class ChallengeService {
     private readonly policyService: PolicyService,
     private readonly uploadService: UploadService,
     private readonly ga4Service: Ga4Service,
+    private readonly cacheService: CacheService,
   ) { }
+
+  private async invalidateChallengeCaches(creatorId?: string): Promise<void> {
+    const patterns = ['http:/api/challenges*', 'http:/api/communities*'];
+    if (creatorId) {
+      patterns.push(`creator-analytics:${creatorId}:*`);
+    }
+
+    await Promise.allSettled(
+      patterns.map((pattern) => this.cacheService.deletePattern(pattern)),
+    );
+  }
 
   /**
    * Helper method to find a challenge by ID (supports both MongoDB _id and custom id field)
@@ -663,6 +676,7 @@ export class ChallengeService {
 
     challenge.isActive = true;
     await challenge.save();
+    await this.invalidateChallengeCaches(challenge.creatorId.toString());
 
     const community = await this.communityModel.findOne({ id: challenge.communityId });
     return this.transformToResponseDto(challenge, community || undefined);
@@ -1016,6 +1030,7 @@ export class ChallengeService {
     });
 
     const savedChallenge = await challenge.save();
+    await this.invalidateChallengeCaches(normalizedCreatorId);
     return this.transformToResponseDto(savedChallenge, community);
   }
 
@@ -1320,6 +1335,7 @@ export class ChallengeService {
     }
 
     const updatedChallenge = await challenge.save();
+    await this.invalidateChallengeCaches(challenge.creatorId.toString());
 
     const community = await this.communityModel.findOne({
       id: challenge.communityId,
@@ -1343,6 +1359,7 @@ export class ChallengeService {
 
     challenge.tasks = this.normalizeTaskInput(updateTasksDto.tasks || []);
     const updatedChallenge = await challenge.save();
+    await this.invalidateChallengeCaches(challenge.creatorId.toString());
     const community = await this.communityModel.findOne({ id: challenge.communityId });
     return this.transformToResponseDto(updatedChallenge, community || undefined);
   }
@@ -1377,6 +1394,7 @@ export class ChallengeService {
     }
 
     await this.challengeModel.deleteOne({ _id: challenge._id });
+    await this.invalidateChallengeCaches(challenge.creatorId.toString());
   }
 
   /**

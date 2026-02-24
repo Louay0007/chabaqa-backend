@@ -9,7 +9,7 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install all dependencies for build
-RUN npm install --prefer-offline --no-audit
+RUN npm ci --prefer-offline --no-audit
 
 # Copy source code
 COPY . .
@@ -48,7 +48,7 @@ WORKDIR /app
 
 # Copy package files and install production dependencies only
 COPY package*.json ./
-RUN npm install --omit=dev --prefer-offline --no-audit && npm cache clean --force
+RUN npm ci --omit=dev --prefer-offline --no-audit && npm cache clean --force
 
 # Copy built application from builder
 COPY --from=builder /app/dist ./dist

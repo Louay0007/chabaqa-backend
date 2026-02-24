@@ -318,7 +318,7 @@ export class TrackingController {
     @Req() req,
     @Query('contentType') contentType?: TrackableContentType,
     @Query('limit') limit = '20',
-  ) {
+  ): Promise<any> {
     const user = req.user as AuthenticatedUser;
     return await this.trackingService.getUserRecentActions(
       user._id, 

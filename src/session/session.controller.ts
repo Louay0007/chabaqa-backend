@@ -8,6 +8,7 @@ import {
   Delete,
   Query,
   UseGuards,
+  UseInterceptors,
   Request,
   HttpCode,
   HttpStatus,
@@ -21,6 +22,8 @@ import { SessionResponseDto, SessionListResponseDto, UserBookingsResponseDto, Cr
 import { SetAvailableHoursDto, GenerateSlotsDto, BookSlotDto, GetAvailableSlotsDto } from '../dto-session/available-hours.dto';
 import { AvailableSlotsResponseDto, AvailableHoursResponseDto } from '../dto-session/available-slots-response.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { HttpCacheInterceptor } from '../common/interceptors/cache.interceptor';
+import { CacheDuration, CacheTTL } from '../common/decorators/cache-ttl.decorator';
 
 @ApiTags('Sessions')
 @Controller('sessions')
@@ -44,6 +47,8 @@ export class SessionController {
   }
 
   @Get()
+  @UseInterceptors(HttpCacheInterceptor)
+  @CacheTTL(CacheDuration.ONE_MINUTE)
   @ApiOperation({ summary: 'Récupérer toutes les sessions avec pagination et filtres' })
   @ApiResponse({ status: 200, description: 'Liste des sessions récupérée avec succès', type: SessionListResponseDto })
   @ApiQuery({ name: 'page', required: false, description: 'Numéro de page', example: 1 })
@@ -230,6 +235,8 @@ export class SessionController {
 
   @Get('bookings/user')
   @UseGuards(JwtAuthGuard)
+  @UseInterceptors(HttpCacheInterceptor)
+  @CacheTTL(30)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Récupérer les réservations d\'un utilisateur' })
   @ApiResponse({ status: 200, description: 'Réservations de l\'utilisateur récupérées avec succès', type: UserBookingsResponseDto })
@@ -282,6 +289,8 @@ export class SessionController {
 
   @Get('bookings/creator')
   @UseGuards(JwtAuthGuard)
+  @UseInterceptors(HttpCacheInterceptor)
+  @CacheTTL(30)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Récupérer les réservations d\'un créateur' })
   @ApiResponse({ status: 200, description: 'Réservations du créateur récupérées avec succès', type: CreatorBookingsResponseDto })
@@ -316,6 +325,8 @@ export class SessionController {
 
   // Get sessions for a specific user (for profile viewing)
   @Get('by-user/:userId')
+  @UseInterceptors(HttpCacheInterceptor)
+  @CacheTTL(30)
   @ApiOperation({ 
     summary: 'Get sessions for a specific user',
     description: 'Retrieve sessions associated with a user (booked + created)'
