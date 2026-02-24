@@ -6,6 +6,7 @@ import { DmService } from './dm.service';
 import { AdminGuard } from '../auth/guards/admin.guard';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { UploadService, FileType } from '../upload/upload.service';
+import { MediaPurpose } from '../media/media.types';
 import { diskStorage } from 'multer';
 import { extname } from 'path';
 import { v4 as uuidv4 } from 'uuid';
@@ -130,7 +131,12 @@ export class DmController {
     if (!file) {
       return { message: 'Aucun fichier' };
     }
-    const processed = await this.uploadService.processUploadedFile(file, file.filename, { userId: req.user._id || req.user.userId });
+    const processed = await this.uploadService.processUploadedFile(file, file.filename, {
+      userId: req.user._id || req.user.userId,
+      purpose: MediaPurpose.DM_ATTACHMENT,
+      entityType: 'conversation',
+      entityId: conversationId,
+    });
     const attachmentType: 'image' | 'file' | 'video' =
       processed.type === FileType.IMAGE ? 'image' : processed.type === FileType.VIDEO ? 'video' : 'file';
     const isAdmin = req.user?.role === 'admin' || req.user?.isAdmin === true;

@@ -39,6 +39,7 @@ import { UpdateCommunityCustomizationDto } from '../dto-community/update-communi
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Query } from '@nestjs/common';
 import { FileType, UploadService } from '../upload/upload.service';
+import { MediaPurpose } from '../media/media.types';
 import { PaginatedResponseDto } from '../common/dto/paginated-response.dto';
 import { diskStorage } from 'multer';
 import { extname } from 'path';
@@ -194,7 +195,10 @@ export class CommunityAffCreaJoinController {
         const result = await this.uploadService.processUploadedFile(
           file,
           file.filename,
-          { userId }
+          {
+            userId,
+            purpose: MediaPurpose.COMMUNITY_LOGO,
+          }
         );
         uploadedFiles.logo = result.url;
         console.log('📸 Logo final enregistré:', uploadedFiles.logo);

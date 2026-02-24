@@ -20,6 +20,7 @@ import { PromoService } from '../common/services/promo.service';
 import { NotificationService } from '../notification/notification.service';
 import { AchievementService } from '../achievement/achievement.service';
 import { UploadService } from '../upload/upload.service';
+import { MediaPurpose } from '../media/media.types';
 import { CacheService } from '../common/services/cache.service';
 
 @Injectable()
@@ -1731,7 +1732,12 @@ export class CoursService {
     try {
       // 1. Process upload via UploadService to get URL and validate
       // This will throw if file is invalid
-      const uploadResult = await this.uploadService.processUploadedFile(file, file.filename, { userId });
+      const uploadResult = await this.uploadService.processUploadedFile(file, file.filename, {
+        userId,
+        purpose: MediaPurpose.COURSE_VIDEO,
+        entityType: 'chapter',
+        entityId: chapitreId,
+      });
 
       console.log(`   ✅ Video uploaded to: ${uploadResult.url}`);
 

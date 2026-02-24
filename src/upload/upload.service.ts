@@ -1,11 +1,20 @@
 import { Injectable, BadRequestException, ForbiddenException } from '@nestjs/common';
-import { extname, join } from 'path';
-import { existsSync, mkdirSync } from 'fs';
+import { extname, join, relative, resolve } from 'path';
+import { createReadStream, existsSync, mkdirSync } from 'fs';
+import { createHash } from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { StorageUsage, StorageUsageDocument } from '../schema/storage-usage.schema';
 import { PolicyService } from '../common/services/policy.service';
+import { MediaAsset, MediaAssetDocument } from '../schema/media-asset.schema';
+import {
+  MediaAssetStatus,
+  MediaPurpose,
+  MediaType,
+  MediaVisibility,
+  PURPOSE_DEFAULT_VISIBILITY,
+} from '../media/media.types';
 
 export enum FileType {
   IMAGE = 'image',
@@ -15,6 +24,7 @@ export enum FileType {
 }
 
 export interface UploadResult {
+  assetId?: string;
   filename: string;
   originalName: string;
   path: string;
@@ -24,12 +34,18 @@ export interface UploadResult {
   type: FileType;
 }
 
+export interface UploadContext {
+  userId?: string;
+  purpose?: MediaPurpose;
+  entityType?: string;
+  entityId?: string;
+  visibility?: MediaVisibility;
+}
+
 @Injectable()
 export class UploadService {
-  private readonly uploadPath = 'uploads';
-  // ALWAYS use production URL for file URLs, regardless of environment
-  // This ensures all uploads are accessible from api.chabaqa.io
-  private readonly baseUrl = 'https://api.chabaqa.io';
+  private readonly uploadPath = process.env.UPLOAD_PATH || 'uploads';
+  private readonly baseUrl = (process.env.MEDIA_PUBLIC_BASE_URL || process.env.SERVER_URL || 'https://api.chabaqa.io').replace(/\/+$/, '');
   private readonly storageUsageMap = new Map<string, number>(); // legacy in-memory (fallback)
 
   // Configuration des types de fichiers autorisés
@@ -81,6 +97,7 @@ export class UploadService {
 
   constructor(
     @InjectModel(StorageUsage.name) private storageModel: Model<StorageUsageDocument>,
+    @InjectModel(MediaAsset.name) private mediaAssetModel: Model<MediaAssetDocument>,
     private readonly policyService: PolicyService,
   ) {
     this.ensureUploadDirectories();
@@ -259,27 +276,117 @@ export class UploadService {
   /**
    * Traiter un fichier uploadé
    */
-  async processUploadedFile(file: Express.Multer.File, filename: string, context?: { userId?: string }): Promise<UploadResult> {
-    const fileType = this.validateFile(file);
-    if (context?.userId) {
-      const limits = await this.policyService.getEffectiveLimitsForCreator(context.userId);
-      const used = await this.getUsageBytes(context.userId);
-      const limitBytes = limits.storageGB * 1024 * 1024 * 1024;
-      if (used + file.size > limitBytes) {
-        throw new ForbiddenException('Quota de stockage atteint pour votre plan.');
+  async processUploadedFile(file: Express.Multer.File, filename: string, context?: UploadContext): Promise<UploadResult> {
+    let usageAdded = false;
+    try {
+      const fileType = this.validateFile(file);
+      if (context?.userId) {
+        const limits = await this.policyService.getEffectiveLimitsForCreator(context.userId);
+        const used = await this.getUsageBytes(context.userId);
+        const limitBytes = limits.storageGB * 1024 * 1024 * 1024;
+        if (used + file.size > limitBytes) {
+          throw new ForbiddenException('Quota de stockage atteint pour votre plan.');
+        }
+        await this.addUsageBytes(context.userId, file.size);
+        usageAdded = true;
       }
-      await this.addUsageBytes(context.userId, file.size);
-    }
-    const url = this.generateFileUrl(filename, fileType);
+      const url = this.generateFileUrl(filename, fileType);
+      const mediaRecord = await this.registerMediaAsset(file, filename, fileType, url, context);
 
-    return {
+      return {
+        assetId: mediaRecord.assetId,
+        filename,
+        originalName: file.originalname,
+        path: file.path,
+        url: mediaRecord.url,
+        size: file.size,
+        mimetype: file.mimetype,
+        type: fileType
+      };
+    } catch (error) {
+      // Multer writes first, then service-level validation/quota checks happen.
+      // Remove the persisted file on any failure to avoid orphan uploads.
+      await this.safeRemoveUploadedFile(file?.path);
+      if (usageAdded && context?.userId) {
+        await this.addUsageBytes(context.userId, -file.size);
+      }
+      throw error;
+    }
+  }
+
+  private async safeRemoveUploadedFile(filePath?: string): Promise<void> {
+    if (!filePath) return;
+    try {
+      const fs = require('fs').promises;
+      await fs.unlink(filePath);
+    } catch {
+      // Best effort cleanup only.
+    }
+  }
+
+  private getMediaVisibility(context?: UploadContext): MediaVisibility {
+    if (context?.visibility) return context.visibility;
+    if (!context?.purpose) return MediaVisibility.PUBLIC;
+    return PURPOSE_DEFAULT_VISIBILITY[context.purpose] || MediaVisibility.PUBLIC;
+  }
+
+  private toObjectId(value?: string): Types.ObjectId | undefined {
+    if (!value || !Types.ObjectId.isValid(value)) return undefined;
+    return new Types.ObjectId(value);
+  }
+
+  private async computeChecksum(filePath?: string): Promise<string | undefined> {
+    if (!filePath || !existsSync(filePath)) return undefined;
+    return new Promise((resolveChecksum) => {
+      const hash = createHash('sha256');
+      const stream = createReadStream(filePath);
+      stream.on('data', (chunk) => hash.update(chunk));
+      stream.on('end', () => resolveChecksum(hash.digest('hex')));
+      stream.on('error', () => resolveChecksum(undefined));
+    });
+  }
+
+  private async registerMediaAsset(
+    file: Express.Multer.File,
+    filename: string,
+    fileType: FileType,
+    publicUrl: string,
+    context?: UploadContext,
+  ): Promise<{ assetId: string; url: string }> {
+    const uploadsRoot = resolve(join(process.cwd(), this.uploadPath));
+    const filePath = resolve(file.path || join(this.getDestinationPath(fileType), filename));
+    const storageKey = filePath.startsWith(uploadsRoot)
+      ? relative(uploadsRoot, filePath).split('\\').join('/')
+      : `${fileType}/${filename}`;
+
+    const visibility = this.getMediaVisibility(context);
+    const checksum = await this.computeChecksum(file.path);
+
+    const created = await this.mediaAssetModel.create({
+      mediaType: fileType as unknown as MediaType,
+      purpose: context?.purpose || MediaPurpose.GENERIC,
+      visibility,
+      status: MediaAssetStatus.UPLOADED,
       filename,
       originalName: file.originalname,
-      path: file.path,
-      url,
+      storageKey,
+      url: publicUrl,
+      mimeType: file.mimetype,
       size: file.size,
-      mimetype: file.mimetype,
-      type: fileType
+      checksum,
+      uploadedBy: this.toObjectId(context?.userId),
+      entityType: context?.entityType,
+      entityId: context?.entityId,
+    });
+
+    if (visibility === MediaVisibility.PRIVATE && process.env.MEDIA_PRIVATE_ENFORCEMENT === 'true') {
+      created.url = `${this.baseUrl}/api/media/${created._id}/access`;
+      await created.save();
+    }
+
+    return {
+      assetId: String(created._id),
+      url: created.url,
     };
   }
 
@@ -363,7 +470,14 @@ export class UploadService {
    */
   async uploadBase64Image(
     base64Data: string,
-    options?: { userId?: string; folder?: string }
+    options?: {
+      userId?: string;
+      folder?: string;
+      purpose?: MediaPurpose;
+      entityType?: string;
+      entityId?: string;
+      visibility?: MediaVisibility;
+    }
   ): Promise<UploadResult> {
     if (!base64Data) {
       throw new BadRequestException('Aucune image fournie');
@@ -421,12 +535,33 @@ export class UploadService {
       ? `${options.folder}/${filename}`
       : filename;
     const url = `${this.baseUrl}/uploads/${FileType.IMAGE}/${relativePath}`;
+    const pseudoMulterFile = {
+      originalname: filename,
+      filename,
+      mimetype: mimeType,
+      size: buffer.length,
+      path: filePath,
+    } as Express.Multer.File;
+    const mediaRecord = await this.registerMediaAsset(
+      pseudoMulterFile,
+      filename,
+      FileType.IMAGE,
+      url,
+      {
+        userId: options?.userId,
+        purpose: options?.purpose,
+        entityType: options?.entityType,
+        entityId: options?.entityId,
+        visibility: options?.visibility,
+      },
+    );
 
     return {
+      assetId: mediaRecord.assetId,
       filename,
       originalName: filename,
       path: filePath,
-      url,
+      url: mediaRecord.url,
       size: buffer.length,
       mimetype: mimeType,
       type: FileType.IMAGE,

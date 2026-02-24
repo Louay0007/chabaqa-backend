@@ -23,6 +23,7 @@ import { UploadResponseDto, MultipleUploadResponseDto, DeleteFileResponseDto } f
 import { diskStorage } from 'multer';
 import { extname, join } from 'path';
 import { v4 as uuidv4 } from 'uuid';
+import { MediaPurpose, MediaVisibility } from '../media/media.types';
 
 /**
  * Shared logic for determining upload destination
@@ -153,7 +154,12 @@ export class UploadController {
   })
   async uploadSingle(
     @UploadedFile() file: Express.Multer.File,
-    @Query('type') fileType?: FileType
+    @Request() req: any,
+    @Query('type') fileType?: FileType,
+    @Query('purpose') purpose?: MediaPurpose,
+    @Query('entityType') entityType?: string,
+    @Query('entityId') entityId?: string,
+    @Query('visibility') visibility?: MediaVisibility,
   ): Promise<UploadResponseDto> {
     if (!file) {
       throw new BadRequestException('Aucun fichier fourni');
@@ -165,11 +171,17 @@ export class UploadController {
     console.log(`   🏷️ Type MIME: ${file.mimetype}`);
 
     try {
-      const reqAny = (arguments as any)[0]; // controller context workaround
-      const userId = (reqAny as any)?.user?._id || (reqAny as any)?.user?.sub;
-      const result = await this.uploadService.processUploadedFile(file, file.filename, { userId });
+      const userId = req?.user?._id || req?.user?.sub;
+      const result = await this.uploadService.processUploadedFile(file, file.filename, {
+        userId,
+        purpose,
+        entityType,
+        entityId,
+        visibility,
+      });
       
       return {
+        assetId: result.assetId,
         filename: result.filename,
         originalName: result.originalName,
         url: result.url,
@@ -198,7 +210,8 @@ export class UploadController {
     limits: { fileSize: 10 * 1024 * 1024 }
   }))
   async uploadImage(
-    @UploadedFile() file: Express.Multer.File
+    @UploadedFile() file: Express.Multer.File,
+    @Request() req: any,
   ): Promise<UploadResponseDto> {
     if (!file) {
       throw new BadRequestException('Aucune image fournie');
@@ -209,11 +222,11 @@ export class UploadController {
       throw new BadRequestException('Le fichier doit être une image');
     }
 
-    const reqAny = (arguments as any)[0];
-    const userId = (reqAny as any)?.user?._id || (reqAny as any)?.user?.sub;
+    const userId = req?.user?._id || req?.user?.sub;
     const result = await this.uploadService.processUploadedFile(file, file.filename, { userId });
     
     return {
+      assetId: result.assetId,
       filename: result.filename,
       originalName: result.originalName,
       url: result.url,
@@ -238,7 +251,8 @@ export class UploadController {
     limits: { fileSize: 500 * 1024 * 1024 }
   }))
   async uploadVideo(
-    @UploadedFile() file: Express.Multer.File
+    @UploadedFile() file: Express.Multer.File,
+    @Request() req: any,
   ): Promise<UploadResponseDto> {
     if (!file) {
       throw new BadRequestException('Aucune vidéo fournie');
@@ -256,8 +270,7 @@ export class UploadController {
       throw new BadRequestException('Le fichier doit être une vidéo');
     }
 
-    const reqAny = (arguments as any)[0];
-    const userId = (reqAny as any)?.user?._id || (reqAny as any)?.user?.sub;
+    const userId = req?.user?._id || req?.user?.sub;
     console.log('   👤 User ID:', userId);
     
     const result = await this.uploadService.processUploadedFile(file, file.filename, { userId });
@@ -267,6 +280,7 @@ export class UploadController {
     console.log('   📝 Filename:', result.filename);
     
     return {
+      assetId: result.assetId,
       filename: result.filename,
       originalName: result.originalName,
       url: result.url,
@@ -291,7 +305,8 @@ export class UploadController {
     limits: { fileSize: 50 * 1024 * 1024 }
   }))
   async uploadDocument(
-    @UploadedFile() file: Express.Multer.File
+    @UploadedFile() file: Express.Multer.File,
+    @Request() req: any,
   ): Promise<UploadResponseDto> {
     if (!file) {
       throw new BadRequestException('Aucun document fourni');
@@ -302,11 +317,11 @@ export class UploadController {
       throw new BadRequestException('Le fichier doit être un document');
     }
 
-    const reqAny = (arguments as any)[0];
-    const userId = (reqAny as any)?.user?._id || (reqAny as any)?.user?.sub;
+    const userId = req?.user?._id || req?.user?.sub;
     const result = await this.uploadService.processUploadedFile(file, file.filename, { userId });
     
     return {
+      assetId: result.assetId,
       filename: result.filename,
       originalName: result.originalName,
       url: result.url,
@@ -325,7 +340,8 @@ export class UploadController {
   @HttpCode(HttpStatus.CREATED)
   @UseInterceptors(FilesInterceptor('files', 10, commonMulterOptions)) // Maximum 10 fichiers
   async uploadMultiple(
-    @UploadedFiles() files: Express.Multer.File[]
+    @UploadedFiles() files: Express.Multer.File[],
+    @Request() req: any,
   ): Promise<MultipleUploadResponseDto> {
     if (!files || files.length === 0) {
       throw new BadRequestException('Aucun fichier fourni');
@@ -340,10 +356,10 @@ export class UploadController {
 
     for (const file of files) {
       try {
-        const reqAny = (arguments as any)[0];
-        const userId = (reqAny as any)?.user?._id || (reqAny as any)?.user?.sub;
+        const userId = req?.user?._id || req?.user?.sub;
         const result = await this.uploadService.processUploadedFile(file, file.filename, { userId });
         results.push({
+          assetId: result.assetId,
           filename: result.filename,
           originalName: result.originalName,
           url: result.url,

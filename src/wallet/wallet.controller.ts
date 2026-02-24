@@ -19,11 +19,16 @@ import { WalletTransactionType, WalletPurchaseContentType } from '../schema/wall
 import { diskStorage } from 'multer';
 import { extname, join } from 'path';
 import { v4 as uuidv4 } from 'uuid';
+import { UploadService } from '../upload/upload.service';
+import { MediaPurpose } from '../media/media.types';
 
 @Controller('wallet')
 @UseGuards(JwtAuthGuard)
 export class WalletController {
-  constructor(private readonly walletService: WalletService) {}
+  constructor(
+    private readonly walletService: WalletService,
+    private readonly uploadService: UploadService,
+  ) {}
 
   /**
    * Helper to get user ID from request (handles different JWT payload structures)
@@ -113,7 +118,13 @@ export class WalletController {
   @UseInterceptors(
     FileInterceptor('proof', {
       storage: diskStorage({
-        destination: join(process.cwd(), 'uploads/topup-proofs'),
+        destination: (req, file, cb) => {
+          const extension = extname(file.originalname).toLowerCase();
+          const folder = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg'].includes(extension)
+            ? join(process.cwd(), 'uploads/image')
+            : join(process.cwd(), 'uploads/document');
+          cb(null, folder);
+        },
         filename: (req, file, cb) => {
           const extension = extname(file.originalname);
           const uniqueName = `${Date.now()}-${uuidv4()}${extension}`;
@@ -153,12 +164,16 @@ export class WalletController {
       throw new BadRequestException('Invalid currency. Use DT, USD, or EUR');
     }
 
-    // Use UploadService to generate public URL for consistency
-    const proofUrl = `https://api.chabaqa.io/uploads/topup-proofs/${file.filename}`;
-
     // Get user ID from either _id or sub (depending on JWT payload structure)
     const userId = this.getUserId(req);
     console.log('🔍 [TOPUP] Using userId:', userId);
+
+    const uploadResult = await this.uploadService.processUploadedFile(file, file.filename, {
+      userId,
+      purpose: MediaPurpose.WALLET_TOPUP_PROOF,
+      entityType: 'wallet_topup',
+    });
+    const proofUrl = uploadResult.url;
 
     const topUpRequest = await this.walletService.createTopUpRequest(
       userId,

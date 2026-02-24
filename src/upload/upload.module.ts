@@ -5,6 +5,7 @@ import { UploadController } from './upload.controller';
 import { UploadService } from './upload.service';
 import { PolicyModule } from '../common/modules/policy.module';
 import { StorageUsage, StorageUsageSchema } from '../schema/storage-usage.schema';
+import { MediaAsset, MediaAssetSchema } from '../schema/media-asset.schema';
 import { diskStorage } from 'multer';
 import { extname, join } from 'path';
 import { v4 as uuidv4 } from 'uuid';
@@ -14,6 +15,7 @@ import { v4 as uuidv4 } from 'uuid';
   imports: [
     MongooseModule.forFeature([
       { name: StorageUsage.name, schema: StorageUsageSchema },
+      { name: MediaAsset.name, schema: MediaAssetSchema },
     ]),
     PolicyModule,
     MulterModule.register({

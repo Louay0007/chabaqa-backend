@@ -35,6 +35,16 @@ const getLocalNetworkIp = (): string => {
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
+  // Temporary backward-compat alias: /api/payments/* -> /api/payment/*
+  // Keep this during migration to avoid breaking older frontend clients.
+  app.use((req: any, res: any, next: any) => {
+    if (typeof req.url === 'string' && req.url === '/api/payments') {
+      req.url = '/api/payment';
+    } else if (typeof req.url === 'string' && req.url.startsWith('/api/payments/')) {
+      req.url = req.url.replace('/api/payments/', '/api/payment/');
+    }
+    next();
+  });
 
   app.use(express.static('public'));
   // app.use('/uploads', cors(), express.static('uploads')); // Handled by ServeStaticModule in AppModule

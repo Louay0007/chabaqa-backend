@@ -10,6 +10,7 @@ import { WalletTransaction, WalletTransactionSchema } from '../schema/wallet-tra
 import { Community, CommunitySchema } from '../schema/community.schema';
 import { Product, ProductSchema } from '../schema/product.schema';
 import { Challenge, ChallengeSchema } from '../schema/challenge.schema';
+import { UploadModule } from '../upload/upload.module';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { Challenge, ChallengeSchema } from '../schema/challenge.schema';
     MulterModule.register({
       dest: './uploads/topup-proofs',
     }),
+    UploadModule,
   ],
   controllers: [WalletController, WalletAdminController],
   providers: [WalletService],

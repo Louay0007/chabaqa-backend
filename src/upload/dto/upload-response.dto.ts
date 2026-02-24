@@ -1,6 +1,7 @@
 import { FileType } from '../upload.service';
 
 export class UploadResponseDto {
+  assetId?: string;
   filename: string;
   originalName: string;
   url: string;

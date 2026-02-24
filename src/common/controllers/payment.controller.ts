@@ -30,6 +30,7 @@ import { Plan, PlanDocument, PlanTier } from '../../schema/plan.schema';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { NotificationService } from '../../notification/notification.service';
 import { EmailService } from '../services/email.service';
+import { MediaPurpose } from '../../media/media.types';
 
 const manualProofStorage = diskStorage({
   destination: (req, file, cb) => {
@@ -1897,7 +1898,12 @@ export class PaymentController {
 
     const breakdown = await this.feeService.calculateForAmount(amount, community.createur.toString());
     // Use the filename already assigned by Multer to avoid URL/file mismatch
-    const uploadResult = await this.uploadService.processUploadedFile(file, file.filename, { userId });
+    const uploadResult = await this.uploadService.processUploadedFile(file, file.filename, {
+      userId,
+      purpose: MediaPurpose.MANUAL_PAYMENT_PROOF,
+      entityType: TrackableContentType.COMMUNITY,
+      entityId: community._id.toString(),
+    });
 
     const order = await this.orderModel.create({
       buyerId: new Types.ObjectId(userId),
@@ -1970,7 +1976,12 @@ export class PaymentController {
     }
 
     const breakdown = await this.feeService.calculateForAmount(amount, cours.creatorId.toString());
-    const uploadResult = await this.uploadService.processUploadedFile(file, file.filename, { userId });
+    const uploadResult = await this.uploadService.processUploadedFile(file, file.filename, {
+      userId,
+      purpose: MediaPurpose.MANUAL_PAYMENT_PROOF,
+      entityType: TrackableContentType.COURSE,
+      entityId: cours._id.toString(),
+    });
 
     const order = await this.orderModel.create({
       buyerId: new Types.ObjectId(userId),
@@ -2082,7 +2093,12 @@ export class PaymentController {
     }
 
     const breakdown = await this.feeService.calculateForAmount(amount, challenge.creatorId.toString());
-    const uploadResult = await this.uploadService.processUploadedFile(file, file.filename, { userId });
+    const uploadResult = await this.uploadService.processUploadedFile(file, file.filename, {
+      userId,
+      purpose: MediaPurpose.MANUAL_PAYMENT_PROOF,
+      entityType: TrackableContentType.CHALLENGE,
+      entityId: challenge._id.toString(),
+    });
 
     const order = await this.orderModel.create({
       buyerId: new Types.ObjectId(userId),
@@ -2153,7 +2169,12 @@ export class PaymentController {
     }
 
     const breakdown = await this.feeService.calculateForAmount(amount, event.creatorId.toString());
-    const uploadResult = await this.uploadService.processUploadedFile(file, file.filename, { userId });
+    const uploadResult = await this.uploadService.processUploadedFile(file, file.filename, {
+      userId,
+      purpose: MediaPurpose.MANUAL_PAYMENT_PROOF,
+      entityType: TrackableContentType.EVENT,
+      entityId: event._id.toString(),
+    });
 
     const order = await this.orderModel.create({
       buyerId: new Types.ObjectId(userId),
@@ -2227,7 +2248,12 @@ export class PaymentController {
     }
 
     const breakdown = await this.feeService.calculateForAmount(amount, product.creatorId.toString());
-    const uploadResult = await this.uploadService.processUploadedFile(file, file.filename, { userId });
+    const uploadResult = await this.uploadService.processUploadedFile(file, file.filename, {
+      userId,
+      purpose: MediaPurpose.MANUAL_PAYMENT_PROOF,
+      entityType: TrackableContentType.PRODUCT,
+      entityId: product._id.toString(),
+    });
 
     const order = await this.orderModel.create({
       buyerId: new Types.ObjectId(userId),
@@ -2304,7 +2330,12 @@ export class PaymentController {
     }
 
     const breakdown = await this.feeService.calculateForAmount(amount, session.creatorId.toString());
-    const uploadResult = await this.uploadService.processUploadedFile(file, file.filename, { userId });
+    const uploadResult = await this.uploadService.processUploadedFile(file, file.filename, {
+      userId,
+      purpose: MediaPurpose.MANUAL_PAYMENT_PROOF,
+      entityType: TrackableContentType.SESSION,
+      entityId: session._id.toString(),
+    });
 
     // If slotId is provided, reserve the slot (mark as pending)
     let slotInfo: any = null;

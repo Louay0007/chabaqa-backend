@@ -14,6 +14,7 @@ export class AbsoluteUploadsUrlInterceptor implements NestInterceptor {
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
     return next.handle().pipe(
+      map((data) => this.normalizeDeep(data, new WeakSet<object>())),
     );
   }
 

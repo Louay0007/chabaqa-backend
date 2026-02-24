@@ -22,6 +22,7 @@ import { ResourceModule } from './resource/resource.module';
 import { AdminModule } from './admin/admin.module';
 import { CoursModule } from './cours/cours.module';
 import { UploadModule } from './upload/upload.module';
+import { MediaModule } from './media/media.module';
 import { CourseEnrollmentModule } from './course-enrollment/course-enrollment.module';
 import { ProductModule } from './product/product.module';
 import { ChallengeModule } from './challenge/challenge.module';
@@ -159,6 +160,7 @@ import { ChallengeSubmission, ChallengeSubmissionSchema } from './schema/challen
     AdminModule,
     CoursModule,
     UploadModule,
+    MediaModule,
     AchievementModule,
     CourseEnrollmentModule,
     ProductModule,
