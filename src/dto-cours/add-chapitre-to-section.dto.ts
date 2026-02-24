@@ -27,6 +27,12 @@ export class AddChapitreToSectionDto {
   @IsBoolean()
   isPaid: boolean;
 
+  @ApiPropertyOptional({ description: 'Prix spécifique du chapitre (si payant)', example: 9.99 })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  prix?: number;
+
   @ApiProperty({ description: 'Ordre du chapitre dans la section', example: 1 })
   @IsNumber()
   @Min(1)

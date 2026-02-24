@@ -6,6 +6,7 @@ import { Document, Types } from 'mongoose';
  */
 export enum TrackableContentType {
   COURSE = 'course',
+  CHAPTER = 'chapter',
   CHALLENGE = 'challenge',
   SESSION = 'session',
   POST = 'post',

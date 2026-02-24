@@ -1218,7 +1218,8 @@ export class AnalyticsService {
     const key = this.cacheKey(creatorId, from.toISOString(), to.toISOString(), `posts:${communityScope.cacheKeyPart}`);
     const cached = await this.getCache<any>(key);
     if (cached) return cached;
-    const match = { creatorId: this.getCreatorObjectId(creatorId), date: { $gte: from, $lte: to }, contentType: 'post' } as any;
+    const creatorObjectId = this.getCreatorObjectId(creatorId);
+    const match = { creatorId: creatorObjectId, date: { $gte: from, $lte: to }, contentType: 'post' } as any;
 
     if (communityScope.hasFilter) {
       this.setDailyCommunityFilter(match, communityScope.communityIdStrings);
@@ -1230,6 +1231,47 @@ export class AnalyticsService {
       { $project: { _id: 0, contentId: '$_id', views: 1, likes: 1, shares: 1, bookmarks: 1, ratingsCount: 1 } },
       { $sort: { views: -1 } },
     ]);
+
+    const hasRollupActivity = byPost.some((row: any) =>
+      Number(row?.views || 0) > 0 ||
+      Number(row?.likes || 0) > 0 ||
+      Number(row?.shares || 0) > 0 ||
+      Number(row?.bookmarks || 0) > 0 ||
+      Number(row?.ratingsCount || 0) > 0,
+    );
+
+    if (!hasRollupActivity) {
+      const trackingFallback = await this.dbConnection.collection('trackingactions').aggregate([
+        { $match: { timestamp: { $gte: from, $lte: to }, contentType: 'post' } },
+        { $lookup: { from: 'posts', localField: 'contentId', foreignField: 'id', as: 'post' } },
+        { $unwind: { path: '$post', preserveNullAndEmptyArrays: false } },
+        { $match: { 'post.authorId': creatorObjectId } },
+        ...(communityScope.hasFilter
+          ? [{ $match: this.buildLookupCommunityMatch('post.communityId', communityScope.lookupCommunityValues) }]
+          : []),
+        {
+          $group: {
+            _id: '$contentId',
+            views: { $sum: { $cond: [{ $eq: ['$actionType', TrackingActionType.VIEW] }, 1, 0] } },
+            likes: { $sum: { $cond: [{ $eq: ['$actionType', TrackingActionType.LIKE] }, 1, 0] } },
+            shares: { $sum: { $cond: [{ $eq: ['$actionType', TrackingActionType.SHARE] }, 1, 0] } },
+            bookmarks: { $sum: { $cond: [{ $eq: ['$actionType', TrackingActionType.BOOKMARK] }, 1, 0] } },
+            ratingsCount: { $sum: { $cond: [{ $eq: ['$actionType', TrackingActionType.RATE] }, 1, 0] } },
+          },
+        },
+        { $project: { _id: 0, contentId: '$_id', views: 1, likes: 1, shares: 1, bookmarks: 1, ratingsCount: 1 } },
+        { $sort: { views: -1 } },
+      ]).toArray();
+
+      if (trackingFallback.length > 0) {
+        byPost.length = 0;
+        byPost.push(...trackingFallback);
+        this.logger.log(
+          `Post analytics fallback used for creator=${creatorId}; rows=${trackingFallback.length}; range=${from.toISOString()}..${to.toISOString()}`,
+        );
+      }
+    }
+
     try {
       const ga4Stats = await this.ga4ReportingService.getCreatorContentStats(
         creatorId,
@@ -1273,6 +1315,7 @@ export class AnalyticsService {
     // Helper to build aggregate for a specific type
     const buildTypeAgg = async (type: string, collectionName: string) => {
       const chapterIdExpr = { $ifNull: ['$metadata.chapterId', ''] };
+      const creatorFieldPath = type === 'post' ? 'meta.authorId' : 'meta.creatorId';
       const completesCondition =
         type === 'course'
           ? {
@@ -1301,7 +1344,7 @@ export class AnalyticsService {
         { $match: { timestamp: { $gte: start, $lte: end }, contentType: type } },
         { $lookup: { from: collectionName, localField: 'contentId', foreignField: 'id', as: 'meta' } },
         { $unwind: { path: '$meta', preserveNullAndEmptyArrays: false } },
-        { $match: { 'meta.creatorId': new Types.ObjectId(creatorId) } },
+        { $match: { [creatorFieldPath]: new Types.ObjectId(creatorId) } },
         {
           $group: {
             _id: { contentId: '$contentId' },
@@ -1348,19 +1391,176 @@ export class AnalyticsService {
     if (!options?.skipInvalidation) {
       await this.invalidateCreatorCache(creatorId);
     }
-    return { updated: docs.length, date: start.toISOString() };
+    return {
+      updated: docs.length,
+      date: start.toISOString(),
+      byType: {
+        course: courseAgg.length,
+        challenge: challengeAgg.length,
+        session: sessionAgg.length,
+        event: eventAgg.length,
+        product: productAgg.length,
+        post: postAgg.length,
+      },
+    };
   }
 
   async backfillForCreator(creatorId: string, days: number = 90) {
+    const completionBackfill = await this.backfillCourseCompletionEventsForCreator(creatorId, days);
+
     const today = new Date();
     let count = 0;
+    let postCount = 0;
     for (let i = days; i >= 0; i--) {
       const day = new Date(today.getTime() - i * 24 * 3600 * 1000);
       const r = await this.rollupDayForCreator(creatorId, day, { skipInvalidation: true });
       count += r.updated;
+      postCount += Number(r.byType?.post || 0);
     }
     await this.invalidateCreatorCache(creatorId);
-    return { ok: true, updated: count };
+    this.logger.log(
+      `Analytics backfill completed for creator=${creatorId}; days=${days}; updated=${count}; postRows=${postCount}; courseCompletionEventsBackfilled=${completionBackfill.inserted}`,
+    );
+    return {
+      ok: true,
+      updated: count,
+      postRollupUpdated: postCount,
+      postsBackfilledDays: days,
+      courseCompletionEventsBackfilled: completionBackfill.inserted,
+      completionDaysTouched: completionBackfill.daysTouched,
+    };
+  }
+
+  private async backfillCourseCompletionEventsForCreator(creatorId: string, days: number) {
+    const creatorObjectId = this.getCreatorObjectId(creatorId);
+    const from = new Date(Date.now() - Math.max(1, days) * 24 * 3600 * 1000);
+
+    const courses = await this.dbConnection.db
+      ?.collection('cours')
+      .find({ creatorId: creatorObjectId })
+      .project({ _id: 1, id: 1, sections: 1 })
+      .toArray() || [];
+
+    if (!courses.length) {
+      return { inserted: 0, daysTouched: 0 };
+    }
+
+    const courseMap = new Map<string, { trackingId: string; totalChapters: number }>();
+    const courseObjectIds: Types.ObjectId[] = [];
+    for (const course of courses) {
+      const mongoId = String(course._id);
+      const totalChapters = Array.isArray(course.sections)
+        ? course.sections.reduce(
+            (acc: number, section: any) => acc + (Array.isArray(section?.chapitres) ? section.chapitres.length : 0),
+            0,
+          )
+        : 0;
+      courseMap.set(mongoId, {
+        trackingId: String(course.id || course._id),
+        totalChapters,
+      });
+      courseObjectIds.push(course._id);
+    }
+
+    const enrollments = await this.dbConnection.db
+      ?.collection('courseenrollments')
+      .find({
+        isActive: true,
+        courseId: { $in: courseObjectIds },
+        updatedAt: { $gte: from },
+      })
+      .project({ _id: 1, userId: 1, courseId: 1, progression: 1, completedAt: 1, updatedAt: 1, enrolledAt: 1 })
+      .toArray() || [];
+
+    const trackingCollection = this.dbConnection.collection('trackingactions');
+    const contentProgressCollection = this.dbConnection.collection('contentprogresses');
+    let inserted = 0;
+    const touchedDays = new Set<string>();
+
+    for (const enrollment of enrollments) {
+      const courseMeta = courseMap.get(String(enrollment.courseId));
+      if (!courseMeta || courseMeta.totalChapters <= 0) continue;
+
+      const completedChapters = Array.isArray(enrollment.progression)
+        ? enrollment.progression.filter((p: any) => Boolean(p?.isCompleted)).length
+        : 0;
+      if (completedChapters < courseMeta.totalChapters) continue;
+
+      const rawUserId = String(enrollment.userId || '');
+      if (!(enrollment.userId instanceof Types.ObjectId) && !Types.ObjectId.isValid(rawUserId)) {
+        continue;
+      }
+      const userId = enrollment.userId instanceof Types.ObjectId
+        ? enrollment.userId
+        : new Types.ObjectId(rawUserId);
+      const completionDate = new Date(
+        enrollment.completedAt || enrollment.updatedAt || enrollment.enrolledAt || Date.now(),
+      );
+
+      const existingComplete = await trackingCollection.findOne({
+        userId,
+        contentType: 'course',
+        contentId: courseMeta.trackingId,
+        actionType: 'complete',
+        $or: [
+          { 'metadata.chapterId': { $exists: false } },
+          { 'metadata.chapterId': '' },
+          { 'metadata.chapterId': null },
+        ],
+      });
+
+      if (existingComplete) continue;
+
+      await trackingCollection.insertOne({
+        id: new Types.ObjectId().toString(),
+        userId,
+        contentId: courseMeta.trackingId,
+        contentType: 'course',
+        actionType: 'complete',
+        metadata: {
+          source: 'analytics_backfill_course_completion',
+          autoFromChapterCompletion: true,
+          backfilled: true,
+        },
+        timestamp: completionDate,
+      });
+
+      await contentProgressCollection.updateOne(
+        {
+          userId,
+          contentType: 'course',
+          contentId: courseMeta.trackingId,
+        },
+        {
+          $set: {
+            isCompleted: true,
+            completedAt: completionDate,
+            lastAccessedAt: completionDate,
+          },
+          $setOnInsert: {
+            id: new Types.ObjectId().toString(),
+            metadata: {},
+            watchTime: 0,
+            viewCount: 0,
+            likeCount: 0,
+            shareCount: 0,
+            downloadCount: 0,
+            bookmarks: [],
+          },
+        },
+        { upsert: true },
+      );
+
+      inserted += 1;
+      const dayKey = new Date(Date.UTC(
+        completionDate.getUTCFullYear(),
+        completionDate.getUTCMonth(),
+        completionDate.getUTCDate(),
+      )).toISOString();
+      touchedDays.add(dayKey);
+    }
+
+    return { inserted, daysTouched: touchedDays.size };
   }
 
   private isMeaningfulDeviceValue(device: string | undefined | null): boolean {
@@ -2147,7 +2347,9 @@ export class AnalyticsService {
       views: Number(full?.totals?.views ?? 0) || 0,
       viewsTotal: Number(full?.totals?.views ?? 0) || 0,
       starts: Number(full?.totals?.starts ?? 0) || 0,
+      // Guardrail: course-level completion events only (not chapter completion events).
       completes: Number(full?.totals?.completes ?? 0) || 0,
+      courseCompletes: Number(full?.totals?.completes ?? 0) || 0,
       chapterCompletes: Number(full?.totals?.chapterCompletes ?? 0) || 0,
       completions: Number(full?.totals?.completes ?? 0) || 0,
       completionRate:

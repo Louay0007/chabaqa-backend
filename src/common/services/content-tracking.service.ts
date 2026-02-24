@@ -638,6 +638,7 @@ export class ContentTrackingService {
     contentId: string,
     contentType: TrackableContentType,
     bookmarkId: string,
+    metadata: Record<string, any> = {},
   ): Promise<ContentProgressDocument> {
     const progress = await this.getOrCreateProgress(
       userId,
@@ -653,7 +654,7 @@ export class ContentTrackingService {
       contentId,
       contentType,
       TrackingActionType.BOOKMARK,
-      { bookmarkId },
+      { bookmarkId, ...metadata },
     );
 
     return progress;

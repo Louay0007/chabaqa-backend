@@ -70,6 +70,116 @@ export class CoursService {
     return cours;
   }
 
+  private resolvePaidChapterPrice(
+    chapterInput: { isPaid?: boolean; prix?: number },
+    coursePrice: number,
+  ): number {
+    const isPaid = Boolean(chapterInput?.isPaid);
+    if (!isPaid) return 0;
+
+    const explicitPrice = Number(chapterInput?.prix);
+    if (Number.isFinite(explicitPrice) && explicitPrice > 0) {
+      return explicitPrice;
+    }
+
+    const fallbackCoursePrice = Number(coursePrice || 0);
+    if (Number.isFinite(fallbackCoursePrice) && fallbackCoursePrice > 0) {
+      return fallbackCoursePrice;
+    }
+
+    throw new BadRequestException(
+      'Le prix du chapitre payant est requis (ou le cours doit avoir un prix > 0)',
+    );
+  }
+
+  private async hasPaidChapterOrder(
+    userId: string,
+    chapterId: string,
+  ): Promise<boolean> {
+    const paidOrder = await this.orderModel
+      .findOne({
+        buyerId: new Types.ObjectId(userId),
+        contentType: { $in: [TrackableContentType.CHAPTER, 'chapter'] },
+        contentId: chapterId,
+        status: 'paid',
+      })
+      .lean()
+      .exec();
+    return Boolean(paidOrder);
+  }
+
+  private async hasPaidChapterEntitlement(
+    userId: string,
+    chapterId: string,
+    enrollment?: CourseEnrollmentDocument | null,
+  ): Promise<boolean> {
+    const enrollmentEntitlement = Boolean(
+      enrollment?.purchasedChapterIds?.includes(chapterId),
+    );
+    if (enrollmentEntitlement) return true;
+    return this.hasPaidChapterOrder(userId, chapterId);
+  }
+
+  async ensureChapterPurchasedEntitlement(
+    userId: string,
+    courseIdOrDoc: string | CoursDocument,
+    chapterId: string,
+    session?: any,
+  ): Promise<{ enrollmentId: string; granted: boolean }> {
+    const course =
+      typeof courseIdOrDoc === 'string'
+        ? await this.resolveCourseDocument(courseIdOrDoc)
+        : courseIdOrDoc;
+
+    const userObjectId = new Types.ObjectId(userId);
+    let enrollment = await this.courseEnrollmentModel
+      .findOne({
+        userId: userObjectId,
+        courseId: course._id,
+        isActive: true,
+      })
+      .session(session || null);
+
+    if (!enrollment) {
+      const created = await this.inscrireAuCours(
+        course.id || course._id.toString(),
+        userId,
+        undefined,
+        session,
+      );
+      enrollment = await this.courseEnrollmentModel
+        .findOne({
+          userId: userObjectId,
+          courseId: course._id,
+          isActive: true,
+        })
+        .session(session || null);
+
+      if (!enrollment) {
+        throw new BadRequestException(
+          `Inscription introuvable après création pour le cours ${created?.enrollment?.courseId || course.id}`,
+        );
+      }
+    }
+
+    const alreadyPurchased = Array.isArray(enrollment.purchasedChapterIds)
+      ? enrollment.purchasedChapterIds.includes(chapterId)
+      : false;
+    if (alreadyPurchased) {
+      return { enrollmentId: enrollment.id, granted: false };
+    }
+
+    enrollment.purchasedChapterIds = [
+      ...(Array.isArray(enrollment.purchasedChapterIds)
+        ? enrollment.purchasedChapterIds
+        : []),
+      chapterId,
+    ];
+    await enrollment.save({ session });
+
+    return { enrollmentId: enrollment.id, granted: true };
+  }
+
   private async attachRatingStatsToCourses(
     coursDocs: CoursDocument[],
   ): Promise<void> {
@@ -447,7 +557,10 @@ export class CoursService {
           isPreview: !chapitreDto.isPaid,
           ordre: chapitreDto.ordre,
           duree: dureeCalculee,
-          prix: chapitreDto.isPaid ? (chapitreDto.prix || coursEnregistre.prix) : 0,
+          prix: this.resolvePaidChapterPrice(
+            { isPaid: chapitreDto.isPaid, prix: chapitreDto.prix },
+            coursEnregistre.prix,
+          ),
           isPaidChapter: chapitreDto.isPaid,
           notes: chapitreDto.notes || '',
           ressources: [],
@@ -988,7 +1101,10 @@ export class CoursService {
           isPreview: !chapitreDto.isPaid,
           ordre: chapitreDto.ordre,
           duree: chapitreDto.duree,
-          prix: chapitreDto.isPaid ? (chapitreDto.prix || cours.prix) : 0,
+          prix: this.resolvePaidChapterPrice(
+            { isPaid: chapitreDto.isPaid, prix: chapitreDto.prix },
+            cours.prix,
+          ),
           isPaidChapter: chapitreDto.isPaid,
           notes: chapitreDto.notes || '',
           ressources: [],
@@ -1068,6 +1184,7 @@ export class CoursService {
             courseId: section.courseId,
             sectionId: chapitre.sectionId,
             prix: chapitre.prix,
+            price: chapitre.prix,
             notes: chapitre.notes,
             ressources: chapitre.ressources,
             createdAt: chapitre.createdAt
@@ -1138,6 +1255,7 @@ export class CoursService {
                 courseId: section.courseId,
                 sectionId: chapitre.sectionId,
                 prix: chapitre.prix,
+                price: chapitre.prix,
                 isPaidChapter: chapitre.isPaidChapter || !chapitre.isPreview,
                 notes: chapitre.notes,
                 ressources: Array.isArray(chapitre.ressources) ? chapitre.ressources.map(res => ({
@@ -1283,9 +1401,22 @@ export class CoursService {
       chapitre.isPreview = !isPaid;
       if (!isPaid) {
         chapitre.prix = 0;
-      } else if (chapitre.prix === undefined || chapitre.prix === null) {
-        chapitre.prix = cours.prix;
+      } else {
+        chapitre.prix = this.resolvePaidChapterPrice(
+          { isPaid: true, prix: chapitre.prix },
+          cours.prix,
+        );
       }
+    }
+
+    if (chapitre.isPaidChapter) {
+      chapitre.prix = this.resolvePaidChapterPrice(
+        { isPaid: true, prix: chapitre.prix },
+        cours.prix,
+      );
+    } else {
+      chapitre.prix = 0;
+      chapitre.isPreview = true;
     }
 
     const saved = await cours.save();
@@ -1327,7 +1458,10 @@ export class CoursService {
             sectionId: new Types.ObjectId().toString(),
             ordre: chapitre.ordre,
             isPreview: chapitre.isPaid === false,
-            prix: chapitre.isPaid ? cours.prix : 0,
+            prix: this.resolvePaidChapterPrice(
+              { isPaid: chapitre.isPaid, prix: chapitre.prix },
+              cours.prix,
+            ),
             notes: chapitre.notes,
             ressources: [],
             createdAt: new Date(),
@@ -1407,7 +1541,10 @@ export class CoursService {
         sectionId: sectionId,
         ordre: addChapitreDto.ordre,
         isPreview: !addChapitreDto.isPaid,
-        prix: addChapitreDto.isPaid ? cours.prix : 0,
+        prix: this.resolvePaidChapterPrice(
+          { isPaid: addChapitreDto.isPaid, prix: addChapitreDto.prix },
+          cours.prix,
+        ),
         isPaidChapter: addChapitreDto.isPaid,
         notes: addChapitreDto.notes,
         ressources: [],
@@ -2121,6 +2258,8 @@ export class CoursService {
     isPaidChapter: boolean;
     chapterPrice?: number;
     needsPayment: boolean;
+    hasCourseEnrollment: boolean;
+    hasChapterPurchase: boolean;
   }> {
     console.log('🔧 DEBUG - verifierAccesChapitre');
     console.log(`   📋 Cours ID: ${coursId}`);
@@ -2158,25 +2297,16 @@ export class CoursService {
         return {
           canAccess: true,
           isPaidChapter: false,
-          needsPayment: false
+          needsPayment: false,
+          hasCourseEnrollment: Boolean(
+            await this.courseEnrollmentModel.findOne({
+              userId: new Types.ObjectId(userId),
+              courseId: cours._id,
+              isActive: true,
+            }).lean().exec(),
+          ),
+          hasChapterPurchase: false,
         };
-      }
-
-      // 4. Si le cours est gratuit, accorder l'accès aux membres de la communauté sans inscription
-      if ((cours.prix || 0) === 0) {
-        const community = await this.communityModel.findById(cours.communityId);
-        if (community) {
-          const isMember = community.members.some(m => m.equals(new Types.ObjectId(userId))) || community.createur.equals(new Types.ObjectId(userId)) || community.admins.some(a => a.equals(new Types.ObjectId(userId)));
-          if (isMember) {
-            console.log('   ✅ Accès autorisé - Cours gratuit pour les membres de la communauté');
-            return {
-              canAccess: true,
-              isPaidChapter: true,
-              chapterPrice: chapitre.prix,
-              needsPayment: false
-            };
-          }
-        }
       }
 
       // 5. Si le chapitre est payant, vérifier l'inscription au cours
@@ -2193,19 +2323,38 @@ export class CoursService {
           reason: 'Vous devez vous inscrire au cours pour accéder à ce chapitre payant',
           isPaidChapter: true,
           chapterPrice: chapitre.prix,
-          needsPayment: true
+          needsPayment: true,
+          hasCourseEnrollment: false,
+          hasChapterPurchase: false,
         };
       }
 
-      // 6. Vérifier si l'utilisateur a payé pour ce chapitre spécifique
-      // (Pour l'instant, on considère que l'inscription au cours donne accès à tous les chapitres)
-      // Dans une implémentation plus avancée, on pourrait avoir un système de paiement par chapitre
-      console.log('   ✅ Accès autorisé - Inscrit au cours');
+      const hasChapterPurchase = await this.hasPaidChapterEntitlement(
+        userId,
+        chapitreId,
+        inscription,
+      );
+      if (!hasChapterPurchase) {
+        console.log('   ❌ Accès refusé - Chapitre payant non acheté');
+        return {
+          canAccess: false,
+          reason: 'Paiement requis pour ce chapitre',
+          isPaidChapter: true,
+          chapterPrice: chapitre.prix,
+          needsPayment: true,
+          hasCourseEnrollment: true,
+          hasChapterPurchase: false,
+        };
+      }
+
+      console.log('   ✅ Accès autorisé - Chapitre acheté');
       return {
         canAccess: true,
         isPaidChapter: true,
         chapterPrice: chapitre.prix,
-        needsPayment: false
+        needsPayment: false,
+        hasCourseEnrollment: true,
+        hasChapterPurchase: true,
       };
 
     } catch (error) {
@@ -2770,6 +2919,11 @@ export class CoursService {
     hasAccess: boolean;
     canAccess: boolean; // Alias for frontend compatibility
     reason: string;
+    isPaidChapter?: boolean;
+    chapterPrice?: number;
+    needsPayment?: boolean;
+    hasCourseEnrollment?: boolean;
+    hasChapterPurchase?: boolean;
     requiredChapter?: {
       id: string;
       titre: string;
@@ -2831,6 +2985,9 @@ export class CoursService {
           hasAccess: true,
           canAccess: true,
           reason: 'Free chapter',
+          isPaidChapter: false,
+          needsPayment: false,
+          hasChapterPurchase: false,
           unlockMessage: undefined,
           nextChapter: nextChapter ? {
             id: nextChapter.id,
@@ -2850,39 +3007,40 @@ export class CoursService {
 
       // 6. Si pas d'inscription
       if (!enrollment) {
-        // Vérifier si le cours est gratuit et l'utilisateur est membre
-        if ((cours.prix || 0) === 0) {
-          const community = await this.communityModel.findById(cours.communityId);
-          if (community) {
-            const isMember = community.members.some(m => m.equals(new Types.ObjectId(userId)));
-            if (isMember) {
-              console.log('   ✅ Accès autorisé - Cours gratuit (membre)');
-              const nextChapter = cours.obtenirChapitreSuivant(chapitreId);
-              return {
-                hasAccess: true,
-                canAccess: true,
-                reason: 'Free course member access',
-                nextChapter: nextChapter ? {
-                  id: nextChapter.id,
-                  titre: nextChapter.titre,
-                  ordre: nextChapter.ordre,
-                  sectionId: nextChapter.sectionId
-                } : undefined
-              };
-            }
-          }
-        }
-
         console.log('   ❌ Accès refusé - Non inscrit');
         return {
           hasAccess: false,
           canAccess: false,
-          reason: 'Vous devez vous inscrire au cours pour accéder à ce chapitre',
-          unlockMessage: cours.unlockMessage
+          reason: 'Vous devez vous inscrire au cours pour accéder à ce chapitre payant',
+          isPaidChapter: true,
+          chapterPrice: targetChapter.prix,
+          needsPayment: true,
+          hasCourseEnrollment: false,
+          hasChapterPurchase: false,
+          unlockMessage: cours.unlockMessage,
         };
       }
 
-      // 7. Si inscrit, utiliser la méthode du schéma pour vérifier l'accès séquentiel
+      const hasChapterPurchase = await this.hasPaidChapterEntitlement(
+        userId,
+        chapitreId,
+        enrollment,
+      );
+      if (!hasChapterPurchase) {
+        return {
+          hasAccess: false,
+          canAccess: false,
+          reason: 'Paiement requis pour ce chapitre',
+          isPaidChapter: true,
+          chapterPrice: targetChapter.prix,
+          needsPayment: true,
+          hasCourseEnrollment: true,
+          hasChapterPurchase: false,
+          unlockMessage: cours.unlockMessage,
+        };
+      }
+
+      // 7. Si inscrit et acheté, utiliser la méthode du schéma pour vérifier l'accès séquentiel
       const accessCheck = cours.verifierAccesChapitre(chapitreId, enrollment.progression || []);
 
       // 8. Obtenir le chapitre suivant si disponible
@@ -2896,6 +3054,11 @@ export class CoursService {
         hasAccess: accessCheck.hasAccess,
         canAccess: accessCheck.hasAccess, // Alias for frontend compatibility
         reason: accessCheck.reason,
+        isPaidChapter: true,
+        chapterPrice: targetChapter.prix,
+        needsPayment: false,
+        hasCourseEnrollment: true,
+        hasChapterPurchase: true,
         requiredChapter: accessCheck.requiredChapter ? {
           id: accessCheck.requiredChapter.id,
           titre: accessCheck.requiredChapter.titre,
@@ -3001,17 +3164,26 @@ export class CoursService {
 
           // Vérifier si le chapitre est déverrouillé
           let isUnlocked = isAdmin;
+          const isPaidChapter =
+            Boolean(chapitre.isPaidChapter) && !Boolean(chapitre.isPreview);
 
           if (!isUnlocked) {
             if (enrollment) {
+              if (isPaidChapter) {
+                isUnlocked = await this.hasPaidChapterEntitlement(
+                  userId,
+                  chapitre.id,
+                  enrollment,
+                );
+              }
               // User enrolled: use sequential logic
-              const accessCheck = cours.verifierAccesChapitre(chapitre.id, progression);
-              isUnlocked = accessCheck.hasAccess;
+              if (isUnlocked) {
+                const accessCheck = cours.verifierAccesChapitre(chapitre.id, progression);
+                isUnlocked = accessCheck.hasAccess;
+              }
             } else {
               // Not enrolled: check for free/preview/member access
-              if (isFreeCourseMember) {
-                isUnlocked = true;
-              } else if (chapitre.isPreview || !chapitre.isPaidChapter) {
+              if (!isPaidChapter && (isFreeCourseMember || chapitre.isPreview || !chapitre.isPaidChapter)) {
                 isUnlocked = true;
               }
             }

@@ -13,6 +13,8 @@ import { User, UserDocument } from '../schema/user.schema';
 import { CreatePostDto } from '../dto-post/create-post.dto';
 import { UpdatePostDto } from '../dto-post/update-post.dto';
 import { CreatePostCommentDto } from '../dto-post/create-post.dto';
+import { ContentTrackingService } from '../common/services/content-tracking.service';
+import { TrackableContentType } from '../schema/content-tracking.schema';
 import {
   PostResponseDto,
   PostListResponseDto,
@@ -30,6 +32,7 @@ export class PostService {
     @InjectModel(Community.name)
     private communityModel: Model<CommunityDocument>,
     @InjectModel(User.name) private userModel: Model<UserDocument>,
+    private readonly contentTrackingService: ContentTrackingService,
   ) { }
 
   private serializeLogArg(arg: unknown): string {
@@ -593,6 +596,7 @@ export class PostService {
   async likePost(
     postId: string,
     userId: string,
+    metadata: Record<string, any> = {},
   ): Promise<PostStatsResponseDto> {
     const post = await this.postModel.findOne({ id: postId });
     if (!post) {
@@ -629,6 +633,16 @@ export class PostService {
     });
     
     await post.save();
+    await this.contentTrackingService.trackLike(
+      userId,
+      post.id,
+      TrackableContentType.POST,
+      {
+        source: 'post_endpoint',
+        communityId: post.communityId,
+        ...metadata,
+      },
+    );
 
     this.logDebug('💾 [POST-SERVICE] Post saved successfully');
 
@@ -687,6 +701,7 @@ export class PostService {
   async sharePost(
     postId: string,
     userId: string,
+    metadata: Record<string, any> = {},
   ): Promise<PostStatsResponseDto> {
     const post = await this.postModel.findOne({ id: postId });
     if (!post) {
@@ -699,6 +714,16 @@ export class PostService {
     // Save even if already shared? only save when new share to avoid extra writes.
     if (shared) {
       await post.save();
+      await this.contentTrackingService.trackShare(
+        userId,
+        post.id,
+        TrackableContentType.POST,
+        {
+          source: 'post_endpoint',
+          communityId: post.communityId,
+          ...metadata,
+        },
+      );
     }
 
     return {
@@ -1103,7 +1128,11 @@ export class PostService {
   /**
    * Ajouter un post aux favoris
    */
-  async bookmarkPost(postId: string, userId: string): Promise<void> {
+  async bookmarkPost(
+    postId: string,
+    userId: string,
+    metadata: Record<string, any> = {},
+  ): Promise<void> {
     // Use findOne({ id }) instead of findById() because Post schema has custom 'id' field
     const post = await this.postModel.findOne({ id: postId });
     if (!post) {
@@ -1115,6 +1144,17 @@ export class PostService {
     if (!post.bookmarks.some((bookmark) => bookmark.equals(userObjectId))) {
       post.bookmarks.push(userObjectId);
       await post.save();
+      await this.contentTrackingService.addBookmark(
+        userId,
+        post.id,
+        TrackableContentType.POST,
+        `post:${post.id}:user:${userId}`,
+        {
+          source: 'post_endpoint',
+          communityId: post.communityId,
+          ...metadata,
+        },
+      );
     }
   }
 
@@ -1167,8 +1207,8 @@ export class PostService {
         bookmarks: userObjectId,
         isPublished: true,
       })
-      .populate('communityId', 'name slug')
       .populate('authorId', 'name email profile_picture photo_profil')
+      .select('+likedBy')
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
@@ -1180,51 +1220,33 @@ export class PostService {
       isPublished: true,
     });
 
-    // Transformer les posts
+    // Resolve communities once so we can apply the same role logic used by the main feed.
+    const communityIds = [...new Set(posts.map((post) => post.communityId).filter(Boolean))];
+    const communities = await this.communityModel
+      .find({
+        _id: {
+          $in: communityIds
+            .map((id) => {
+              try {
+                return new Types.ObjectId(id);
+              } catch {
+                return null;
+              }
+            })
+            .filter(Boolean),
+        },
+      })
+      .select('name slug createur admins members')
+      .exec();
+
+    // Transformer les posts using canonical transformer for consistent author role/shape.
     const transformedPosts = await Promise.all(
       posts.map(async (post) => {
-        // Vérifier si l'utilisateur a liké ce post
-        const isLikedByUser = post.likedBy.includes(userObjectId);
-
-        // Cast des types pour les champs populés
-        const community = post.communityId as any;
-        const author = post.authorId as any;
-
+        const community = communities.find((c) => c._id.toString() === post.communityId);
+        const transformed = await this.transformToResponseDto(post, community, userId);
         return {
-          id: post.id,
-          title: post.title,
-          content: post.content,
-          excerpt: post.excerpt,
-          thumbnail: post.thumbnail,
-          communityId: community._id?.toString() || community.toString(),
-          community: {
-            id: community._id?.toString() || community.toString(),
-            name: community.name || 'Communauté inconnue',
-            slug: community.slug || 'unknown',
-          },
-          authorId: author._id?.toString() || author.toString(),
-          author: {
-            id: author._id?.toString() || author.toString(),
-            name: author.name || 'Auteur inconnu',
-            email: author.email || '',
-            profile_picture: author.profile_picture || author.photo_profil || '',
-            photo_profil: author.photo_profil || author.profile_picture || '',
-            role: author.role || '',
-          },
-          isPublished: post.isPublished,
-          likes: post.likedBy.length,
-          isLikedByUser,
+          ...transformed,
           isBookmarkedByUser: true,
-          shareCount: post.shareCount || 0,
-          isSharedByUser: post.isSharedBy(userObjectId),
-          comments: [], // Empty for list view - will be populated in detailed view
-          commentsCount: post.comments.length,
-          tags: post.tags,
-          images: post.images || [],
-          videos: post.videos || [],
-          links: post.links || [],
-          createdAt: post.createdAt.toISOString(),
-          updatedAt: post.updatedAt.toISOString(),
         };
       }),
     );

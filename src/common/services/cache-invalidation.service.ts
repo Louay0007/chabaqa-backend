@@ -18,6 +18,7 @@ export class CacheInvalidationService {
     const patterns = [
       `http:/api/feedback/${relatedModel}/${relatedTo}*`,
       `http:/api/communities*`, // Invalidate communities list as ratings changed
+      `http:/api/sessions*`,
     ];
 
     for (const pattern of patterns) {

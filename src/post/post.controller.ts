@@ -80,6 +80,32 @@ export class PostController {
     this.logger.error(args.map((arg) => this.serializeLogArg(arg)).join(' '));
   }
 
+  private resolveRequestIpAddress(req: any): string | undefined {
+    const forwarded = req?.headers?.['x-forwarded-for'];
+    const realIp = req?.headers?.['x-real-ip'];
+
+    let candidate: unknown = null;
+    if (Array.isArray(forwarded)) candidate = forwarded[0];
+    else if (typeof forwarded === 'string') candidate = forwarded.split(',')[0];
+    else if (Array.isArray(realIp)) candidate = realIp[0];
+    else if (typeof realIp === 'string') candidate = realIp;
+    else candidate = req?.ip || req?.socket?.remoteAddress;
+
+    if (typeof candidate !== 'string') return undefined;
+    const trimmed = candidate.trim();
+    if (!trimmed) return undefined;
+    return trimmed.startsWith('::ffff:') ? trimmed.slice(7) : trimmed;
+  }
+
+  private resolveTrackingMetadata(req: any): Record<string, any> {
+    const userAgent = typeof req?.headers?.['user-agent'] === 'string' ? req.headers['user-agent'] : undefined;
+    const ipAddress = this.resolveRequestIpAddress(req);
+    const metadata: Record<string, any> = {};
+    if (userAgent) metadata.userAgent = userAgent;
+    if (ipAddress) metadata.ipAddress = ipAddress;
+    return metadata;
+  }
+
   @Post()
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
@@ -483,7 +509,7 @@ export class PostController {
   ): Promise<{ success: boolean; message: string }> {
     const userId = this.resolveRequestUserId(req);
     if (!userId) throw new UnauthorizedException();
-    await this.postService.bookmarkPost(id, userId);
+    await this.postService.bookmarkPost(id, userId, this.resolveTrackingMetadata(req));
     return { success: true, message: 'Post ajouté aux favoris' };
   }
 
@@ -524,7 +550,7 @@ export class PostController {
     if (!userId) {
       throw new UnauthorizedException();
     }
-    const stats = await this.postService.likePost(postId, userId);
+    const stats = await this.postService.likePost(postId, userId, this.resolveTrackingMetadata(req));
     return { success: true, data: stats };
   }
 
@@ -567,7 +593,7 @@ export class PostController {
     if (!userId) {
       throw new UnauthorizedException();
     }
-    const stats = await this.postService.sharePost(postId, userId);
+    const stats = await this.postService.sharePost(postId, userId, this.resolveTrackingMetadata(req));
     return { success: true, data: stats };
   }
 

@@ -282,6 +282,12 @@ export class CourseEnrollment {
   progression: CourseProgress[];
 
   @Prop({
+    type: [String],
+    default: []
+  })
+  purchasedChapterIds: string[];
+
+  @Prop({
     type: Date,
     default: Date.now
   })
@@ -385,6 +391,7 @@ export interface CourseEnrollmentDocument extends Document {
   userId: Types.ObjectId;
   courseId: Types.ObjectId;
   progression: CourseProgress[];
+  purchasedChapterIds: string[];
   enrolledAt: Date;
   completedAt?: Date;
   isActive: boolean;

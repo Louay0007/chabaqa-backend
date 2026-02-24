@@ -1471,17 +1471,34 @@ export class PaymentController {
         this.logger.log(`Product ${order.contentId} marked as purchased for user ${order.buyerId}`);
         break;
 
-      case 'chapter': // Custom Type
-        // Grant access to specific chapter
-        // We reuse the updateWatchTime logic to "enroll" the user if needed, and maybe mark a "purchased" flag?
-        // Actually, CourseEnrollmentService needs a way to mark a specific chapter as "purchased/unlocked".
-        // For now, we'll ensure they are enrolled in the course (even if free enrollment) and maybe add a "purchasedChapters" array to enrollment schema later.
-        // OR: We just rely on the Order record existing. The "checkChapterAccess" logic needs to look up Orders.
-        // CURRENT IMPLEMENTATION: We ensure basic enrollment exists.
-        const courseIdMeta = order.metadata?.courseId;
-        if (courseIdMeta) {
-           await this.coursService.inscrireAuCours(courseIdMeta, order.buyerId.toString(), undefined, session);
-           this.logger.log(`Chapter ${order.contentId} purchased. Ensured enrollment in course ${courseIdMeta}`);
+      case TrackableContentType.CHAPTER:
+      case 'chapter':
+        // Grant access to specific chapter by persisting entitlement on enrollment (idempotent).
+        {
+          let courseIdMeta = order.metadata?.courseId;
+          if (!courseIdMeta) {
+            const course = await this.coursModel
+              .findOne({ 'sections.chapitres.id': order.contentId })
+              .select('id _id')
+              .lean();
+            courseIdMeta = (course as any)?.id || (course as any)?._id?.toString?.();
+          }
+          if (!courseIdMeta) {
+            this.logger.warn(
+              `Chapter order ${order._id} has no resolvable course for chapter ${order.contentId}`,
+            );
+            break;
+          }
+
+          const entitlement = await this.coursService.ensureChapterPurchasedEntitlement(
+            order.buyerId.toString(),
+            String(courseIdMeta),
+            String(order.contentId),
+            session,
+          );
+          this.logger.log(
+            `chapter_entitlement_granted orderId=${order._id} userId=${order.buyerId} courseId=${courseIdMeta} chapterId=${order.contentId} granted=${entitlement.granted}`,
+          );
         }
         break;
 
@@ -1505,6 +1522,13 @@ export class PaymentController {
     if (verify.status === 'paid' || verify.status === 'succeeded' || verify.status === 'complete') {
       let requiresBookingAction = false;
       let sessionContentId = order.metadata?.contentId || verify.sessionMetadata?.contentId || order.contentId;
+      const isChapterOrder =
+        order.contentType === TrackableContentType.CHAPTER ||
+        (order.contentType as any) === 'chapter';
+      const chapterId = isChapterOrder ? String(order.contentId) : undefined;
+      const chapterCourseId = isChapterOrder
+        ? String(order.metadata?.courseId || verify.sessionMetadata?.courseId || '')
+        : undefined;
 
       if (order.status !== 'paid') {
         await this.orderModel.db.transaction(async (session) => {
@@ -1530,6 +1554,30 @@ export class PaymentController {
           order.metadata = nextMetadata;
           await order.save({ session });
         });
+      }
+
+      // Repair entitlement drift on verify path (idempotent).
+      if (isChapterOrder && chapterId) {
+        try {
+          const resolvedCourseId = chapterCourseId && chapterCourseId.length > 0
+            ? chapterCourseId
+            : String(order.metadata?.courseId || '');
+
+          if (resolvedCourseId) {
+            const entitlement = await this.coursService.ensureChapterPurchasedEntitlement(
+              order.buyerId.toString(),
+              resolvedCourseId,
+              chapterId,
+            );
+            this.logger.log(
+              `chapter_verify_repair orderId=${order._id} userId=${order.buyerId} courseId=${resolvedCourseId} chapterId=${chapterId} granted=${entitlement.granted}`,
+            );
+          }
+        } catch (repairError: any) {
+          this.logger.warn(
+            `chapter_verify_repair_failed orderId=${order._id} chapterId=${chapterId} error=${repairError?.message || repairError}`,
+          );
+        }
       }
 
       if (order.contentType === TrackableContentType.SESSION) {
@@ -1566,6 +1614,7 @@ export class PaymentController {
           sessionContentId,
           paymentMethod: verify.paymentMethod,
           customerId: verify.customerId,
+          ...(isChapterOrder ? { chapterId, courseId: chapterCourseId || order.metadata?.courseId } : {}),
           ...(await this.enrichOrderDetails(order)),
         };
       }
@@ -1575,6 +1624,7 @@ export class PaymentController {
         paymentMethod: verify.paymentMethod,
         customerId: verify.customerId,
         orderId: order._id,
+        ...(isChapterOrder ? { chapterId, courseId: chapterCourseId || order.metadata?.courseId } : {}),
         ...(await this.enrichOrderDetails(order))
       };
     }
@@ -1789,7 +1839,13 @@ export class PaymentController {
       // or we can treat it as a product/course. For now, assuming 'chapter' logic or fallback.
       // We'll pass 'chapter' as string which might need TrackableContentType enum update.
       // Casting to any to bypass enum strictness if needed for now.
-      const promo = await this.promoService.validateAndApply(promoCode, price, 'chapter' as any, chapterId, (buyer as any)?.email);
+      const promo = await this.promoService.validateAndApply(
+        promoCode,
+        price,
+        TrackableContentType.CHAPTER,
+        chapterId,
+        (buyer as any)?.email,
+      );
       if (promo.valid) {
         amount = promo.finalAmountDT;
         discountDT = promo.discountDT;
@@ -1802,7 +1858,7 @@ export class PaymentController {
     const pendingOrder = await this.orderModel.create({
       buyerId: new Types.ObjectId(userId),
       creatorId: cours.creatorId,
-      contentType: 'chapter', // Custom content type
+      contentType: TrackableContentType.CHAPTER,
       contentId: chapterId,   // Storing chapter ID as the main content ID
       amountDT: breakdown.amountDT,
       platformPercent: breakdown.platformPercent,
@@ -1832,7 +1888,7 @@ export class PaymentController {
       customerEmail: user?.email,
       metadata: {
         userId,
-        contentType: 'chapter',
+        contentType: TrackableContentType.CHAPTER,
         contentId: chapterId,
         courseId: coursePublicId,
         orderId: pendingOrder._id.toString()
@@ -1853,7 +1909,11 @@ export class PaymentController {
     return {
       checkoutUrl: session.url,
       sessionId: session.sessionId,
-      provider: 'stripe-link'
+      provider: 'stripe-link',
+      amount,
+      currency,
+      chapterId,
+      courseId: coursePublicId,
     };
   }
 

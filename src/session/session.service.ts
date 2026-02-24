@@ -1949,7 +1949,9 @@ export class SessionService {
       resources: session.resources || [],
       bookingsCount: session.getBookingsCount(),
       bookingsThisWeek: session.getBookingsThisWeek(),
-      canBookMore: session.canBookMore()
+      canBookMore: session.canBookMore(),
+      averageRating: (session as any).averageRating || 0,
+      ratingCount: (session as any).ratingCount || 0
     };
   }
 

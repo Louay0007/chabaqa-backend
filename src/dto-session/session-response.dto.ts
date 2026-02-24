@@ -125,6 +125,12 @@ export class SessionResponseDto {
   @ApiProperty({ description: 'Si la session est active', example: true })
   isActive: boolean;
 
+  @ApiPropertyOptional({ description: 'Note moyenne de la session', example: 4.5 })
+  averageRating?: number;
+
+  @ApiPropertyOptional({ description: 'Nombre de notes reçues', example: 10 })
+  ratingCount?: number;
+
   @ApiProperty({ description: 'Réservations de la session', type: [SessionBookingResponseDto] })
   bookings: SessionBookingResponseDto[];
 

@@ -85,6 +85,72 @@ export class CourseEnrollmentService {
     return { totalChapters, completedChapters, progressPercent, isCompleted };
   }
 
+  private normalizeChapterDurationSeconds(
+    chapter: any,
+    progressionEntry?: any,
+    explicitVideoDuration?: number,
+  ): number {
+    const explicit = Number(explicitVideoDuration || 0);
+    if (Number.isFinite(explicit) && explicit > 0) {
+      return Math.floor(explicit);
+    }
+
+    const progressVideoDuration = Number(progressionEntry?.videoDuration || 0);
+    if (Number.isFinite(progressVideoDuration) && progressVideoDuration > 0) {
+      return Math.floor(progressVideoDuration);
+    }
+
+    const rawDuration = Number(chapter?.duree || 0);
+    if (!Number.isFinite(rawDuration) || rawDuration <= 0) {
+      return 0;
+    }
+
+    // Canonical storage is minutes in course chapter payloads.
+    // For legacy data that stored seconds, keep values > 600 as seconds directly.
+    return rawDuration > 600 ? Math.floor(rawDuration) : Math.floor(rawDuration * 60);
+  }
+
+  private async maybeTrackCourseCompletion(
+    userId: string,
+    course: CoursDocument,
+    enrollment: CourseEnrollmentDocument,
+    source: string,
+  ): Promise<boolean> {
+    const snapshot = this.computeEnrollmentCourseProgress(course, enrollment);
+    if (snapshot.totalChapters <= 0 || !snapshot.isCompleted) {
+      return false;
+    }
+
+    const alreadyCompleted = Boolean(enrollment.completedAt);
+    if (!alreadyCompleted) {
+      enrollment.completedAt = new Date();
+      await enrollment.save();
+    }
+
+    if (!alreadyCompleted) {
+      try {
+        await this.trackingService.trackComplete(
+          userId,
+          this.getCourseTrackingId(course),
+          TrackableContentType.COURSE,
+          { source, autoFromChapterCompletion: true },
+        );
+      } catch (error) {
+        console.error(
+          `⚠️ [CourseEnrollmentService] Failed to track course completion:`,
+          (error as any)?.message || error,
+        );
+      }
+    }
+
+    await this.syncEnrollmentTrackingProgress(userId, course, enrollment, {
+      source,
+      autoFromChapterCompletion: true,
+    });
+
+    return !alreadyCompleted;
+  }
+
   private async syncEnrollmentTrackingProgress(
     userId: string,
     course: CoursDocument,
@@ -344,6 +410,7 @@ export class CourseEnrollmentService {
         userId: enrollment.userId.toString(),
         courseId: courseIdValue,
         progress,
+        chaptersCompleted,
         totalChapters,
         isCompleted: totalChapters > 0 && chaptersCompleted >= totalChapters,
         completedChapters:
@@ -351,6 +418,13 @@ export class CourseEnrollmentService {
             ?.filter((p) => p?.isCompleted)
             .map((p) => p.chapterId)
             .filter(Boolean) || [],
+        progression:
+          enrollment.progression?.map((p) => ({
+            chapterId: p?.chapterId,
+            isCompleted: Boolean(p?.isCompleted),
+            watchTime: Number(p?.watchTime || 0),
+            videoDuration: Number((p as any)?.videoDuration || 0),
+          })) || [],
         enrolledAt: enrollment.enrolledAt,
         lastAccessedAt: enrollment.updatedAt || enrollment.enrolledAt,
       });
@@ -416,21 +490,10 @@ export class CourseEnrollmentService {
             // Get chapter duration in seconds
             let chapterDurationSeconds = 0;
 
-            // First, check if we have videoDuration stored in progress (most accurate)
-            const progressAny = chapterProgress as any;
-            if (progressAny.videoDuration && progressAny.videoDuration > 0) {
-              chapterDurationSeconds = progressAny.videoDuration;
-            } else if (chapter.duree && chapter.duree > 0) {
-              // chapter.duree is stored in minutes, convert to seconds
-              // Increase threshold to 1000 to support longer chapters (up to ~16 hours)
-              if (chapter.duree > 1000) {
-                // Likely stored in seconds (legacy data)
-                chapterDurationSeconds = chapter.duree;
-              } else {
-                // Stored in minutes
-                chapterDurationSeconds = chapter.duree * 60;
-              }
-            }
+            chapterDurationSeconds = this.normalizeChapterDurationSeconds(
+              chapter,
+              chapterProgress,
+            );
 
             if (chapterDurationSeconds > 0) {
               const watchPercentage = Math.min(
@@ -614,6 +677,12 @@ export class CourseEnrollmentService {
       lastChapterId: chapterId,
       source: 'manual_chapter_complete',
     });
+    const courseJustCompleted = await this.maybeTrackCourseCompletion(
+      userId,
+      course,
+      enrollment,
+      'manual_chapter_complete',
+    );
 
     // Check for achievements
     if (course.communityId) {
@@ -637,6 +706,7 @@ export class CourseEnrollmentService {
       message: 'Chapitre marqué comme terminé',
       chapterId: chapterId,
       completedAt: progress.completedAt,
+      courseJustCompleted,
     };
   }
 
@@ -778,7 +848,7 @@ export class CourseEnrollmentService {
     let watchPercentage = 0;
 
     // Get chapter duration for percentage calculation
-    let chapterDurationSeconds: number | undefined = videoDuration;
+    let chapterDurationSeconds: number | undefined = undefined;
 
     if (course) {
       // Find the chapter to get its stored duration or update it
@@ -788,31 +858,29 @@ export class CourseEnrollmentService {
         if (cIdx !== -1) {
           const chapter = section.chapitres[cIdx];
 
-          // If videoDuration was provided, update the chapter duration in DB if significantly different
+          // If videoDuration is provided from client, keep a canonical minute value in chapter data
+          // and save exact seconds on enrollment progression entry.
           if (videoDuration && videoDuration > 0) {
-            const durationInMinutes = Math.round(videoDuration / 60);
+            const normalizedMinutes = Math.max(1, Math.round(videoDuration / 60));
             if (
               !chapter.duree ||
-              chapter.duree === 0 ||
-              Math.abs(chapter.duree - (videoDuration > 1000 ? videoDuration : durationInMinutes)) > 2
+              chapter.duree <= 0 ||
+              Math.abs(Number(chapter.duree) - normalizedMinutes) >= 1
             ) {
               console.log(
-                `📝 [CourseEnrollmentService] Updating chapter ${chapterId} duration to ${videoDuration}s`,
+                `📝 [CourseEnrollmentService] Normalizing chapter ${chapterId} duration to ${normalizedMinutes} minutes (${videoDuration}s)`,
               );
-              // Store as seconds if > 1000, else minutes (following existing logic)
-              course.sections[sIdx].chapitres[cIdx].duree = videoDuration > 1000 ? videoDuration : durationInMinutes;
+              course.sections[sIdx].chapitres[cIdx].duree = normalizedMinutes;
               course.markModified('sections');
               await course.save();
             }
-            chapterDurationSeconds = videoDuration;
-          } else if (chapter.duree) {
-            // Handle legacy data: if duree > 1000, it's likely in seconds
-            if (chapter.duree > 1000) {
-              chapterDurationSeconds = chapter.duree;
-            } else {
-              chapterDurationSeconds = chapter.duree * 60; // duree is in minutes
-            }
+            (progress as any).videoDuration = Math.floor(videoDuration);
           }
+          chapterDurationSeconds = this.normalizeChapterDurationSeconds(
+            chapter,
+            progress,
+            videoDuration,
+          );
           break;
         }
       }
@@ -880,6 +948,12 @@ export class CourseEnrollmentService {
       lastChapterId: chapterId,
       source: isAutoCompleted ? 'watch_time_auto_complete' : 'watch_time_update',
     });
+    const courseJustCompleted = await this.maybeTrackCourseCompletion(
+      userId,
+      course,
+      enrollment,
+      isAutoCompleted ? 'watch_time_auto_complete' : 'watch_time_update',
+    );
 
     // Check for achievements if chapter was auto-completed
     if (chapterJustCompleted && course && course.communityId) {
@@ -908,6 +982,7 @@ export class CourseEnrollmentService {
       watchPercentage: Math.round(watchPercentage * 100) / 100,
       isCompleted: progress.isCompleted,
       isAutoCompleted,
+      courseJustCompleted,
       lastAccessedAt: progress.lastAccessedAt,
     };
   }
@@ -1099,6 +1174,12 @@ export class CourseEnrollmentService {
       sectionId,
       source: 'section_complete',
     });
+    const courseJustCompleted = await this.maybeTrackCourseCompletion(
+      userId,
+      course,
+      enrollment,
+      'section_complete',
+    );
 
     console.log(`   ✅ Section "${section.titre}" marquée comme complète`);
 
@@ -1129,6 +1210,7 @@ export class CourseEnrollmentService {
       totalChapters: totalChapters,
       completionPercentage: 100,
       completedAt: new Date(),
+      courseJustCompleted,
     };
   }
 
@@ -1262,32 +1344,16 @@ export class CourseEnrollmentService {
       );
     }
 
-    // Marquer l'inscription comme complète
-    enrollment.completedAt = new Date();
-
-    await enrollment.save();
+    const courseJustCompleted = await this.maybeTrackCourseCompletion(
+      userId,
+      course,
+      enrollment,
+      'course_complete',
+    );
 
     console.log(
       `✅ [CourseEnrollmentService] Cours "${course.titre}" marqué comme terminé`,
     );
-
-    // Authoritative analytics tracking: emit course COMPLETE only after full validation succeeds
-    // Use the course custom id (course.id) so analytics rollups can $lookup into cours.id
-    try {
-      await this.trackingService.trackComplete(
-        userId,
-        this.getCourseTrackingId(course),
-        TrackableContentType.COURSE,
-        {},
-      );
-    } catch (e) {
-      // Tracking should not break completion
-      console.error('⚠️ [CourseEnrollmentService] Failed to track course completion:', (e as any)?.message || e);
-    }
-
-    await this.syncEnrollmentTrackingProgress(userId, course, enrollment, {
-      source: 'course_complete',
-    });
 
     // Check for achievements
     if (course.communityId) {
@@ -1312,6 +1378,7 @@ export class CourseEnrollmentService {
       courseId: courseId,
       totalChapters,
       completedAt: enrollment.completedAt,
+      courseJustCompleted,
     };
   }
 }

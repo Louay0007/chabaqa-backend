@@ -16,4 +16,5 @@ export class CompleteSectionResponseDto {
   totalChapters: number;
   completionPercentage: number;
   completedAt?: Date;
+  courseJustCompleted?: boolean;
 }

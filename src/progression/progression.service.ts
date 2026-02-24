@@ -304,6 +304,7 @@ export class ProgressionService {
   ): Promise<Map<string, ContentDetails>> {
     const grouped: Record<TrackableContentType, string[]> = {
       [TrackableContentType.COURSE]: [],
+      [TrackableContentType.CHAPTER]: [],
       [TrackableContentType.CHALLENGE]: [],
       [TrackableContentType.SESSION]: [],
       [TrackableContentType.POST]: [],
@@ -681,6 +682,7 @@ export class ProgressionService {
 
     const mappings: Record<TrackableContentType, string> = {
       [TrackableContentType.COURSE]: `${basePath}/courses/${contentId}`,
+      [TrackableContentType.CHAPTER]: `${basePath}/courses/${contentId}`,
       [TrackableContentType.CHALLENGE]: `${basePath}/challenges/${contentId}`,
       [TrackableContentType.SESSION]: `${basePath}/sessions/${contentId}`,
       [TrackableContentType.EVENT]: `${basePath}/events/${contentId}`,
