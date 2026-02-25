@@ -112,15 +112,34 @@ export class FeedbackService {
     }
 
     const hasCompletedBooking = Array.isArray(session?.bookings)
-      ? session.bookings.some(
-          (booking: any) =>
-            String(booking?.userId || '') === normalizedUserId && booking?.status === 'completed',
-        )
+      ? session.bookings.some((booking: any) => {
+          if (String(booking?.userId || '') !== normalizedUserId) {
+            return false;
+          }
+
+          if (booking?.status === 'completed') {
+            return true;
+          }
+
+          // Backward compatibility: allow reviewing confirmed sessions that already ended.
+          if (booking?.status === 'confirmed') {
+            const scheduledAt = new Date(booking?.scheduledAt);
+            if (Number.isNaN(scheduledAt.getTime())) {
+              return false;
+            }
+
+            const durationMinutes = Number(session?.duration || 60);
+            const sessionEnd = new Date(scheduledAt.getTime() + durationMinutes * 60 * 1000);
+            return sessionEnd.getTime() <= Date.now();
+          }
+
+          return false;
+        })
       : false;
 
     if (!hasCompletedBooking) {
       throw new ForbiddenException(
-        'You can submit feedback only after completing a booking for this session.',
+        'You can submit feedback only after your session is completed.',
       );
     }
   }

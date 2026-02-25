@@ -20,6 +20,7 @@ import {
   PostListResponseDto,
   PostCommentResponseDto,
   PostStatsResponseDto,
+  PostShareMetaResponseDto,
 } from '../dto-post/post-response.dto';
 
 @Injectable()
@@ -56,6 +57,66 @@ export class PostService {
 
   private logError(...args: unknown[]): void {
     this.logger.error(args.map((arg) => this.serializeLogArg(arg)).join(' '));
+  }
+
+  private async resolvePostByIdentifier(postIdentifier: string): Promise<PostDocument | null> {
+    const normalized = String(postIdentifier || '').trim();
+    if (!normalized) {
+      return null;
+    }
+
+    const byCustomId = await this.postModel.findOne({ id: normalized });
+    if (byCustomId) {
+      return byCustomId;
+    }
+
+    if (Types.ObjectId.isValid(normalized)) {
+      return this.postModel.findById(new Types.ObjectId(normalized)).exec();
+    }
+
+    return null;
+  }
+
+  private buildShareText(post: PostDocument, communityName: string): { title: string; text: string } {
+    const fallbackTitle = post.content ? `${post.content.slice(0, 60).trim()}${post.content.length > 60 ? '...' : ''}` : 'Community post';
+    const title = (post.title || '').trim() || fallbackTitle;
+    const text = `Check out this post from ${communityName}`;
+    return { title, text };
+  }
+
+  private buildPostShareMeta(
+    post: PostDocument,
+    creatorName: string,
+    communitySlug: string,
+    communityName: string,
+  ): PostShareMetaResponseDto {
+    const frontendBase = (process.env.FRONTEND_URL || 'https://chabaqa.io').replace(/\/+$/, '');
+    const encodedCreator = encodeURIComponent(creatorName || 'creator');
+    const encodedSlug = encodeURIComponent(communitySlug || 'community');
+    const encodedPostId = encodeURIComponent(post.id);
+    const shareUrl = `${frontendBase}/${encodedCreator}/${encodedSlug}/home?post=${encodedPostId}`;
+
+    const { title, text } = this.buildShareText(post, communityName);
+    const encodedUrl = encodeURIComponent(shareUrl);
+    const encodedText = encodeURIComponent(text);
+    const encodedEmailBody = encodeURIComponent(`${text}\n\n${shareUrl}`);
+    const encodedEmailSubject = encodeURIComponent(title);
+    const whatsappText = encodeURIComponent(`${text} ${shareUrl}`);
+
+    return {
+      postId: post.id,
+      shareUrl,
+      title,
+      text,
+      platformUrls: {
+        whatsapp: `https://wa.me/?text=${whatsappText}`,
+        x: `https://twitter.com/intent/tweet?text=${encodedText}&url=${encodedUrl}`,
+        facebook: `https://www.facebook.com/sharer/sharer.php?u=${encodedUrl}`,
+        linkedin: `https://www.linkedin.com/sharing/share-offsite/?url=${encodedUrl}`,
+        telegram: `https://t.me/share/url?url=${encodedUrl}&text=${encodedText}`,
+        email: `mailto:?subject=${encodedEmailSubject}&body=${encodedEmailBody}`,
+      },
+    };
   }
 
   /**
@@ -703,7 +764,7 @@ export class PostService {
     userId: string,
     metadata: Record<string, any> = {},
   ): Promise<PostStatsResponseDto> {
-    const post = await this.postModel.findOne({ id: postId });
+    const post = await this.resolvePostByIdentifier(postId);
     if (!post) {
       throw new NotFoundException('Post non trouvé');
     }
@@ -734,6 +795,31 @@ export class PostService {
       isLikedByUser: post.isLikedBy(userObjectId),
       isSharedByUser: true,
     };
+  }
+
+  async getPostShareMeta(postId: string): Promise<PostShareMetaResponseDto> {
+    const post = await this.resolvePostByIdentifier(postId);
+    if (!post) {
+      throw new NotFoundException('Post non trouvé');
+    }
+
+    const community = await this.communityModel
+      .findById(post.communityId)
+      .select('slug name createur')
+      .exec();
+
+    const communitySlug = community?.slug || 'community';
+    const communityName = community?.name || 'community';
+
+    let creatorName = 'creator';
+    if (community?.createur) {
+      const creator = await this.userModel.findById(community.createur).select('name').exec();
+      if (creator?.name && creator.name.trim().length > 0) {
+        creatorName = creator.name.trim();
+      }
+    }
+
+    return this.buildPostShareMeta(post, creatorName, communitySlug, communityName);
   }
 
   /**

@@ -30,7 +30,9 @@ import {
   PostListResponseDto,
   PostCommentResponseDto,
   PostStatsResponseDto,
+  PostShareMetaResponseDto,
 } from '../dto-post/post-response.dto';
+import { SharePostRequestDto } from '../dto-post/share-post.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { HttpCacheInterceptor } from '../common/interceptors/cache.interceptor';
 
@@ -587,14 +589,30 @@ export class PostController {
   @ApiResponse({ status: 404, description: 'Post non trouvé' })
   async sharePost(
     @Param('id') postId: string,
+    @Body() shareRequestDto: SharePostRequestDto,
     @Request() req,
   ): Promise<{ success: boolean; data: PostStatsResponseDto }> {
     const userId = this.resolveRequestUserId(req);
     if (!userId) {
       throw new UnauthorizedException();
     }
-    const stats = await this.postService.sharePost(postId, userId, this.resolveTrackingMetadata(req));
+    const stats = await this.postService.sharePost(postId, userId, {
+      ...this.resolveTrackingMetadata(req),
+      ...(shareRequestDto?.method ? { shareMethod: shareRequestDto.method } : {}),
+      ...(shareRequestDto?.targetUrl ? { targetUrl: shareRequestDto.targetUrl } : {}),
+    });
     return { success: true, data: stats };
+  }
+
+  @Get(':id/share')
+  @ApiOperation({ summary: 'Récupérer les métadonnées de partage d\'un post' })
+  @ApiResponse({ status: 200, description: 'Métadonnées de partage récupérées', type: PostShareMetaResponseDto })
+  @ApiResponse({ status: 404, description: 'Post non trouvé' })
+  async getPostShareMeta(
+    @Param('id') postId: string,
+  ): Promise<{ success: boolean; data: PostShareMetaResponseDto }> {
+    const data = await this.postService.getPostShareMeta(postId);
+    return { success: true, data };
   }
 
   @Get('debug/count')

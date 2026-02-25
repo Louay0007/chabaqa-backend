@@ -113,11 +113,42 @@ export class CoursService {
     chapterId: string,
     enrollment?: CourseEnrollmentDocument | null,
   ): Promise<boolean> {
-    const enrollmentEntitlement = Boolean(
-      enrollment?.purchasedChapterIds?.includes(chapterId),
-    );
-    if (enrollmentEntitlement) return true;
-    return this.hasPaidChapterOrder(userId, chapterId);
+    if (Array.isArray(enrollment?.purchasedChapterIds)) {
+      const purchasedSet = new Set(
+        enrollment.purchasedChapterIds
+          .map((value) => String(value))
+          .filter(Boolean),
+      );
+      if (purchasedSet.has(chapterId)) {
+        return true;
+      }
+    }
+
+    const hasPaidOrder = await this.hasPaidChapterOrder(userId, chapterId);
+    if (!hasPaidOrder) {
+      return false;
+    }
+
+    // Self-heal legacy enrollments: if paid order exists but chapter entitlement was never persisted,
+    // persist it now so chapter access remains unlocked across reloads.
+    if (enrollment) {
+      const purchasedSet = new Set(
+        (Array.isArray(enrollment.purchasedChapterIds)
+          ? enrollment.purchasedChapterIds
+          : []
+        )
+          .map((value) => String(value))
+          .filter(Boolean),
+      );
+
+      if (!purchasedSet.has(chapterId)) {
+        purchasedSet.add(chapterId);
+        enrollment.purchasedChapterIds = Array.from(purchasedSet);
+        await enrollment.save();
+      }
+    }
+
+    return true;
   }
 
   async ensureChapterPurchasedEntitlement(

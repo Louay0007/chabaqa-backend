@@ -290,3 +290,40 @@ export class PostStatsResponseDto {
   })
   isSharedByUser: boolean;
 }
+
+class PostSharePlatformUrlsDto {
+  @ApiProperty({ example: 'https://wa.me/?text=...' })
+  whatsapp: string;
+
+  @ApiProperty({ example: 'https://twitter.com/intent/tweet?text=...&url=...' })
+  x: string;
+
+  @ApiProperty({ example: 'https://www.facebook.com/sharer/sharer.php?u=...' })
+  facebook: string;
+
+  @ApiProperty({ example: 'https://www.linkedin.com/sharing/share-offsite/?url=...' })
+  linkedin: string;
+
+  @ApiProperty({ example: 'https://t.me/share/url?url=...&text=...' })
+  telegram: string;
+
+  @ApiProperty({ example: 'mailto:?subject=...&body=...' })
+  email: string;
+}
+
+export class PostShareMetaResponseDto {
+  @ApiProperty({ example: 'post_123' })
+  postId: string;
+
+  @ApiProperty({ example: 'https://chabaqa.io/Creator/community/home?post=post_123' })
+  shareUrl: string;
+
+  @ApiProperty({ example: 'Getting Started with React Hooks' })
+  title: string;
+
+  @ApiProperty({ example: 'Check out this post from Web Development Community' })
+  text: string;
+
+  @ApiProperty({ type: PostSharePlatformUrlsDto })
+  platformUrls: PostSharePlatformUrlsDto;
+}
