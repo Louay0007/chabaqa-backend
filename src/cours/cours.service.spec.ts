@@ -100,3 +100,90 @@ describe('CoursService chapter entitlement persistence', () => {
     expect(mockOrderModel.findOne).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('CoursService profile by-user community enrichment', () => {
+  it('adds community object and flat community fields to enrolled and created courses', async () => {
+    const userId = new Types.ObjectId().toString();
+    const communityKey = 'community-custom-id';
+
+    const enrollmentCourse: any = {
+      _id: new Types.ObjectId(),
+      titre: 'Enrolled course',
+      description: 'Desc',
+      thumbnail: '',
+      communityId: communityKey,
+      creatorId: { name: 'Creator A', profile_picture: '' },
+      sections: [{ chapitres: [{}, {}] }],
+    };
+
+    const enrollmentFind = {
+      populate: jest.fn().mockReturnThis(),
+      sort: jest.fn().mockReturnThis(),
+      exec: jest.fn().mockResolvedValue([
+        {
+          courseId: enrollmentCourse,
+          enrolledAt: new Date('2025-01-01T00:00:00.000Z'),
+          progression: [{ isCompleted: true }],
+        },
+      ]),
+    };
+
+    const createdFind = {
+      populate: jest.fn().mockReturnThis(),
+      sort: jest.fn().mockReturnThis(),
+      exec: jest.fn().mockResolvedValue([
+        {
+          _id: new Types.ObjectId(),
+          titre: 'Created course',
+          description: 'Desc',
+          thumbnail: '',
+          communityId: communityKey,
+          isPublished: false,
+          createdAt: new Date('2025-01-02T00:00:00.000Z'),
+          creatorId: { name: 'Creator B', profile_picture: '' },
+        },
+      ]),
+    };
+
+    const courseEnrollmentModel: any = {
+      find: jest.fn().mockReturnValue(enrollmentFind),
+    };
+
+    const coursModel: any = {
+      find: jest.fn().mockReturnValue(createdFind),
+    };
+
+    const communityModel: any = {
+      find: jest.fn().mockResolvedValue([
+        { _id: new Types.ObjectId(), id: communityKey, name: 'Tech Community', slug: 'tech-community' },
+      ]),
+    };
+
+    const service = new CoursService(
+      coursModel,
+      courseEnrollmentModel,
+      {} as any,
+      {} as any,
+      communityModel,
+      {} as any,
+      {} as any,
+      {} as any,
+      { syncProgressSnapshot: jest.fn().mockResolvedValue(undefined) } as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
+
+    const result = await service.obtenirCoursParUtilisateur(userId, 1, 12, 'all');
+    expect(result.success).toBe(true);
+    expect(result.data.courses).toHaveLength(2);
+    expect(result.data.courses.every((course: any) => course.communityName === 'Tech Community')).toBe(true);
+    expect(result.data.courses.every((course: any) => course.communitySlug === 'tech-community')).toBe(true);
+    expect(result.data.courses.every((course: any) => course.slug === 'tech-community')).toBe(true);
+    expect(result.data.courses.every((course: any) => course.community?.slug === 'tech-community')).toBe(true);
+  });
+});

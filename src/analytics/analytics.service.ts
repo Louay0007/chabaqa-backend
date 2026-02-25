@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
+import { ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { AnalyticsDaily, AnalyticsDailyDocument } from '../schema/analytics-daily.schema';
@@ -1141,6 +1141,66 @@ export class AnalyticsService {
       { $project: { _id: 0, contentId: '$_id', views: 1, starts: 1, completes: 1 } },
       { $sort: { views: -1 } },
     ]);
+
+    // Revenue by event for the same period/scope.
+    const revenueMatch: any = {
+      creatorId: this.getCreatorObjectId(creatorId),
+      status: 'paid',
+      contentType: 'event',
+      createdAt: { $gte: from, $lte: to },
+    };
+    if (communityScope.hasFilter) {
+      revenueMatch.communityId = { $in: communityScope.lookupCommunityValues };
+    }
+
+    const revenueByEvent = await this.dbConnection.db?.collection('orders').aggregate([
+      { $match: revenueMatch },
+      {
+        $group: {
+          _id: '$contentId',
+          revenue: { $sum: '$creatorNetDT' },
+          salesCount: { $sum: 1 },
+        }
+      },
+      {
+        $project: {
+          _id: 0,
+          contentId: '$_id',
+          revenue: 1,
+          salesCount: 1,
+        }
+      }
+    ]).toArray() || [];
+
+    const revenueMap = new Map<string, { revenue: number; salesCount: number }>(
+      revenueByEvent.map((item: any) => [
+        String(item.contentId),
+        {
+          revenue: Number(item.revenue || 0),
+          salesCount: Number(item.salesCount || 0),
+        },
+      ]),
+    );
+    const fullRevenueMap = new Map(revenueMap);
+
+    for (const item of byEvent) {
+      const revenueItem = revenueMap.get(String(item.contentId));
+      (item as any).revenue = Number(revenueItem?.revenue || 0);
+      (item as any).salesCount = Number(revenueItem?.salesCount || 0);
+      revenueMap.delete(String(item.contentId));
+    }
+
+    // Include events that have revenue but no tracking rows.
+    for (const [contentId, rev] of revenueMap.entries()) {
+      byEvent.push({
+        contentId,
+        views: 0,
+        starts: 0,
+        completes: 0,
+        revenue: Number(rev.revenue || 0),
+        salesCount: Number(rev.salesCount || 0),
+      } as any);
+    }
     try {
       const ga4Stats = await this.ga4ReportingService.getCreatorContentStats(
         creatorId,
@@ -1151,13 +1211,31 @@ export class AnalyticsService {
       );
       if (ga4Stats.length > 0) {
         byEvent.length = 0;
+        const remainingRevenueMap = new Map(fullRevenueMap);
         for (const s of ga4Stats) {
+          const revenueItem = remainingRevenueMap.get(String(s.contentId));
           byEvent.push({
             contentId: s.contentId,
             views: s.views,
             starts: s.starts,
             completes: s.completes,
+            revenue: Number(revenueItem?.revenue || 0),
+            salesCount: Number(revenueItem?.salesCount || 0),
           });
+          remainingRevenueMap.delete(String(s.contentId));
+        }
+        // Include revenue-only events even when GA4 data exists.
+        for (const [contentId, rev] of remainingRevenueMap.entries()) {
+          if (!byEvent.some((e: any) => String(e.contentId) === String(contentId))) {
+            byEvent.push({
+              contentId,
+              views: 0,
+              starts: 0,
+              completes: 0,
+              revenue: Number(rev.revenue || 0),
+              salesCount: Number(rev.salesCount || 0),
+            } as any);
+          }
         }
         byEvent.sort((a: any, b: any) => Number(b.views || 0) - Number(a.views || 0));
       }
@@ -2376,32 +2454,78 @@ export class AnalyticsService {
     const cached = await this.getCache<any>(key);
     if (cached) return cached;
 
-    // Get course basic info
-    const course = await this.dbConnection.db?.collection('cours').findOne({ id: courseId });
-    if (!course) {
-      return {
-        error: 'Course not found'
-      };
+    const creatorObjectId = this.getCreatorObjectId(creatorId);
+    const coursesCollection = this.dbConnection.db?.collection('cours');
+    const enrollmentsCollection = this.dbConnection.db?.collection('courseenrollments');
+    const tracking = this.dbConnection.collection('trackingactions');
+
+    // Resolve by either custom id or Mongo _id string
+    const courseMatch: any[] = [{ id: courseId }];
+    if (Types.ObjectId.isValid(courseId)) {
+      courseMatch.push({ _id: new Types.ObjectId(courseId) });
     }
 
-    // Get enrollment stats
-    const enrollments = await this.dbConnection.db?.collection('courseenrollments').find({
-      courseId: new Types.ObjectId(course._id)
+    const course = await coursesCollection?.findOne({ $or: courseMatch, creatorId: creatorObjectId });
+    if (!course) {
+      throw new NotFoundException('Course not found');
+    }
+
+    // Canonical course content id for tracking/rollups is custom `id`.
+    const canonicalCourseId = String(course.id || courseId);
+
+    // Fetch enrollments, then filter by period in-memory to support inconsistent date field usage.
+    const allEnrollments = await enrollmentsCollection?.find({
+      courseId: new Types.ObjectId(course._id),
     }).toArray() || [];
 
-    // Get tracking data for this specific course
-    const tracking = this.dbConnection.collection('trackingactions');
+    const inRange = (value: any): boolean => {
+      const date = value instanceof Date ? value : new Date(value);
+      return !Number.isNaN(date.getTime()) && date >= from && date <= to;
+    };
+
+    const getEnrollmentDate = (enrollment: any): Date | null => {
+      const candidate = enrollment?.enrolledAt || enrollment?.createdAt;
+      if (!candidate) return null;
+      const parsed = candidate instanceof Date ? candidate : new Date(candidate);
+      return Number.isNaN(parsed.getTime()) ? null : parsed;
+    };
+
+    const periodEnrollments = allEnrollments.filter((enrollment: any) => {
+      const enrollmentDate = getEnrollmentDate(enrollment);
+      return enrollmentDate ? inRange(enrollmentDate) : false;
+    });
+
+    const pricePerEnrollment = Number(course?.prix || 0);
+    const enrollmentsCount = periodEnrollments.length;
+    const revenue = enrollmentsCount * pricePerEnrollment;
+
+    const completionCount = periodEnrollments.filter((enrollment: any) => {
+      const completedAt = enrollment?.completedAt;
+      if (completedAt) return inRange(completedAt);
+      // Fallback: treat as completed if all progression entries are complete
+      const progression = Array.isArray(enrollment?.progression) ? enrollment.progression : [];
+      if (progression.length === 0) return false;
+      return progression.every((entry: any) => Boolean(entry?.isCompleted));
+    }).length;
+
+    let totalProgressItems = 0;
+    let completedProgressItems = 0;
+    for (const enrollment of periodEnrollments) {
+      const progression = Array.isArray(enrollment?.progression) ? enrollment.progression : [];
+      totalProgressItems += progression.length;
+      completedProgressItems += progression.filter((entry: any) => Boolean(entry?.isCompleted)).length;
+    }
+
+    const completionRate = totalProgressItems > 0
+      ? (completedProgressItems / totalProgressItems) * 100
+      : 0;
+
     const courseTracking = await tracking.aggregate([
       {
         $match: {
           timestamp: { $gte: from, $lte: to },
           contentType: 'course',
-          contentId: courseId
-        }
-      },
-      {
-        $addFields: {
-          chapterId: { $ifNull: ['$metadata.chapterId', ''] },
+          contentId: canonicalCourseId,
         },
       },
       {
@@ -2409,100 +2533,37 @@ export class AnalyticsService {
           _id: null,
           views: { $sum: { $cond: [{ $eq: ['$actionType', TrackingActionType.VIEW] }, 1, 0] } },
           starts: { $sum: { $cond: [{ $eq: ['$actionType', TrackingActionType.START] }, 1, 0] } },
-          completes: {
-            $sum: {
-              $cond: [
-                {
-                  $and: [
-                    { $eq: ['$actionType', TrackingActionType.COMPLETE] },
-                    { $eq: ['$chapterId', ''] },
-                  ],
-                },
-                1,
-                0,
-              ],
-            },
-          },
-          chapterCompletes: {
-            $sum: {
-              $cond: [
-                {
-                  $or: [
-                    { $eq: ['$actionType', TrackingActionType.CHAPTER_COMPLETE] },
-                    {
-                      $and: [
-                        { $eq: ['$actionType', TrackingActionType.COMPLETE] },
-                        { $ne: ['$chapterId', ''] },
-                      ],
-                    },
-                  ],
-                },
-                1,
-                0,
-              ],
-            },
-          },
-        }
-      }
+        },
+      },
     ]).toArray();
 
-    // Calculate completion rates
-    const progress = await this.dbConnection.db?.collection('courseenrollments').aggregate([
+    const dailyTrendFromMongo = await this.dailyModel.aggregate([
       {
         $match: {
-          courseId: new Types.ObjectId(course._id)
-        }
-      },
-      {
-        $unwind: '$progression'
-      },
-      {
-        $group: {
-          _id: null,
-          totalProgressItems: { $sum: 1 },
-          completedItems: { $sum: { $cond: [{ $eq: ['$progression.isCompleted', true] }, 1, 0] } }
-        }
-      }
-    ]).toArray();
-
-    const progressStats = progress?.[0] || { totalProgressItems: 0, completedItems: 0 };
-    const completionRate = progressStats.totalProgressItems > 0
-      ? (progressStats.completedItems / progressStats.totalProgressItems) * 100
-      : 0;
-
-    // Get revenue data
-    const revenueStats = enrollments.reduce((total, enrollment) => {
-      return total + (course.prix || 0);
-    }, 0);
-
-    // Get daily trend for this course from internal rollups
-    const dailyTrend = await this.dailyModel.aggregate([
-      {
-        $match: {
-          creatorId: new Types.ObjectId(creatorId),
+          creatorId: creatorObjectId,
           contentType: 'course',
-          contentId: courseId,
-          date: { $gte: from, $lte: to }
-        }
+          contentId: canonicalCourseId,
+          date: { $gte: from, $lte: to },
+        },
       },
       {
         $project: {
+          _id: 0,
           date: 1,
           views: 1,
           starts: 1,
           completes: 1,
-          watchTime: 1
-        }
+          watchTimeSeconds: '$watchTime',
+        },
       },
-      { $sort: { date: 1 } }
+      { $sort: { date: 1 } },
     ]);
 
-    // Optionally override trend with GA4 time series when configured
-    let trendForCourse = dailyTrend;
+    let trendForCourse = dailyTrendFromMongo;
     try {
       if (process.env.USE_GA4_COURSE_TREND === 'true') {
         const ga4Trend = await this.ga4ReportingService.getContentTimeSeries(
-          courseId,
+          canonicalCourseId,
           'course',
           from.toISOString().slice(0, 10),
           to.toISOString().slice(0, 10),
@@ -2510,10 +2571,10 @@ export class AnalyticsService {
         if (ga4Trend.length > 0) {
           trendForCourse = ga4Trend.map((row) => ({
             date: row.date,
-            views: row.views,
-            starts: row.starts,
-            completes: row.completes,
-            watchTime: 0,
+            views: Number(row.views || 0),
+            starts: Number(row.starts || 0),
+            completes: Number(row.completes || 0),
+            watchTimeSeconds: 0,
           }));
         }
       }
@@ -2521,66 +2582,59 @@ export class AnalyticsService {
       // Fail silently and keep Mongo-based trend
     }
 
-    // Get chapter completion data
-    const chapterStats = await this.dbConnection.db?.collection('courseenrollments').aggregate([
-      {
-        $match: {
-          courseId: new Types.ObjectId(course._id)
-        }
-      },
-      { $unwind: '$progression' },
-      {
-        $group: {
-          _id: '$progression.chapterId',
-          totalStarts: { $sum: 1 },
-          completedCount: { $sum: { $cond: [{ $eq: ['$progression.isCompleted', true] }, 1, 0] } }
-        }
-      },
-      {
-        $lookup: {
-          from: 'cours',
-          localField: '_id',
-          foreignField: 'sections.chapitres.id',
-          as: 'chapter'
-        }
-      },
-      {
-        $project: {
-          chapterId: '$_id',
-          totalStarts: 1,
-          completedCount: 1,
-          completionRate: {
-            $cond: [
-              { $gt: ['$totalStarts', 0] },
-              { $multiply: [{ $divide: ['$completedCount', '$totalStarts'] }, 100] },
-              0
-            ]
-          }
-        }
-      },
-      { $sort: { totalStarts: -1 } }
-    ]).toArray() || [];
+    const views = Number(courseTracking?.[0]?.views || 0);
+    const starts = Number(courseTracking?.[0]?.starts || 0);
+    const totalWatchTimeSeconds = trendForCourse.reduce(
+      (sum, day: any) => sum + Number(day?.watchTimeSeconds || 0),
+      0,
+    );
+    const avgWatchTimeSeconds = starts > 0 ? totalWatchTimeSeconds / starts : 0;
+
+    const round2 = (value: number): number => Math.round(value * 100) / 100;
+    const viewsToEnrollmentRate = views > 0 ? (enrollmentsCount / views) * 100 : 0;
+    const dropOffRate = totalProgressItems > 0 ? 100 - completionRate : 0;
+    const engagementScore = views > 0 ? (starts / views) * 100 : 0;
+
+    if (process.env.DEBUG_ANALYTICS_COURSE === 'true') {
+      this.logger.debug(
+        `[CourseAnalytics] course=${canonicalCourseId} range=${from.toISOString()}..${to.toISOString()} enrollments=${enrollmentsCount} views=${views} starts=${starts} progress=${completedProgressItems}/${totalProgressItems}`,
+      );
+    }
 
     const analytics = {
-      courseId: courseId,
-      courseTitle: course.titre,
-      enrollmentCount: enrollments.length,
-      totalRevenue: revenueStats,
-      views: courseTracking?.[0]?.views || 0,
-      starts: courseTracking?.[0]?.starts || 0,
-      completes: courseTracking?.[0]?.completes || 0,
-      chapterCompletes: courseTracking?.[0]?.chapterCompletes || 0,
-      completionRate: Math.round(completionRate * 100) / 100,
-      dailyTrend: trendForCourse,
-      chapterStats: chapterStats.map(stat => ({
-        chapterId: stat.chapterId,
-        totalStarts: stat.totalStarts,
-        completedCount: stat.completedCount,
-        completionRate: Math.round(stat.completionRate * 100) / 100
+      courseId: canonicalCourseId,
+      courseTitle: String(course.titre || ''),
+      range: {
+        from: from.toISOString(),
+        to: to.toISOString(),
+      },
+      kpis: {
+        enrollments: enrollmentsCount,
+        revenue: round2(revenue),
+        views,
+        starts,
+        completes: completionCount,
+        completionRate: round2(completionRate),
+        avgWatchTimeSeconds: round2(avgWatchTimeSeconds),
+        totalWatchTimeSeconds: round2(totalWatchTimeSeconds),
+      },
+      rates: {
+        viewsToEnrollmentRate: round2(viewsToEnrollmentRate),
+        dropOffRate: round2(dropOffRate),
+        engagementScore: round2(engagementScore),
+      },
+      dailyTrend: trendForCourse.map((day: any) => ({
+        date: day?.date,
+        views: Number(day?.views || 0),
+        starts: Number(day?.starts || 0),
+        completes: Number(day?.completes || 0),
+        watchTimeSeconds: Number(day?.watchTimeSeconds || 0),
       })),
-      averageWatchTime: dailyTrend.length > 0
-        ? dailyTrend.reduce((sum, day) => sum + (day.watchTime || 0), 0) / dailyTrend.length
-        : 0
+      meta: {
+        completionSource: 'progression',
+        timezone: 'UTC',
+        currency: String(course.devise || 'TND'),
+      },
     };
 
     this.setCache(key, analytics);

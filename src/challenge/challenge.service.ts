@@ -71,6 +71,39 @@ export class ChallengeService {
     );
   }
 
+  private buildCommunityLookupConditions(communityIds: string[]): any[] {
+    return communityIds
+      .flatMap((communityId) => [
+        { _id: Types.ObjectId.isValid(communityId) ? new Types.ObjectId(communityId) : null },
+        { id: communityId },
+        { slug: communityId },
+      ])
+      .filter((condition) => Object.values(condition)[0] !== null);
+  }
+
+  private async resolveCommunitiesByKeys(
+    communityIds: string[],
+  ): Promise<Map<string, CommunityDocument | null>> {
+    const keys = [...new Set((communityIds || []).map((value) => String(value || '')).filter(Boolean))];
+    const map = new Map<string, CommunityDocument | null>();
+    if (keys.length === 0) return map;
+
+    const communities = await this.communityModel.find({
+      $or: this.buildCommunityLookupConditions(keys),
+    });
+
+    for (const key of keys) {
+      const match = communities.find((community: any) =>
+        community?._id?.toString() === key ||
+        String((community as any)?.id || '') === key ||
+        String(community?.slug || '') === key,
+      );
+      map.set(key, match || null);
+    }
+
+    return map;
+  }
+
   /**
    * Helper method to find a challenge by ID (supports both MongoDB _id and custom id field)
    */
@@ -251,20 +284,21 @@ export class ChallengeService {
       const participatedChallenges = await this.challengeModel
         .find({ 'participants.userId': new Types.ObjectId(userId), ...communityFilter })
         .populate('creatorId', 'name email profile_picture photo_profil')
-        .populate('communityId', 'name slug')
         .sort({ createdAt: -1 })
         .exec();
 
       const transformedParticipated = participatedChallenges.map(challenge => {
         const participant = challenge.participants.find(p => p.userId.toString() === userId);
+        const completedTasksCount = participant?.completedTasks?.length || 0;
         const progress = participant && challenge.tasks && challenge.tasks.length > 0 ?
-          Math.round((Number(participant.completedTasks || 0) / challenge.tasks.length) * 100) : 0;
+          Math.round((completedTasksCount / challenge.tasks.length) * 100) : 0;
 
         return {
           id: challenge.id,
           title: challenge.title,
           description: challenge.description,
           thumbnail: challenge.thumbnail || 'https://placehold.co/400x300?text=Challenge',
+          communityId: String(challenge.communityId || ''),
           progress,
           status: progress === 100 ? 'completed' : progress > 0 ? 'active' : 'not_started',
           type: 'participated',
@@ -288,7 +322,6 @@ export class ChallengeService {
       const createdChallenges = await this.challengeModel
         .find({ creatorId: new Types.ObjectId(userId), ...communityFilter })
         .populate('creatorId', 'name email profile_picture photo_profil')
-        .populate('communityId', 'name slug')
         .sort({ createdAt: -1 })
         .exec();
 
@@ -297,6 +330,7 @@ export class ChallengeService {
         title: challenge.title,
         description: challenge.description,
         thumbnail: challenge.thumbnail || 'https://placehold.co/400x300?text=Challenge',
+        communityId: String(challenge.communityId || ''),
         progress: 100, // Creator has full access
         status: challenge.isActive ? 'active' : 'inactive',
         type: 'created',
@@ -314,6 +348,27 @@ export class ChallengeService {
 
       allChallenges = [...allChallenges, ...transformedCreated];
     }
+
+    const communityMap = await this.resolveCommunitiesByKeys(
+      allChallenges.map((challenge) => String(challenge.communityId || '')).filter(Boolean),
+    );
+    allChallenges = allChallenges.map((challenge) => {
+      const community = communityMap.get(String(challenge.communityId || '')) || null;
+      const communitySlug = community?.slug || null;
+      return {
+        ...challenge,
+        community: community
+          ? {
+              id: String((community as any).id || community._id?.toString() || ''),
+              name: community.name,
+              slug: community.slug,
+            }
+          : null,
+        communityName: community?.name || null,
+        communitySlug,
+        slug: communitySlug,
+      };
+    });
 
     // Sort by most recent activity
     allChallenges.sort((a, b) => {

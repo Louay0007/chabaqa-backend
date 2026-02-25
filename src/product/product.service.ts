@@ -173,6 +173,35 @@ export class ProductService {
     }
   }
 
+  private buildCommunityLookupConditions(communityIds: string[]): any[] {
+    return communityIds.flatMap((communityId) => [
+      { _id: Types.ObjectId.isValid(communityId) ? new Types.ObjectId(communityId) : null },
+      { id: communityId },
+      { slug: communityId },
+    ]).filter((condition) => Object.values(condition)[0] !== null);
+  }
+
+  private async resolveCommunitiesByKeys(communityIds: string[]): Promise<Map<string, CommunityDocument | null>> {
+    const keys = [...new Set((communityIds || []).map((value) => String(value || '')).filter(Boolean))];
+    const map = new Map<string, CommunityDocument | null>();
+    if (keys.length === 0) return map;
+
+    const communities = await this.communityModel.find({
+      $or: this.buildCommunityLookupConditions(keys),
+    });
+
+    for (const key of keys) {
+      const match = communities.find((community: any) =>
+        community?._id?.toString() === key ||
+        String((community as any)?.id || '') === key ||
+        String(community?.slug || '') === key,
+      );
+      map.set(key, match || null);
+    }
+
+    return map;
+  }
+
   private async recomputeProductRatings(productMongoId: string) {
     const stats = await this.contentProgressModel.aggregate([
       {
@@ -377,8 +406,12 @@ export class ProductService {
     minPrice?: number,
     maxPrice?: number,
     search?: string,
+    visibilityScope: 'owner' | 'public' = 'public',
   ): Promise<ProductListResponseDto> {
-    const query: any = { isPublished: true };
+    const query: any = {};
+    if (visibilityScope !== 'owner') {
+      query.isPublished = true;
+    }
 
     // Filtres
     if (communityId) {
@@ -392,8 +425,9 @@ export class ProductService {
     if (category) {
       query.category = { $regex: category, $options: 'i' };
     }
-    if (type) {
-      query.type = type;
+    const normalizedType = String(type || '').trim().toLowerCase();
+    if (normalizedType === 'digital' || normalizedType === 'physical') {
+      query.type = normalizedType;
     }
     if (minPrice !== undefined || maxPrice !== undefined) {
       query.price = {};
@@ -422,27 +456,25 @@ export class ProductService {
     ]);
 
     // Récupérer les informations des communautés
-    const communityIds = [
-      ...new Set(products.map((product) => product.communityId)),
-    ];
-    
-    // Build flexible query to match by _id, id, or slug
-    const communities = await this.communityModel.find({
-      $or: communityIds.flatMap(cid => [
-        { _id: Types.ObjectId.isValid(cid) ? new Types.ObjectId(cid) : null },
-        { id: cid },
-        { slug: cid }
-      ]).filter(condition => Object.values(condition)[0] !== null)
-    });
+    const communityIds = [...new Set(products.map((product) => String(product.communityId || '')).filter(Boolean))];
+    const communityMap = await this.resolveCommunitiesByKeys(communityIds);
 
     const productsWithCommunities = await Promise.all(
       products.map(async (product) => {
-        const community = communities.find((c) => 
-          c._id.toString() === product.communityId || 
-          (c as any).id === product.communityId || 
-          c.slug === product.communityId
-        );
-        return await this.transformToResponseDto(product, community);
+        const community = communityMap.get(String(product.communityId || '')) || undefined;
+        const transformed = await this.transformToResponseDto(product, community);
+        const payload: any = {
+          ...transformed,
+          communityName: transformed.community?.name || null,
+          communitySlug: transformed.community?.slug || null,
+        };
+
+        if (creatorId) {
+          payload.productSlug = transformed.slug;
+          payload.slug = payload.communitySlug || transformed.slug;
+        }
+
+        return payload;
       }),
     );
 
@@ -465,6 +497,7 @@ export class ProductService {
     page: number = 1,
     limit: number = 10,
     type?: string,
+    visibilityScope: 'owner' | 'public' = 'public',
   ): Promise<ProductListResponseDto> {
     return this.findAll(
       page,
@@ -476,6 +509,7 @@ export class ProductService {
       undefined,
       undefined,
       undefined,
+      visibilityScope,
     );
   }
 
@@ -999,6 +1033,8 @@ export class ProductService {
             name: 'Communauté inconnue',
             slug: 'unknown',
           },
+      communityName: community?.name || 'Communauté inconnue',
+      communitySlug: community?.slug || 'unknown',
       creatorId: product.creatorId.toString(),
       creator: {
         id: product.creatorId.toString(),

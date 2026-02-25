@@ -8,11 +8,13 @@ describe('ChallengeService', () => {
     communityModel?: any;
     submissionModel?: any;
     uploadService?: any;
+    cacheService?: any;
   }) => {
     const challengeModel = overrides?.challengeModel ?? {};
     const communityModel = overrides?.communityModel ?? {};
     const submissionModel = overrides?.submissionModel ?? {};
     const uploadService = overrides?.uploadService ?? { ensureAbsoluteUrl: (value: string) => value };
+    const cacheService = overrides?.cacheService ?? { deletePattern: jest.fn().mockResolvedValue(undefined) };
 
     return new ChallengeService(
       challengeModel as any,
@@ -25,6 +27,7 @@ describe('ChallengeService', () => {
       {} as any,
       uploadService as any,
       {} as any,
+      cacheService as any,
     );
   };
 
@@ -98,6 +101,81 @@ describe('ChallengeService', () => {
 
       const queryArg = find.mock.calls[0][0];
       expect(queryArg.communityId).toBeUndefined();
+    });
+  });
+
+  describe('getChallengesByUser', () => {
+    it('adds community fields and computes participated progress from completedTasks length', async () => {
+      const userId = '507f1f77bcf86cd799439011';
+
+      const participatedFind = {
+        populate: jest.fn().mockReturnThis(),
+        sort: jest.fn().mockReturnThis(),
+        exec: jest.fn().mockResolvedValue([
+          {
+            id: 'challenge-participated',
+            title: 'Participated challenge',
+            description: 'Desc',
+            thumbnail: '',
+            communityId: 'community-custom-id',
+            category: 'Programming',
+            difficulty: 'Intermediate',
+            startDate: new Date('2025-01-01T00:00:00.000Z'),
+            endDate: new Date('2025-01-30T00:00:00.000Z'),
+            tasks: [{ id: 't1' }, { id: 't2' }, { id: 't3' }, { id: 't4' }],
+            participants: [
+              { userId: { toString: () => userId }, completedTasks: ['t1', 't2'], joinedAt: new Date('2025-01-10T00:00:00.000Z') },
+            ],
+            creatorId: { name: 'Creator', profile_picture: '' },
+          },
+        ]),
+      };
+
+      const createdFind = {
+        populate: jest.fn().mockReturnThis(),
+        sort: jest.fn().mockReturnThis(),
+        exec: jest.fn().mockResolvedValue([
+          {
+            id: 'challenge-created',
+            title: 'Created challenge',
+            description: 'Desc',
+            thumbnail: '',
+            communityId: 'community-custom-id',
+            category: 'Design',
+            difficulty: 'Beginner',
+            startDate: new Date('2025-01-01T00:00:00.000Z'),
+            endDate: new Date('2025-01-30T00:00:00.000Z'),
+            isActive: true,
+            createdAt: new Date('2025-01-11T00:00:00.000Z'),
+            participants: [],
+            creatorId: { name: 'Creator', profile_picture: '' },
+          },
+        ]),
+      };
+
+      const find = jest.fn().mockImplementation((query: any) => {
+        if (query && query['participants.userId']) return participatedFind;
+        return createdFind;
+      });
+
+      const service = makeService({
+        challengeModel: { find },
+        communityModel: {
+          find: jest.fn().mockResolvedValue([
+            { _id: new Types.ObjectId(), id: 'community-custom-id', name: 'Design Community', slug: 'design-community' },
+          ]),
+        },
+      });
+
+      const result = await service.getChallengesByUser(userId, 1, 12, 'all');
+      expect(result.success).toBe(true);
+      expect(result.data.challenges).toHaveLength(2);
+      const participated = result.data.challenges.find((challenge: any) => challenge.id === 'challenge-participated');
+      expect(participated.progress).toBe(50);
+      expect(participated.communityName).toBe('Design Community');
+      expect(participated.communitySlug).toBe('design-community');
+      expect(participated.community?.slug).toBe('design-community');
+      expect(participated.slug).toBe('design-community');
     });
   });
 

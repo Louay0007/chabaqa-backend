@@ -108,6 +108,39 @@ export class CoursService {
     return Boolean(paidOrder);
   }
 
+  private buildCommunityLookupConditions(communityIds: string[]): any[] {
+    return communityIds
+      .flatMap((communityId) => [
+        { _id: Types.ObjectId.isValid(communityId) ? new Types.ObjectId(communityId) : null },
+        { id: communityId },
+        { slug: communityId },
+      ])
+      .filter((condition) => Object.values(condition)[0] !== null);
+  }
+
+  private async resolveCommunitiesByKeys(
+    communityIds: string[],
+  ): Promise<Map<string, CommunityDocument | null>> {
+    const keys = [...new Set((communityIds || []).map((value) => String(value || '')).filter(Boolean))];
+    const map = new Map<string, CommunityDocument | null>();
+    if (keys.length === 0) return map;
+
+    const communities = await this.communityModel.find({
+      $or: this.buildCommunityLookupConditions(keys),
+    });
+
+    for (const key of keys) {
+      const match = communities.find((community: any) =>
+        community?._id?.toString() === key ||
+        String((community as any)?.id || '') === key ||
+        String(community?.slug || '') === key,
+      );
+      map.set(key, match || null);
+    }
+
+    return map;
+  }
+
   private async hasPaidChapterEntitlement(
     userId: string,
     chapterId: string,
@@ -913,6 +946,7 @@ export class CoursService {
             titre: course.titre,
             description: course.description,
             thumbnail: course.thumbnail || 'https://placehold.co/400x300?text=Course',
+            communityId: String(course.communityId || ''),
             progress,
             status: progress === 100 ? 'completed' : progress > 0 ? 'in_progress' : 'not_started',
             type: 'enrolled',
@@ -940,6 +974,7 @@ export class CoursService {
         titre: course.titre,
         description: course.description,
         thumbnail: course.thumbnail || 'https://placehold.co/400x300?text=Course',
+        communityId: String(course.communityId || ''),
         progress: 100, // Creator has full access
         status: course.isPublished ? 'published' : 'draft',
         type: 'created',
@@ -952,6 +987,27 @@ export class CoursService {
 
       allCourses = [...allCourses, ...transformedCreated];
     }
+
+    const communityMap = await this.resolveCommunitiesByKeys(
+      allCourses.map((course) => String(course.communityId || '')).filter(Boolean),
+    );
+    allCourses = allCourses.map((course) => {
+      const community = communityMap.get(String(course.communityId || '')) || null;
+      const communitySlug = community?.slug || null;
+      return {
+        ...course,
+        community: community
+          ? {
+              id: String((community as any).id || community._id?.toString() || ''),
+              name: community.name,
+              slug: community.slug,
+            }
+          : null,
+        communityName: community?.name || null,
+        communitySlug,
+        slug: communitySlug,
+      };
+    });
 
     // Sort by most recent activity
     allCourses.sort((a, b) => {

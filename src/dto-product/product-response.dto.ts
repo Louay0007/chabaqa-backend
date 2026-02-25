@@ -161,6 +161,18 @@ export class ProductResponseDto {
     slug: string;
   };
 
+  @ApiPropertyOptional({
+    description: 'Nom de la communauté',
+    example: 'Web Development Community'
+  })
+  communityName?: string;
+
+  @ApiPropertyOptional({
+    description: 'Slug de la communauté',
+    example: 'web-dev-community'
+  })
+  communitySlug?: string;
+
   @ApiProperty({
     description: 'ID du créateur',
     example: 'user_456'

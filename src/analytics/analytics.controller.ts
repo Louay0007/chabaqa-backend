@@ -294,11 +294,10 @@ export class AnalyticsController {
     const user = req.user;
     const creatorId = user.sub || user._id || user.userId;
     const courseId = req.params.courseId;
-    
-    const toDate = to ? new Date(to) : new Date();
-    const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 30 * 24 * 3600 * 1000);
-    
-    return this.analyticsService.getCourseAnalytics(creatorId, courseId, fromDate, toDate);
+
+    const { fromDate, toDate } = this.parseDateRange(from, to);
+    const data = await this.analyticsService.getCourseAnalytics(creatorId, courseId, fromDate, toDate);
+    return { success: true, data };
   }
 
   @Get('debug-status')

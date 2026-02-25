@@ -8,6 +8,7 @@ import { JwtStrategy } from './strategies/jwt.strategy';
 import { GoogleStrategy } from './strategies/google.strategy';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { GoogleAuthGuard } from './guards/google-auth.guard';
+import { OptionalJwtAuthGuard } from './guards/optional-jwt-auth.guard';
 import { User, UserSchema } from '../schema/user.schema';
 import { Admin, AdminSchema } from '../schema/admin.schema';
 import { RevokedToken, RevokedTokenSchema } from '../schema/revoked-token.schema';
@@ -33,7 +34,7 @@ import { UploadModule } from '../upload/upload.module';
     UploadModule,
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, GoogleStrategy, GoogleAuthGuard, EmailService, TokenBlacklistService, JwtAuthGuard],
-  exports: [AuthService, TokenBlacklistService, JwtAuthGuard],
+  providers: [AuthService, JwtStrategy, GoogleStrategy, GoogleAuthGuard, EmailService, TokenBlacklistService, JwtAuthGuard, OptionalJwtAuthGuard],
+  exports: [AuthService, TokenBlacklistService, JwtAuthGuard, OptionalJwtAuthGuard],
 })
 export class AuthModule { } 

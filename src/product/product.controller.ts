@@ -23,6 +23,7 @@ import {
   ProductFileResponseDto
 } from '../dto-product/product-response.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 import { HttpCacheInterceptor } from '../common/interceptors/cache.interceptor';
 
 @ApiTags('Products')
@@ -108,6 +109,7 @@ export class ProductController {
   }
 
   @Get('by-user/:userId')
+  @UseGuards(OptionalJwtAuthGuard)
   @ApiOperation({ summary: 'Récupérer les produits d\'un utilisateur (alias pour creator)' })
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
@@ -118,9 +120,17 @@ export class ProductController {
     @Query('page') page?: number,
     @Query('limit') limit?: number,
     @Query('type') type?: string,
+    @Request() req?: any,
   ): Promise<{ success: boolean; data: ProductListResponseDto }> {
-    // We now pass the type parameter to the service
-    const products = await this.productService.findByCreator(userId, page || 1, limit || 10, type);
+    const requesterId = this.getRequestUserId(req);
+    const visibilityScope = requesterId && requesterId === userId ? 'owner' : 'public';
+    const products = await this.productService.findByCreator(
+      userId,
+      page || 1,
+      limit || 10,
+      type,
+      visibilityScope,
+    );
     return { success: true, data: products };
   }
 
