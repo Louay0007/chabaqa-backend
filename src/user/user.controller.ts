@@ -64,6 +64,7 @@ export class UserController {
           user: {
             _id: '64a1b2c3d4e5f6789abcdef0',
             name: 'John Doe',
+            username: 'john-doe',
             email: 'john@example.com',
             role: 'user',
             createdAt: '2023-07-01T10:00:00.000Z'
@@ -74,7 +75,7 @@ export class UserController {
   })
   @ApiResponse({
     status: 409,
-    description: 'Conflict - Email or name already exists',
+    description: 'Conflict - Email already exists',
     content: {
       'application/json': {
         example: {
@@ -116,6 +117,7 @@ export class UserController {
           user: {
             _id: user._id,
             name: user.name,
+            username: (user as any).username,
             email: user.email,
             role: user.role,
             createdAt: user.createdAt
@@ -131,8 +133,8 @@ export class UserController {
             message: err.message,
             error: 'CONFLICT',
             details: {
-              field: err.message.includes('email') ? 'email' : 'name',
-              value: err.message.includes('email') ? createUserDto.email : createUserDto.name
+              field: 'email',
+              value: createUserDto.email
             }
           });
         }
@@ -290,13 +292,13 @@ export class UserController {
   @Get('by-username/:handle')
   @ApiOperation({
     summary: 'Get User by Username/Handle',
-    description: 'Fetch user profile by username (email local-part)',
+    description: 'Fetch user profile by username handle',
     tags: ['Users']
   })
   @ApiParam({
     name: 'handle',
-    description: 'Username/handle (email local-part)',
-    example: 'john'
+    description: 'Username/handle (example: john-doe)',
+    example: 'john-doe'
   })
   @ApiResponse({
     status: 200,
@@ -309,6 +311,7 @@ export class UserController {
           user: {
             _id: '64a1b2c3d4e5f6789abcdef0',
             name: 'John Doe',
+            username: 'john-doe',
             email: 'john@example.com',
             role: 'user',
             avatar: 'https://example.com/avatar.jpg',

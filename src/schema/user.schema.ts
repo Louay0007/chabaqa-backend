@@ -16,6 +16,7 @@ export enum UserRole {
 export interface UserDocument extends Document {
   _id: Types.ObjectId;
   name: string;
+  username: string;
   email: string;
   password: string;
   role: UserRole;
@@ -86,6 +87,17 @@ export class User {
     maxlength: 100
   })
   name: string;
+
+  /**
+   * Identifiant public du profil (handle)
+   */
+  @Prop({
+    required: false,
+    trim: true,
+    lowercase: true,
+    match: /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
+  })
+  username: string;
 
   /**
    * Adresse email unique
@@ -364,6 +376,7 @@ export const UserSchema = SchemaFactory.createForClass(User);
 
 // Index pour optimiser les requêtes
 UserSchema.index({ email: 1 }, { unique: true });
+UserSchema.index({ username: 1 }, { unique: true, sparse: true });
 UserSchema.index({ role: 1 });
 UserSchema.index({ createdAt: -1 });
 UserSchema.index({ createdCommunities: 1 });

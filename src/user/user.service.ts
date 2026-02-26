@@ -13,6 +13,7 @@ import { EmailService } from '../common/services/email.service';
 import { VerificationCode, VerificationCodeDocument } from '../schema/verification-code.schema';
 import { UploadService, FileType } from '../upload/upload.service';
 import { CommunityAffCreaJoinService } from '../community-aff-crea-join/community-aff-crea-join.service';
+import { generateUniqueUsername, slugifyFullNameToUsername } from '../common/utils/username.util';
 
 @Injectable()
 export class UserService {
@@ -52,6 +53,10 @@ export class UserService {
     return 0;
   }
 
+  private escapeRegex(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
   private async cleanupLocalAvatarFile(user: IUser): Promise<void> {
     const avatarUrl = ((user as any).photo_profil || (user as any).profile_picture || '').trim();
     if (!avatarUrl || avatarUrl.startsWith('http')) return;
@@ -72,15 +77,13 @@ export class UserService {
   }
 
   /**
-   * Vérifie si un email ou un nom existe déjà
+   * Vérifie si un email existe déjà
    */
-  async checkUserExists(email: string, name: string): Promise<{ emailExists: boolean; nameExists: boolean }> {
+  async checkUserExists(email: string): Promise<{ emailExists: boolean }> {
     const emailExists = await this.userModel.findOne({ email: email.toLowerCase() });
-    const nameExists = await this.userModel.findOne({ name: name });
 
     return {
       emailExists: !!emailExists,
-      nameExists: !!nameExists
     };
   }
 
@@ -88,25 +91,24 @@ export class UserService {
   async createUser(createUserDto: CreateUserDto): Promise<IUser> {
     console.log('UserService: Creating user with data:', { ...createUserDto, password: '[REDACTED]' });
 
-    // Vérifier si l'email ou le nom existe déjà
-    const { emailExists, nameExists } = await this.checkUserExists(createUserDto.email, createUserDto.name);
+    // Vérifier si l'email existe déjà
+    const { emailExists } = await this.checkUserExists(createUserDto.email);
 
     if (emailExists) {
       console.log('UserService: Email already exists:', createUserDto.email);
       throw new ConflictException(`L'email '${createUserDto.email}' est déjà utilisé par un autre compte`);
     }
 
-    if (nameExists) {
-      console.log('UserService: Name already exists:', createUserDto.name);
-      throw new ConflictException(`Le nom '${createUserDto.name}' est déjà utilisé par un autre compte`);
-    }
-
     // Hash le mot de passe avant de sauvegarder
     const hashedPassword = await this.hashPassword(createUserDto.password);
+    const normalizedName = String(createUserDto.name || '').trim() || 'User';
+    const username = await generateUniqueUsername(this.userModel as any, normalizedName);
     console.log('UserService: Password hashed successfully');
 
     const newUser = await new this.userModel({
       ...createUserDto,
+      name: normalizedName,
+      username,
       password: hashedPassword,
     });
 
@@ -140,12 +142,24 @@ export class UserService {
     return u as IUser;
   }
 
-  // get user by username/handle (email local-part)
+  // get user by username/handle
   async getUserByUsername(handle: string): Promise<IUser> {
-    // Find user where email starts with handle@
-    const user = await this.userModel.findOne({
-      email: { $regex: `^${handle}@`, $options: 'i' }
+    const rawHandle = String(handle || '').trim();
+    const canonicalHandle = slugifyFullNameToUsername(rawHandle);
+    const candidateHandles = Array.from(new Set([rawHandle.toLowerCase(), canonicalHandle]));
+
+    let user = await this.userModel.findOne({
+      username: { $in: candidateHandles },
     });
+
+    // Legacy compatibility: old profile URLs used email local-part
+    if (!user) {
+      const escaped = this.escapeRegex(rawHandle);
+      user = await this.userModel.findOne({
+        email: { $regex: `^${escaped}@`, $options: 'i' },
+      });
+    }
+
     if (!user) {
       throw new NotFoundException(`User with handle '${handle}' not found`);
     }

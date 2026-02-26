@@ -1,7 +1,7 @@
 import { Injectable, UnauthorizedException, BadRequestException, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { Model } from 'mongoose';
 import * as bcrypt from 'bcryptjs';
 import { OAuth2Client } from 'google-auth-library';
 import { User, UserDocument } from '../schema/user.schema';
@@ -12,6 +12,7 @@ import { VerificationCodeSchema } from '../schema/verification-code.schema';
 import { UserLoginActivityService } from '../user-login-activity/user-login-activity.service';
 import { RegisterDto } from '../dto-user/register.dto';
 import { UploadService } from '../upload/upload.service';
+import { generateUniqueUsername } from '../common/utils/username.util';
 
 @Injectable()
 export class AuthService {
@@ -39,16 +40,12 @@ export class AuthService {
     let user = await this.userModel.findOne({ email: oauthUser.email.toLowerCase() });
 
     if (!user) {
-      const baseName = oauthUser.name || 'Google User';
+      const candidateName = String(oauthUser.name || 'Google User').trim() || 'Google User';
       const passwordHash = await this.hashPassword(`google:${oauthUser.providerId}:${Date.now()}`);
-      let attempt = 0;
-      let candidateName = baseName;
-      while (await this.userModel.findOne({ name: candidateName })) {
-        attempt++;
-        candidateName = `${baseName} ${attempt}`;
-      }
+      const username = await generateUniqueUsername(this.userModel, candidateName);
       user = await this.userModel.create({
         name: candidateName,
+        username,
         email: oauthUser.email.toLowerCase(),
         role: 'user',
         password: passwordHash,
@@ -62,6 +59,7 @@ export class AuthService {
     const userDto = {
       _id: user._id.toString(),
       name: user.name,
+      username: (user as any).username,
       email: user.email,
       role: user.role,
       avatar: this.uploadService.ensureAbsoluteUrl(user.profile_picture || user.photo_profil || ''),
@@ -131,6 +129,7 @@ export class AuthService {
     const userDto = {
       _id: user._id.toString(),
       name: user.name,
+      username: (user as any).username,
       email: user.email,
       role: user.role,
       avatar: this.uploadService.ensureAbsoluteUrl(user.profile_picture || user.photo_profil || ''),
@@ -163,7 +162,6 @@ export class AuthService {
       photo_profil: normalizedPhotoProfil,
       profile_picture: normalizedProfilePicture,
       avatar: normalizedAvatar,
-      username: userObject.name, // Map name to username for frontend compatibility
       firstName: userObject.name, // Map name to firstName for frontend compatibility
     } as any;
   }
@@ -222,9 +220,12 @@ export class AuthService {
     if (existingUser) {
       throw new BadRequestException('Un utilisateur avec cet email existe déjà.');
     }
+    const normalizedName = String(name || '').trim() || 'User';
+    const username = await generateUniqueUsername(this.userModel, normalizedName);
     const hashedPassword = await this.hashPassword(password);
     const newUser = await this.userModel.create({
-      name,
+      name: normalizedName,
+      username,
       email: email.toLowerCase(),
       password: hashedPassword,
       numtel,
@@ -234,6 +235,7 @@ export class AuthService {
     const userDto = {
       _id: newUser._id.toString(),
       name: newUser.name,
+      username: (newUser as any).username,
       email: newUser.email,
       role: newUser.role,
       createdAt: newUser.createdAt,
@@ -251,9 +253,12 @@ export class AuthService {
     if (existingUser) {
       throw new BadRequestException('Un utilisateur avec cet email existe déjà.');
     }
+    const normalizedName = String(name || '').trim() || 'User';
+    const username = await generateUniqueUsername(this.userModel, normalizedName);
     const hashedPassword = await this.hashPassword(password);
     const newUser = await this.userModel.create({
-      name,
+      name: normalizedName,
+      username,
       email: email.toLowerCase(),
       password: hashedPassword,
       numtel,
@@ -263,6 +268,7 @@ export class AuthService {
     const userDto = {
       _id: newUser._id.toString(),
       name: newUser.name,
+      username: (newUser as any).username,
       email: newUser.email,
       role: newUser.role,
       createdAt: newUser.createdAt,

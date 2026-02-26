@@ -19,6 +19,7 @@ import { SuspendUserDto, ActivateUserDto, ResetUserPasswordDto, UpdateAdminNotes
 import { AuditLogService } from '../common/services/audit-log.service';
 import { EmailService } from '../../common/services/email.service';
 import { AnalyticsService } from '../common/services/analytics.service';
+import { generateUniqueUsername } from '../../common/utils/username.util';
 
 // Import interfaces
 import { PaginatedResult, TimePeriod } from '../common/interfaces/admin-interfaces';
@@ -157,7 +158,8 @@ export class UserManagementService {
       query.$or = [
         { name: searchRegex },
         { email: searchRegex },
-        { 'email': { $regex: `^${searchTerm}@`, $options: 'i' } } // username search
+        { username: searchRegex },
+        { email: { $regex: `^${searchTerm}@`, $options: 'i' } }, // legacy handle search
       ];
     }
 
@@ -561,10 +563,14 @@ export class UserManagementService {
 
     // Hash password
     const hashedPassword = await bcrypt.hash(createUserDto.password, 12);
+    const normalizedName = String(createUserDto.name || '').trim() || 'User';
+    const username = await generateUniqueUsername(this.userModel, normalizedName);
 
     // Create user
     const newUser = new this.userModel({
       ...createUserDto,
+      name: normalizedName,
+      username,
       password: hashedPassword,
       isVerified: true, // Admin created users are auto-verified
       accountStatus: 'active'

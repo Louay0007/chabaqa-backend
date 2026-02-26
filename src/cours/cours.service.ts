@@ -122,6 +122,34 @@ export class CoursService {
     }
   }
 
+  private isTransactionNotSupportedError(error: any): boolean {
+    const message = String(
+      error?.errorResponse?.errmsg ||
+      error?.message ||
+      error?.cause?.errorResponse?.errmsg ||
+      error?.cause?.message ||
+      '',
+    ).toLowerCase();
+    const code =
+      error?.code ??
+      error?.errorResponse?.code ??
+      error?.cause?.code ??
+      error?.cause?.errorResponse?.code;
+    const codeName = String(
+      error?.codeName ||
+      error?.errorResponse?.codeName ||
+      error?.cause?.codeName ||
+      error?.cause?.errorResponse?.codeName ||
+      '',
+    ).toLowerCase();
+
+    return (
+      code === 20 ||
+      codeName === 'illegaloperation' ||
+      message.includes('transaction numbers are only allowed on a replica set member or mongos')
+    );
+  }
+
   private resolveChapterVideoUrlForCreate(rawVideoUrl: unknown): string {
     const normalizedVideoUrl = normalizeChapterVideoUrl(rawVideoUrl);
     if (!normalizedVideoUrl) return '';
@@ -439,6 +467,34 @@ export class CoursService {
 
     await this.attachRatingStatsToCourses(courses as any);
 
+    const courseObjectIds = courses
+      .map((course) => course?._id)
+      .filter(Boolean);
+    const enrollmentStats = courseObjectIds.length
+      ? await this.courseEnrollmentModel
+          .aggregate([
+            {
+              $match: {
+                courseId: { $in: courseObjectIds },
+                isActive: true,
+              },
+            },
+            {
+              $group: {
+                _id: '$courseId',
+                count: { $sum: 1 },
+              },
+            },
+          ])
+          .exec()
+      : [];
+    const enrollmentCountByCourseId = new Map<string, number>(
+      (enrollmentStats || []).map((stat: any) => [
+        String(stat?._id),
+        Number(stat?.count || 0),
+      ]),
+    );
+
     // Log rating data after attachment for debugging
     if (courses.length > 0) {
       const sampleCourse = courses[0] as any;
@@ -458,6 +514,11 @@ export class CoursService {
 
       const finalRating = attachedRating !== undefined ? Number(attachedRating) : Number(course.averageRating || 0);
       const finalCount = attachedCount !== undefined ? Number(attachedCount) : Number(course.ratingCount || 0);
+      const enrollmentCount =
+        enrollmentCountByCourseId.get(course._id.toString()) ??
+        (Array.isArray((course as any).inscriptions)
+          ? (course as any).inscriptions.length
+          : 0);
 
       const community = (course as any).communityId;
 
@@ -470,6 +531,7 @@ export class CoursService {
         category: course.category,
         niveau: course.niveau,
         duree: course.duree,
+        enrollmentCount,
         averageRating: finalRating,
         ratingCount: finalCount,
         communityName: community?.name || 'Unknown Community',
@@ -2675,6 +2737,10 @@ export class CoursService {
       return enrollmentResponse;
 
     } catch (error) {
+      if (this.isTransactionNotSupportedError(error)) {
+        throw error;
+      }
+
       if (error instanceof NotFoundException || error instanceof ForbiddenException || error instanceof BadRequestException) {
         throw error;
       }

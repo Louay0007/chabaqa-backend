@@ -58,6 +58,7 @@ const manualProofStorage = diskStorage({
 @Controller('payment')
 export class PaymentController {
   private readonly logger = new Logger(PaymentController.name);
+  private mongoTransactionSupport: boolean | null = null;
 
   constructor(
     private readonly flouci: FlouciPaymentService,
@@ -417,7 +418,7 @@ export class PaymentController {
 
     if (verify.status === 'SUCCESS') {
       if (order.status !== 'paid') {
-        await this.orderModel.db.transaction(async (session) => {
+        await this.runWithOptionalTransaction(async (session) => {
           await this.grantAccess(order, session);
           order.status = 'paid';
           order.paymentMethod = (verify as any).paymentMethod || order.paymentMethod;
@@ -1370,6 +1371,97 @@ export class PaymentController {
     return 'Unknown error';
   }
 
+  private isTransactionNotSupportedError(error: any): boolean {
+    const response = error?.getResponse?.();
+    const responseMessage = Array.isArray(response?.message)
+      ? response.message.join(', ')
+      : (typeof response?.message === 'string' ? response.message : (typeof response === 'string' ? response : ''));
+    const message = String(
+      error?.errorResponse?.errmsg ||
+      error?.cause?.errorResponse?.errmsg ||
+      responseMessage ||
+      error?.message ||
+      error?.cause?.message ||
+      '',
+    ).toLowerCase();
+    const code = error?.code ?? error?.errorResponse?.code ?? error?.cause?.code ?? error?.cause?.errorResponse?.code;
+    const codeName = String(
+      error?.codeName ||
+      error?.errorResponse?.codeName ||
+      error?.cause?.codeName ||
+      error?.cause?.errorResponse?.codeName ||
+      '',
+    ).toLowerCase();
+
+    return (
+      code === 20 ||
+      codeName === 'illegaloperation' ||
+      message.includes('transaction numbers are only allowed on a replica set member or mongos')
+    );
+  }
+
+  private async detectMongoTransactionSupport(): Promise<boolean> {
+    if (this.mongoTransactionSupport !== null) {
+      return this.mongoTransactionSupport;
+    }
+
+    try {
+      const adminDb = this.orderModel.db?.db?.admin?.();
+      if (!adminDb) {
+        this.logger.warn(
+          '[PAYMENT] Mongo admin database is unavailable. Falling back to non-transactional execution.',
+        );
+        this.mongoTransactionSupport = false;
+        return false;
+      }
+
+      const hello = await adminDb.command({ hello: 1 });
+      const isReplicaSet = Boolean(hello?.setName);
+      const isMongos = hello?.msg === 'isdbgrid';
+      const supportsTransactions = isReplicaSet || isMongos;
+
+      this.mongoTransactionSupport = supportsTransactions;
+      if (supportsTransactions) {
+        this.logger.log('[PAYMENT] MongoDB transactions enabled (replica set/mongos detected).');
+      } else {
+        this.logger.warn(
+          '[PAYMENT] MongoDB standalone detected. Payment fulfillment will run without transactions.',
+        );
+      }
+
+      return supportsTransactions;
+    } catch (error: any) {
+      this.mongoTransactionSupport = false;
+      this.logger.warn(
+        `[PAYMENT] Unable to detect MongoDB transaction support. Using non-transactional mode. reason=${error?.message || error}`,
+      );
+      return false;
+    }
+  }
+
+  private async runWithOptionalTransaction<T>(work: (session: any | null) => Promise<T>): Promise<T> {
+    const supportsTransactions = await this.detectMongoTransactionSupport();
+    if (!supportsTransactions) {
+      return await work(null);
+    }
+
+    try {
+      return await this.orderModel.db.transaction(async (session) => {
+        return await work(session);
+      });
+    } catch (error: any) {
+      if (!this.isTransactionNotSupportedError(error)) {
+        throw error;
+      }
+
+      this.mongoTransactionSupport = false;
+      this.logger.warn(
+        '[PAYMENT] MongoDB transactions are unavailable. Falling back to non-transactional execution.',
+      );
+      return await work(null);
+    }
+  }
+
   private isMissingScheduledAtError(error: any): boolean {
     const message = this.getErrorMessage(error).toLowerCase();
     return message.includes('la date de la session est obligatoire');
@@ -1531,7 +1623,7 @@ export class PaymentController {
         : undefined;
 
       if (order.status !== 'paid') {
-        await this.orderModel.db.transaction(async (session) => {
+        await this.runWithOptionalTransaction(async (session) => {
           const nextMetadata: Record<string, any> = { ...(order.metadata || {}) };
           order.status = 'paid';
           order.paymentMethod = verify.paymentMethod?.type || 'stripe-link';
@@ -1740,15 +1832,17 @@ export class PaymentController {
     switch (stripeEvent.type) {
       case 'checkout.session.completed':
       case 'checkout.session.async_payment_succeeded':
-        const session = stripeEvent.data.object as any;
-        if (session.payment_status === 'paid') {
+        const stripeSession = stripeEvent.data.object as any;
+        if (stripeSession.payment_status === 'paid') {
           // Process successful payment
-          const order = await this.orderModel.findOne({ paymentId: session.id });
+          const order = await this.orderModel.findOne({ paymentId: stripeSession.id });
           if (order && order.status !== 'paid') {
-            order.status = 'paid';
-            order.paymentMethod = 'stripe';
-            await order.save();
-            await this.grantAccess(order);
+            await this.runWithOptionalTransaction(async (dbSession) => {
+              order.status = 'paid';
+              order.paymentMethod = 'stripe';
+              await this.grantAccess(order, dbSession, stripeSession.metadata);
+              await order.save({ session: dbSession });
+            });
           }
         }
         break;
