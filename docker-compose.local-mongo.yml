@@ -1,0 +1,46 @@
+name: chabaqa-local-mongo
+
+services:
+  mongo:
+    image: mongo:7
+    container_name: chabaqa-local-mongo
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:27017:27017"
+    volumes:
+      - mongo_local_data:/data/db
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --eval \"db.adminCommand({ ping: 1 }).ok\" || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - chabaqa-network
+
+  mongo-express:
+    image: mongo-express:latest
+    container_name: chabaqa-local-mongo-express
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8081:8081"
+    environment:
+      ME_CONFIG_MONGODB_SERVER: mongo
+      ME_CONFIG_MONGODB_PORT: 27017
+      ME_CONFIG_MONGODB_ENABLE_ADMIN: "true"
+      ME_CONFIG_SITE_BASEURL: /mongo-express
+      ME_CONFIG_BASICAUTH_USERNAME: ${MONGO_EXPRESS_USER:-admin}
+      ME_CONFIG_BASICAUTH_PASSWORD: ${MONGO_EXPRESS_PASS:-change_me}
+    networks:
+      - chabaqa-network
+
+volumes:
+  mongo_local_data:
+    driver: local
+
+networks:
+  chabaqa-network:
+    external: true
+    name: chabaqa_chabaqa-network

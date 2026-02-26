@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getModelToken } from '@nestjs/mongoose';
 import { Types } from 'mongoose';
+import { BadRequestException } from '@nestjs/common';
 import { CoursService } from './cours.service';
 import { UserCourseNote } from '../schema/user-course-note.schema';
 import { ContentTrackingService } from '../common/services/content-tracking.service';
@@ -185,5 +186,61 @@ describe('CoursService profile by-user community enrichment', () => {
     expect(result.data.courses.every((course: any) => course.communitySlug === 'tech-community')).toBe(true);
     expect(result.data.courses.every((course: any) => course.slug === 'tech-community')).toBe(true);
     expect(result.data.courses.every((course: any) => course.community?.slug === 'tech-community')).toBe(true);
+  });
+});
+
+describe('CoursService chapter video/content validation', () => {
+  let service: CoursService;
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        CoursService,
+        { provide: getModelToken('Cours'), useValue: {} },
+        { provide: getModelToken('CourseEnrollment'), useValue: {} },
+        { provide: getModelToken('CourseProgress'), useValue: {} },
+        { provide: getModelToken(UserCourseNote.name), useValue: {} },
+        { provide: getModelToken('Community'), useValue: {} },
+        { provide: getModelToken('User'), useValue: {} },
+        { provide: getModelToken('Order'), useValue: {} },
+        { provide: getModelToken('ContentProgress'), useValue: {} },
+        { provide: ContentTrackingService, useValue: {} },
+        { provide: PolicyService, useValue: {} },
+        { provide: FeeService, useValue: {} },
+        { provide: PromoService, useValue: {} },
+        { provide: NotificationService, useValue: {} },
+        { provide: AchievementService, useValue: {} },
+        { provide: UploadService, useValue: {} },
+        { provide: CacheService, useValue: { deletePattern: jest.fn().mockResolvedValue(undefined) } },
+      ],
+    }).compile();
+
+    service = module.get<CoursService>(CoursService);
+  });
+
+  it('accepts video-only chapter payloads for create/add flows', () => {
+    expect(() =>
+      (service as any).assertChapterHasContentOrVideo('', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'),
+    ).not.toThrow();
+  });
+
+  it('rejects chapter payload when both description and video are empty', () => {
+    expect(() => (service as any).assertChapterHasContentOrVideo('   ', '   ')).toThrow(
+      BadRequestException,
+    );
+  });
+
+  it('rejects unsupported host when chapter videoUrl is changed', () => {
+    expect(() =>
+      (service as any).resolveChapterVideoUrlForUpdate(
+        '/uploads/video/chapter-1.mp4',
+        'https://example.com/video.mp4',
+      ),
+    ).toThrow(BadRequestException);
+  });
+
+  it('allows unchanged legacy unsupported chapter videoUrl on update', () => {
+    const legacyUrl = 'https://legacy.invalid-host.com/video.mp4';
+    expect((service as any).resolveChapterVideoUrlForUpdate(legacyUrl, legacyUrl)).toBe(legacyUrl);
   });
 });

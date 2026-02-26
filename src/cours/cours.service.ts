@@ -22,6 +22,10 @@ import { AchievementService } from '../achievement/achievement.service';
 import { UploadService } from '../upload/upload.service';
 import { MediaPurpose } from '../media/media.types';
 import { CacheService } from '../common/services/cache.service';
+import {
+  isSupportedChapterVideoUrl,
+  normalizeChapterVideoUrl,
+} from './utils/chapter-video-source.util';
 
 @Injectable()
 
@@ -90,6 +94,58 @@ export class CoursService {
     throw new BadRequestException(
       'Le prix du chapitre payant est requis (ou le cours doit avoir un prix > 0)',
     );
+  }
+
+  private normalizeChapterContent(value: unknown): string {
+    return typeof value === 'string' ? value.trim() : '';
+  }
+
+  private assertChapterHasContentOrVideo(
+    description: unknown,
+    videoUrl: unknown,
+  ): void {
+    const normalizedDescription = this.normalizeChapterContent(description);
+    const normalizedVideoUrl = normalizeChapterVideoUrl(videoUrl);
+
+    if (!normalizedDescription && !normalizedVideoUrl) {
+      throw new BadRequestException(
+        'Un chapitre doit contenir une description ou une URL vidéo.',
+      );
+    }
+  }
+
+  private assertSupportedChapterVideoSource(url: string): void {
+    if (!isSupportedChapterVideoUrl(url)) {
+      throw new BadRequestException(
+        "URL video invalide. Utilisez un lien YouTube ou une URL d'upload /uploads/.",
+      );
+    }
+  }
+
+  private resolveChapterVideoUrlForCreate(rawVideoUrl: unknown): string {
+    const normalizedVideoUrl = normalizeChapterVideoUrl(rawVideoUrl);
+    if (!normalizedVideoUrl) return '';
+
+    this.assertSupportedChapterVideoSource(normalizedVideoUrl);
+    return normalizedVideoUrl;
+  }
+
+  private resolveChapterVideoUrlForUpdate(
+    existingVideoUrl: unknown,
+    incomingVideoUrl: unknown,
+  ): string {
+    const currentVideoUrl = normalizeChapterVideoUrl(existingVideoUrl);
+    const nextVideoUrl = normalizeChapterVideoUrl(incomingVideoUrl);
+
+    if (!nextVideoUrl) {
+      return '';
+    }
+
+    if (nextVideoUrl !== currentVideoUrl) {
+      this.assertSupportedChapterVideoSource(nextVideoUrl);
+    }
+
+    return nextVideoUrl;
   }
 
   private async hasPaidChapterOrder(
@@ -609,15 +665,19 @@ export class CoursService {
         console.log(`   📄 Chapitre ${chapitreIndex + 1}: "${chapitreDto.titre}"`);
         console.log(`      🎬 Video URL received: "${chapitreDto.videoUrl || '(empty)'}"`);
 
+        const normalizedContent = this.normalizeChapterContent(chapitreDto.description);
+        const normalizedVideoUrl = this.resolveChapterVideoUrlForCreate(chapitreDto.videoUrl);
+        this.assertChapterHasContentOrVideo(normalizedContent, normalizedVideoUrl);
+
         const dureeCalculee = chapitreDto.duree
           ? this.convertirDureeEnMinutes(chapitreDto.duree)
-          : (chapitreDto.videoUrl ? 5 : 0); // Default 5 minutes for videos, 0 for text
+          : (normalizedVideoUrl ? 5 : 0); // Default 5 minutes for videos, 0 for text
 
         const chapter = {
           id: new Types.ObjectId().toString(),
           titre: chapitreDto.titre,
-          contenu: chapitreDto.description,
-          videoUrl: chapitreDto.videoUrl || '',
+          contenu: normalizedContent,
+          videoUrl: normalizedVideoUrl,
           isPreview: !chapitreDto.isPaid,
           ordre: chapitreDto.ordre,
           duree: dureeCalculee,
@@ -1180,11 +1240,15 @@ export class CoursService {
         console.log(`   📄 Chapitre ${j + 1}: "${chapitreDto.titre}"`);
         console.log(`      🔧 Données du chapitre:`, JSON.stringify(chapitreDto, null, 2));
 
+        const normalizedContent = this.normalizeChapterContent(chapitreDto.description);
+        const normalizedVideoUrl = this.resolveChapterVideoUrlForCreate(chapitreDto.videoUrl);
+        this.assertChapterHasContentOrVideo(normalizedContent, normalizedVideoUrl);
+
         const nouveauChapitre = {
           id: new Types.ObjectId().toString(),
           titre: chapitreDto.titre,
-          contenu: chapitreDto.description,
-          videoUrl: chapitreDto.videoUrl,
+          contenu: normalizedContent,
+          videoUrl: normalizedVideoUrl,
           isPreview: !chapitreDto.isPaid,
           ordre: chapitreDto.ordre,
           duree: chapitreDto.duree,
@@ -1461,14 +1525,27 @@ export class CoursService {
       throw new NotFoundException('Chapitre non trouvé dans cette section');
     }
 
+    const normalizedExistingContent = this.normalizeChapterContent(chapitre.contenu);
+    const normalizedExistingVideoUrl = normalizeChapterVideoUrl(chapitre.videoUrl);
+    const nextContent =
+      dto.description !== undefined
+        ? this.normalizeChapterContent(dto.description)
+        : normalizedExistingContent;
+    const nextVideoUrl =
+      dto.videoUrl !== undefined
+        ? this.resolveChapterVideoUrlForUpdate(normalizedExistingVideoUrl, dto.videoUrl)
+        : normalizedExistingVideoUrl;
+
+    this.assertChapterHasContentOrVideo(nextContent, nextVideoUrl);
+
     if (dto.titre !== undefined) {
       chapitre.titre = dto.titre;
     }
     if (dto.description !== undefined) {
-      chapitre.contenu = dto.description;
+      chapitre.contenu = nextContent;
     }
     if (dto.videoUrl !== undefined) {
-      chapitre.videoUrl = dto.videoUrl;
+      chapitre.videoUrl = nextVideoUrl;
     }
     if (dto.ordre !== undefined) {
       chapitre.ordre = dto.ordre;
@@ -1536,23 +1613,29 @@ export class CoursService {
         courseId: coursId,
         ordre: addSectionDto.ordre,
         chapitres: Array.isArray(addSectionDto.chapitres)
-          ? addSectionDto.chapitres.map((chapitre) => ({
-            id: new Types.ObjectId().toString(),
-            titre: chapitre.titre,
-            contenu: chapitre.description || '',
-            videoUrl: chapitre.videoUrl,
-            duree: chapitre.duree ? this.convertirDureeEnMinutes(chapitre.duree) : undefined,
-            sectionId: new Types.ObjectId().toString(),
-            ordre: chapitre.ordre,
-            isPreview: chapitre.isPaid === false,
-            prix: this.resolvePaidChapterPrice(
-              { isPaid: chapitre.isPaid, prix: chapitre.prix },
-              cours.prix,
-            ),
-            notes: chapitre.notes,
-            ressources: [],
-            createdAt: new Date(),
-          }))
+          ? addSectionDto.chapitres.map((chapitre) => {
+            const normalizedContent = this.normalizeChapterContent(chapitre.description);
+            const normalizedVideoUrl = this.resolveChapterVideoUrlForCreate(chapitre.videoUrl);
+            this.assertChapterHasContentOrVideo(normalizedContent, normalizedVideoUrl);
+
+            return {
+              id: new Types.ObjectId().toString(),
+              titre: chapitre.titre,
+              contenu: normalizedContent,
+              videoUrl: normalizedVideoUrl,
+              duree: chapitre.duree ? this.convertirDureeEnMinutes(chapitre.duree) : undefined,
+              sectionId: new Types.ObjectId().toString(),
+              ordre: chapitre.ordre,
+              isPreview: chapitre.isPaid === false,
+              prix: this.resolvePaidChapterPrice(
+                { isPaid: chapitre.isPaid, prix: chapitre.prix },
+                cours.prix,
+              ),
+              notes: chapitre.notes,
+              ressources: [],
+              createdAt: new Date(),
+            };
+          })
           : [],
         createdAt: new Date(),
       };
@@ -1618,13 +1701,17 @@ export class CoursService {
       console.log(`   ✅ Section trouvée: ${section.titre}`);
       console.log(`   📚 Chapitres actuels: ${section.chapitres?.length || 0}`);
 
+      const normalizedContent = this.normalizeChapterContent(addChapitreDto.description);
+      const normalizedVideoUrl = this.resolveChapterVideoUrlForCreate(addChapitreDto.videoUrl);
+      this.assertChapterHasContentOrVideo(normalizedContent, normalizedVideoUrl);
+
       // 4. Construire le nouveau chapitre
       const nouveauChapitre = {
         id: new Types.ObjectId().toString(),
         titre: addChapitreDto.titre,
-        contenu: addChapitreDto.description,
-        videoUrl: addChapitreDto.videoUrl,
-        duree: addChapitreDto.duree ? this.convertirDureeEnMinutes(addChapitreDto.duree) : (addChapitreDto.videoUrl ? 5 : 0), // Default 5 minutes for videos, 0 for text
+        contenu: normalizedContent,
+        videoUrl: normalizedVideoUrl,
+        duree: addChapitreDto.duree ? this.convertirDureeEnMinutes(addChapitreDto.duree) : (normalizedVideoUrl ? 5 : 0), // Default 5 minutes for videos, 0 for text
         sectionId: sectionId,
         ordre: addChapitreDto.ordre,
         isPreview: !addChapitreDto.isPaid,
@@ -1914,8 +2001,14 @@ export class CoursService {
         throw new NotFoundException('Chapitre non trouvé dans cette section');
       }
 
+      const nextVideoUrl = this.resolveChapterVideoUrlForUpdate(
+        chapitre.videoUrl,
+        videoUrl,
+      );
+      this.assertChapterHasContentOrVideo(chapitre.contenu, nextVideoUrl);
+
       // 5. Mettre à jour l'URL vidéo
-      chapitre.videoUrl = videoUrl;
+      chapitre.videoUrl = nextVideoUrl;
       const coursEnregistre = await cours.save();
       await this.invalidateCourseCaches(cours.creatorId?.toString?.());
 

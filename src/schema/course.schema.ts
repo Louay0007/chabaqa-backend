@@ -70,8 +70,8 @@ export class CourseChapter {
   titre: string;
 
   @Prop({
-    required: true,
-    trim: true
+    trim: true,
+    default: ''
   })
   contenu: string;
 

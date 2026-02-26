@@ -47,7 +47,9 @@ services:
       NODE_ENV: production
       PORT: 3000
       HTTP_ACCESS_LOG: ${HTTP_ACCESS_LOG:-true}
-      # MongoDB Atlas - uses MONGO_URI from .env
+      MONGO_URI: mongodb://chabaqa-local-mongo:27017/chabaqa_local
+      DB_NAME: chabaqa_local
+      # MongoDB - defaults to local service hostname unless overridden
       # Redis Configuration
       REDIS_ENABLED: "true"
       REDIS_HOST: redis

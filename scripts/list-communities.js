@@ -1,14 +1,21 @@
 const mongoose = require('mongoose');
+const path = require('path');
 
-// MongoDB Atlas connection from docker-compose.yml
-const MONGO_URI = 'mongodb+srv://admin:admin@chabaqa.bmmujoq.mongodb.net/?appName=chabaqa';
+require('dotenv').config({ path: path.join(__dirname, '../.env'), quiet: true });
+require('dotenv').config({ path: path.join(__dirname, '../.env.local-db'), override: true, quiet: true });
+
+const MONGO_URI = process.env.MONGO_URI;
 
 // Simple community schema for querying
 const communitySchema = new mongoose.Schema({}, { strict: false });
 
 async function listCommunities() {
   try {
-    console.log('🔗 Connecting to MongoDB Atlas...');
+    if (!MONGO_URI) {
+      throw new Error('MONGO_URI is missing. Set it in .env or .env.local-db');
+    }
+
+    console.log('🔗 Connecting to MongoDB from MONGO_URI...');
     await mongoose.connect(MONGO_URI);
     console.log('✅ Connected!\n');
 

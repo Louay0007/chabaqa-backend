@@ -1,15 +1,18 @@
-import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, BadRequestException, UnauthorizedException } from '@nestjs/common';
 import { IUser } from '../interface/user.interface';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Connection, Model, Types } from 'mongoose';
 import * as bcrypt from 'bcryptjs';
 import { CreateUserDto } from '../dto-user/create-user.dto';
 import { UpdateUserDto } from '../dto-user/update-user.dto';
 import { ForgotPasswordDto } from '../dto-user/forgot-password.dto';
 import { ResetPasswordDto } from '../dto-user/reset-password.dto';
+import { ChangePasswordDto } from '../dto-user/change-password.dto';
+import { DeleteAccountDto } from '../dto-user/delete-account.dto';
 import { EmailService } from '../common/services/email.service';
 import { VerificationCode, VerificationCodeDocument } from '../schema/verification-code.schema';
 import { UploadService, FileType } from '../upload/upload.service';
+import { CommunityAffCreaJoinService } from '../community-aff-crea-join/community-aff-crea-join.service';
 
 @Injectable()
 export class UserService {
@@ -18,6 +21,7 @@ export class UserService {
     @InjectModel('VerificationCode') private verificationCodeModel: Model<VerificationCodeDocument>,
     private emailService: EmailService,
     private uploadService: UploadService,
+    private communityAffCreaJoinService: CommunityAffCreaJoinService,
   ) { }
 
   /**
@@ -32,7 +36,39 @@ export class UserService {
    * Vérifie un mot de passe
    */
   private async verifyPassword(password: string, hashedPassword: string): Promise<boolean> {
+    if (!password || !hashedPassword) return false;
     return bcrypt.compare(password, hashedPassword);
+  }
+
+  private getModelIfRegistered<T = any>(connection: Connection, modelName: string): Model<T> | null {
+    return connection.modelNames().includes(modelName) ? (connection.model(modelName) as Model<T>) : null;
+  }
+
+  private getAffectedCount(result: any): number {
+    if (!result) return 0;
+    if (typeof result.deletedCount === 'number') return result.deletedCount;
+    if (typeof result.modifiedCount === 'number') return result.modifiedCount;
+    if (typeof result.matchedCount === 'number') return result.matchedCount;
+    return 0;
+  }
+
+  private async cleanupLocalAvatarFile(user: IUser): Promise<void> {
+    const avatarUrl = ((user as any).photo_profil || (user as any).profile_picture || '').trim();
+    if (!avatarUrl || avatarUrl.startsWith('http')) return;
+
+    try {
+      const marker = '/uploads/image/';
+      const markerIndex = avatarUrl.indexOf(marker);
+      if (markerIndex === -1) return;
+
+      const filename = avatarUrl.slice(markerIndex + marker.length);
+      if (!filename) return;
+
+      await this.uploadService.deleteFile(filename, FileType.IMAGE);
+      console.log('✅ [DELETE ACCOUNT] Local avatar file deleted');
+    } catch (error: any) {
+      console.warn(`⚠️ [DELETE ACCOUNT] Could not delete avatar file: ${error?.message || 'unknown error'}`);
+    }
   }
 
   /**
@@ -140,147 +176,288 @@ export class UserService {
    * - User wallet data
    * - User uploaded files
    */
-  async deleteUserAccount(userId: string): Promise<void> {
-    console.log(`🗑️ [DELETE ACCOUNT] Starting deletion process for user ${userId}`);
-    
-    // Find user first
-    const user = await this.userModel.findById(userId);
-    if (!user) {
-      throw new NotFoundException(`User #${userId} not found`);
+  async deleteUserAccount(userId: string, deleteAccountDto: DeleteAccountDto): Promise<void> {
+    const normalizedId = String(userId || '').trim();
+    if (!Types.ObjectId.isValid(normalizedId)) {
+      throw new BadRequestException('Format ID utilisateur invalide');
     }
 
+    if ((deleteAccountDto.confirmText || '').trim() !== 'DELETE') {
+      throw new BadRequestException('Le texte de confirmation doit etre DELETE');
+    }
+
+    const userObjectId = new Types.ObjectId(normalizedId);
+    const user = await this.userModel.findById(userObjectId).select('+password');
+    if (!user) {
+      throw new NotFoundException(`User #${normalizedId} not found`);
+    }
+
+    const userPassword = String((user as any).password || '');
+    if (!userPassword) {
+      throw new BadRequestException('Aucun mot de passe local defini. Utilisez la reinitialisation de mot de passe.');
+    }
+
+    const passwordOk = await this.verifyPassword(deleteAccountDto.currentPassword, userPassword);
+    if (!passwordOk) {
+      throw new UnauthorizedException('Mot de passe actuel incorrect');
+    }
+
+    console.log(`🗑️ [DELETE ACCOUNT] Starting deletion for user ${normalizedId}`);
+    console.log('⚠️ [DELETE ACCOUNT] Running non-transactional cascade cleanup (Mongo replica set transaction not enabled).');
+
+    const connection = this.userModel.db as Connection;
+    const Community = this.getModelIfRegistered(connection, 'Community');
+    const Post = this.getModelIfRegistered(connection, 'Post');
+    const Cours = this.getModelIfRegistered(connection, 'Cours');
+    const Product = this.getModelIfRegistered(connection, 'Product');
+    const Challenge = this.getModelIfRegistered(connection, 'Challenge');
+    const Session = this.getModelIfRegistered(connection, 'Session');
+    const Event = this.getModelIfRegistered(connection, 'Event');
+    const Order = this.getModelIfRegistered(connection, 'Order');
+    const Subscription = this.getModelIfRegistered(connection, 'Subscription');
+    const Conversation = this.getModelIfRegistered(connection, 'Conversation');
+    const Message = this.getModelIfRegistered(connection, 'Message');
+    const Notification = this.getModelIfRegistered(connection, 'Notification');
+    const NotificationPreferences = this.getModelIfRegistered(connection, 'NotificationPreferences');
+    const ContentProgress = this.getModelIfRegistered(connection, 'ContentProgress');
+    const TrackingAction = this.getModelIfRegistered(connection, 'TrackingAction');
+    const CourseEnrollment = this.getModelIfRegistered(connection, 'CourseEnrollment');
+    const UserCourseNote = this.getModelIfRegistered(connection, 'UserCourseNote');
+    const CourseProgress = this.getModelIfRegistered(connection, 'CourseProgress');
+    const WalletTransaction = this.getModelIfRegistered(connection, 'WalletTransaction');
+    const TopUpRequest = this.getModelIfRegistered(connection, 'TopUpRequest');
+    const Payout = this.getModelIfRegistered(connection, 'Payout');
+    const UserAchievement = this.getModelIfRegistered(connection, 'UserAchievement');
+    const ChallengeSubmission = this.getModelIfRegistered(connection, 'ChallengeSubmission');
+    const Feedback = this.getModelIfRegistered(connection, 'Feedback');
+    const MediaAsset = this.getModelIfRegistered(connection, 'MediaAsset');
+    const StorageUsage = this.getModelIfRegistered(connection, 'StorageUsage');
+    const RevokedToken = this.getModelIfRegistered(connection, 'RevokedToken');
+    const PromoCode = this.getModelIfRegistered(connection, 'PromoCode');
+    const EmailCampaign = this.getModelIfRegistered(connection, 'EmailCampaign');
+    const AnalyticsDaily = this.getModelIfRegistered(connection, 'AnalyticsDaily');
+    const UserLoginActivity = this.getModelIfRegistered(connection, 'UserLoginActivity');
+
+    const logStep = (label: string, result?: any) => {
+      const count = this.getAffectedCount(result);
+      console.log(`✅ [DELETE ACCOUNT] ${label}: ${count}`);
+    };
+
     try {
-      // 1. Delete user's posts
-      const Post = this.userModel.db.model('Post');
-      const deletedPosts = await Post.deleteMany({ authorId: userId });
-      console.log(`✅ [DELETE ACCOUNT] Deleted ${deletedPosts.deletedCount} posts`);
-
-      // 2. Delete user's comments
-      const Comment = this.userModel.db.model('Comment');
-      const deletedComments = await Comment.deleteMany({ userId: userId });
-      console.log(`✅ [DELETE ACCOUNT] Deleted ${deletedComments.deletedCount} comments`);
-
-      // 3. Remove user from communities (memberships)
-      const Community = this.userModel.db.model('Community');
-      const updatedCommunities = await Community.updateMany(
-        { members: userId },
-        { 
-          $pull: { members: userId },
-          $inc: { membersCount: -1 }
+      if (Community) {
+        const createdCommunities = await Community.find({ createur: userObjectId }).select('_id').lean();
+        for (const community of createdCommunities) {
+          await this.communityAffCreaJoinService.deleteCommunity(String((community as any)._id));
         }
-      );
-      console.log(`✅ [DELETE ACCOUNT] Removed from ${updatedCommunities.modifiedCount} communities`);
+        console.log(`✅ [DELETE ACCOUNT] Creator communities deleted via cascade service: ${createdCommunities.length}`);
 
-      // 4. Delete communities created by user (optional - or transfer ownership)
-      const deletedCommunities = await Community.deleteMany({ creatorId: userId });
-      console.log(`✅ [DELETE ACCOUNT] Deleted ${deletedCommunities.deletedCount} created communities`);
+        const communityCleanup = await Community.updateMany(
+          {
+            $or: [
+              { members: userObjectId },
+              { admins: userObjectId },
+              { moderateurs: userObjectId },
+            ],
+          },
+          {
+            $pull: {
+              members: userObjectId,
+              admins: userObjectId,
+              moderateurs: userObjectId,
+            },
+          },
+        );
+        logStep('Removed user from community memberships/roles', communityCleanup);
+      }
 
-      // 5. Delete user's events
-      const Event = this.userModel.db.model('Event');
-      const deletedEvents = await Event.deleteMany({ creatorId: userId });
-      console.log(`✅ [DELETE ACCOUNT] Deleted ${deletedEvents.deletedCount} events`);
+      if (Post) {
+        logStep('Deleted authored posts', await Post.deleteMany({ authorId: userObjectId }));
+        logStep(
+          'Removed user comments and reactions from posts',
+          await Post.updateMany(
+            {
+              $or: [
+                { 'comments.userId': userObjectId },
+                { likedBy: userObjectId },
+                { sharedBy: userObjectId },
+                { bookmarks: userObjectId },
+              ],
+            },
+            {
+              $pull: {
+                comments: { userId: userObjectId },
+                likedBy: userObjectId,
+                sharedBy: userObjectId,
+                bookmarks: userObjectId,
+              },
+            },
+          ),
+        );
+      }
 
-      // 6. Delete user's event registrations
-      const EventRegistration = this.userModel.db.model('EventRegistration');
-      const deletedRegistrations = await EventRegistration.deleteMany({ userId: userId });
-      console.log(`✅ [DELETE ACCOUNT] Deleted ${deletedRegistrations.deletedCount} event registrations`);
+      if (Challenge) {
+        logStep('Deleted creator challenges', await Challenge.deleteMany({ creatorId: userObjectId }));
+        logStep(
+          'Removed user from challenge participants and posts',
+          await Challenge.updateMany(
+            {
+              $or: [
+                { 'participants.userId': userObjectId },
+                { 'posts.userId': userObjectId },
+              ],
+            },
+            {
+              $pull: {
+                participants: { userId: userObjectId },
+                posts: { userId: userObjectId },
+              },
+            },
+          ),
+        );
+        logStep(
+          'Removed user comments from challenge posts',
+          await Challenge.updateMany(
+            { 'posts.comments.userId': userObjectId },
+            {
+              $pull: {
+                'posts.$[].comments': { userId: userObjectId },
+              },
+            },
+          ),
+        );
+      }
 
-      // 7. Delete user's session bookings
-      const SessionBooking = this.userModel.db.model('SessionBooking');
-      const deletedBookings = await SessionBooking.deleteMany({ userId: userId });
-      console.log(`✅ [DELETE ACCOUNT] Deleted ${deletedBookings.deletedCount} session bookings`);
+      if (Session) {
+        logStep('Deleted creator sessions', await Session.deleteMany({ creatorId: userObjectId }));
+        logStep(
+          'Removed user from session bookings',
+          await Session.updateMany(
+            { 'bookings.userId': userObjectId },
+            { $pull: { bookings: { userId: userObjectId } } },
+          ),
+        );
+        logStep(
+          'Released booked session slots',
+          await Session.updateMany(
+            { 'availableSlots.bookedBy': userObjectId },
+            {
+              $set: { 'availableSlots.$[slot].isAvailable': true },
+              $unset: {
+                'availableSlots.$[slot].bookedBy': 1,
+                'availableSlots.$[slot].bookedAt': 1,
+              },
+            },
+            {
+              arrayFilters: [{ 'slot.bookedBy': userObjectId }],
+            },
+          ),
+        );
+      }
 
-      // 8. Delete user's sessions
-      const Session = this.userModel.db.model('Session');
-      const deletedSessions = await Session.deleteMany({ creatorId: userId });
-      console.log(`✅ [DELETE ACCOUNT] Deleted ${deletedSessions.deletedCount} sessions`);
+      if (Event) {
+        logStep('Deleted creator events', await Event.deleteMany({ creatorId: userObjectId }));
+        logStep(
+          'Removed user from event attendees',
+          await Event.updateMany(
+            { 'attendees.userId': userObjectId },
+            { $pull: { attendees: { userId: userObjectId } } },
+          ),
+        );
+      }
 
-      // 9. Delete user's challenges
-      const Challenge = this.userModel.db.model('Challenge');
-      const deletedChallenges = await Challenge.deleteMany({ creatorId: userId });
-      console.log(`✅ [DELETE ACCOUNT] Deleted ${deletedChallenges.deletedCount} challenges`);
+      if (Cours) logStep('Deleted creator courses', await Cours.deleteMany({ creatorId: userObjectId }));
+      if (Product) logStep('Deleted creator products', await Product.deleteMany({ creatorId: userObjectId }));
+      if (EmailCampaign) {
+        logStep(
+          'Deleted creator/user email campaigns',
+          await EmailCampaign.deleteMany({ $or: [{ creatorId: userObjectId }, { userId: userObjectId }] }),
+        );
+      }
+      if (AnalyticsDaily) logStep('Deleted creator analytics snapshots', await AnalyticsDaily.deleteMany({ creatorId: userObjectId }));
+      if (UserLoginActivity) logStep('Deleted user login activity', await UserLoginActivity.deleteMany({ userId: userObjectId }));
+      if (PromoCode) logStep('Deleted creator promo codes', await PromoCode.deleteMany({ creatorId: userObjectId }));
 
-      // 10. Remove user from challenge participants
-      await Challenge.updateMany(
-        { 'participants.userId': userId },
-        { $pull: { participants: { userId: userId } } }
-      );
-      console.log(`✅ [DELETE ACCOUNT] Removed from challenge participants`);
+      if (CourseEnrollment) {
+        const enrollments = await CourseEnrollment.find({ userId: userObjectId }).select('_id').lean();
+        const enrollmentIds = enrollments.map((item: any) => item._id).filter(Boolean);
 
-      // 11. Delete user's courses
-      const Cours = this.userModel.db.model('Cours');
-      const deletedCourses = await Cours.deleteMany({ creatorId: userId });
-      console.log(`✅ [DELETE ACCOUNT] Deleted ${deletedCourses.deletedCount} courses`);
-
-      // 12. Delete user's products
-      const Product = this.userModel.db.model('Product');
-      const deletedProducts = await Product.deleteMany({ creatorId: userId });
-      console.log(`✅ [DELETE ACCOUNT] Deleted ${deletedProducts.deletedCount} products`);
-
-      // 13. Delete user's wallet transactions
-      const WalletTransaction = this.userModel.db.model('WalletTransaction');
-      const deletedTransactions = await WalletTransaction.deleteMany({ userId: userId });
-      console.log(`✅ [DELETE ACCOUNT] Deleted ${deletedTransactions.deletedCount} wallet transactions`);
-
-      // 14. Delete user's top-up requests
-      const TopUpRequest = this.userModel.db.model('TopUpRequest');
-      const deletedTopUps = await TopUpRequest.deleteMany({ userId: userId });
-      console.log(`✅ [DELETE ACCOUNT] Deleted ${deletedTopUps.deletedCount} top-up requests`);
-
-      // 15. Delete user's messages
-      const Message = this.userModel.db.model('Message');
-      const deletedMessages = await Message.deleteMany({ 
-        $or: [{ senderId: userId }, { receiverId: userId }]
-      });
-      console.log(`✅ [DELETE ACCOUNT] Deleted ${deletedMessages.deletedCount} messages`);
-
-      // 16. Delete user's conversations
-      const Conversation = this.userModel.db.model('Conversation');
-      const deletedConversations = await Conversation.deleteMany({
-        participants: userId
-      });
-      console.log(`✅ [DELETE ACCOUNT] Deleted ${deletedConversations.deletedCount} conversations`);
-
-      // 17. Delete user's notifications
-      const Notification = this.userModel.db.model('Notification');
-      const deletedNotifications = await Notification.deleteMany({ userId: userId });
-      console.log(`✅ [DELETE ACCOUNT] Deleted ${deletedNotifications.deletedCount} notifications`);
-
-      // 18. Delete user's tracking data (views, bookmarks, etc.)
-      const TrackingData = this.userModel.db.model('TrackingData');
-      const deletedTracking = await TrackingData.deleteMany({ userId: userId });
-      console.log(`✅ [DELETE ACCOUNT] Deleted ${deletedTracking.deletedCount} tracking records`);
-
-      // 19. Delete user's verification codes
-      const deletedCodes = await this.verificationCodeModel.deleteMany({ email: user.email });
-      console.log(`✅ [DELETE ACCOUNT] Deleted ${deletedCodes.deletedCount} verification codes`);
-
-      // 20. Delete user's uploaded files (avatar, etc.)
-      if (user.photo_profil || user.profile_picture) {
-        try {
-          const avatarUrl = user.photo_profil || user.profile_picture;
-          if (avatarUrl && !avatarUrl.startsWith('http')) {
-            // Extract filename from URL like '/uploads/image/filename.jpg'
-            const urlParts = avatarUrl.split('/uploads/image/');
-            if (urlParts.length === 2) {
-              const filename = urlParts[1];
-              await this.uploadService.deleteFile(filename, FileType.IMAGE);
-              console.log(`✅ [DELETE ACCOUNT] Deleted avatar file`);
-            }
-          }
-        } catch (error) {
-          console.warn(`⚠️ [DELETE ACCOUNT] Could not delete avatar file:`, error.message);
+        logStep('Deleted user course enrollments', await CourseEnrollment.deleteMany({ userId: userObjectId }));
+        if (Cours && enrollmentIds.length > 0) {
+          logStep(
+            'Removed enrollment references from courses',
+            await Cours.updateMany({ inscriptions: { $in: enrollmentIds } }, { $pull: { inscriptions: { $in: enrollmentIds } } }),
+          );
+        }
+        if (CourseProgress && enrollmentIds.length > 0) {
+          logStep('Deleted related course progress', await CourseProgress.deleteMany({ enrollmentId: { $in: enrollmentIds } }));
         }
       }
 
-      // 21. Finally, delete the user account
-      await this.userModel.findByIdAndDelete(userId);
-      console.log(`✅ [DELETE ACCOUNT] User account deleted`);
+      if (UserCourseNote) logStep('Deleted user course notes', await UserCourseNote.deleteMany({ userId: userObjectId }));
+      if (ContentProgress) logStep('Deleted content progress', await ContentProgress.deleteMany({ userId: userObjectId }));
+      if (TrackingAction) logStep('Deleted tracking actions', await TrackingAction.deleteMany({ userId: userObjectId }));
+      if (Order) logStep('Deleted user orders', await Order.deleteMany({ $or: [{ buyerId: userObjectId }, { creatorId: userObjectId }] }));
+      if (Subscription) {
+        logStep(
+          'Deleted user subscriptions',
+          await Subscription.deleteMany({ $or: [{ subscriberId: userObjectId }, { creatorId: userObjectId }] }),
+        );
+      }
+      if (WalletTransaction) logStep('Deleted wallet transactions', await WalletTransaction.deleteMany({ userId: userObjectId }));
+      if (TopUpRequest) {
+        logStep(
+          'Deleted top-up requests',
+          await TopUpRequest.deleteMany({ $or: [{ userId: userObjectId }, { processedBy: userObjectId }] }),
+        );
+      }
+      if (Payout) logStep('Deleted payouts', await Payout.deleteMany({ creatorId: userObjectId }));
+      if (UserAchievement) logStep('Deleted user achievements', await UserAchievement.deleteMany({ userId: userObjectId }));
+      if (ChallengeSubmission) {
+        logStep(
+          'Deleted challenge submissions',
+          await ChallengeSubmission.deleteMany({ $or: [{ userId: userObjectId }, { reviewedBy: userObjectId }] }),
+        );
+      }
+      if (Feedback) logStep('Deleted feedback records', await Feedback.deleteMany({ user: userObjectId }));
+      if (Conversation) {
+        logStep(
+          'Deleted conversations',
+          await Conversation.deleteMany({ $or: [{ participantA: userObjectId }, { participantB: userObjectId }] }),
+        );
+      }
+      if (Message) {
+        logStep(
+          'Deleted direct messages',
+          await Message.deleteMany({ $or: [{ senderId: userObjectId }, { recipientId: userObjectId }] }),
+        );
+        logStep('Cleaned soft-delete references in messages', await Message.updateMany({ deletedFor: userObjectId }, { $pull: { deletedFor: userObjectId } }));
+      }
+      if (Notification) {
+        logStep(
+          'Deleted notifications',
+          await Notification.deleteMany({ $or: [{ recipient: userObjectId }, { sender: userObjectId }] }),
+        );
+      }
+      if (NotificationPreferences) {
+        logStep('Deleted notification preferences', await NotificationPreferences.deleteMany({ user: userObjectId }));
+      }
+      if (MediaAsset) logStep('Deleted media assets', await MediaAsset.deleteMany({ uploadedBy: userObjectId }));
+      if (StorageUsage) logStep('Deleted storage usage records', await StorageUsage.deleteMany({ userId: userObjectId }));
 
-      console.log(`🎉 [DELETE ACCOUNT] Account deletion completed successfully for user ${userId}`);
-    } catch (error) {
-      console.error(`❌ [DELETE ACCOUNT] Error during deletion:`, error);
-      throw new BadRequestException(`Failed to delete account: ${error.message}`);
+      logStep(
+        'Deleted verification codes',
+        await this.verificationCodeModel.deleteMany({
+          $or: [{ email: String((user as any).email || '').toLowerCase() }, { userId: userObjectId }],
+        }),
+      );
+      if (RevokedToken) logStep('Deleted revoked token records', await RevokedToken.deleteMany({ userId: userObjectId }));
+
+      await this.cleanupLocalAvatarFile(user);
+      await this.userModel.findByIdAndDelete(userObjectId);
+      console.log(`✅ [DELETE ACCOUNT] User account deleted: ${normalizedId}`);
+    } catch (error: any) {
+      console.error('❌ [DELETE ACCOUNT] Cascade deletion failed:', error);
+      throw new BadRequestException(`Failed to delete account: ${error?.message || 'Unknown error'}`);
     }
   }
 
@@ -297,23 +474,29 @@ export class UserService {
   }
 
   // update user password
-  async updateUserPassword(id: string, updateUserDto: UpdateUserDto): Promise<IUser> {
-    // Vérifier que le mot de passe existe
-    if (!updateUserDto.password) {
-      throw new Error('Le mot de passe est requis');
-    }
-
-    // Hash le nouveau mot de passe
-    const hashedPassword = await this.hashPassword(updateUserDto.password);
-    const updatedUser = await this.userModel.findByIdAndUpdate(
-      id,
-      { password: hashedPassword },
-      { new: true }
-    );
-    if (!updatedUser) {
+  async updateUserPassword(id: string, changePasswordDto: ChangePasswordDto): Promise<void> {
+    const user = await this.userModel.findById(id).select('+password');
+    if (!user) {
       throw new NotFoundException(`User #${id} not found`);
     }
-    return updatedUser;
+
+    const userPassword = String((user as any).password || '');
+    if (!userPassword) {
+      throw new BadRequestException('Aucun mot de passe local defini. Utilisez la reinitialisation de mot de passe.');
+    }
+
+    const currentPasswordValid = await this.verifyPassword(changePasswordDto.currentPassword, userPassword);
+    if (!currentPasswordValid) {
+      throw new UnauthorizedException('Mot de passe actuel incorrect');
+    }
+
+    const isSamePassword = await this.verifyPassword(changePasswordDto.newPassword, userPassword);
+    if (isSamePassword) {
+      throw new BadRequestException('Le nouveau mot de passe doit etre different du mot de passe actuel');
+    }
+
+    const hashedPassword = await this.hashPassword(changePasswordDto.newPassword);
+    await this.userModel.findByIdAndUpdate(id, { password: hashedPassword });
   }
 
   /**

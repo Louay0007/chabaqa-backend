@@ -1,10 +1,12 @@
-import { Controller, Post, Get, Put, Delete, Body, Param, HttpStatus, Res, Response, ConflictException, UseGuards, Request, ForbiddenException } from '@nestjs/common';
+import { Controller, Post, Get, Put, Delete, Body, Param, HttpStatus, Res, Response, ConflictException, UseGuards, Request, ForbiddenException, BadRequestException } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBody, ApiBearerAuth, ApiParam } from '@nestjs/swagger';
 import { UserService } from './user.service';
 import { CreateUserDto } from '../dto-user/create-user.dto';
 import { UpdateUserDto } from '../dto-user/update-user.dto';
 import { ForgotPasswordDto } from '../dto-user/forgot-password.dto';
 import { ResetPasswordDto } from '../dto-user/reset-password.dto';
+import { ChangePasswordDto } from '../dto-user/change-password.dto';
+import { DeleteAccountDto } from '../dto-user/delete-account.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 @ApiTags('Users')
@@ -172,13 +174,14 @@ export class UserController {
   })
   @ApiBearerAuth('JWT-auth')
   @ApiBody({
-    type: UpdateUserDto,
-    description: 'New password data',
+    type: ChangePasswordDto,
+    description: 'Password change data',
     examples: {
       'Change Password': {
         summary: 'Change user password',
         value: {
-          password: 'newpassword123'
+          currentPassword: 'currentpassword123',
+          newPassword: 'newpassword123'
         }
       }
     }
@@ -190,14 +193,7 @@ export class UserController {
       'application/json': {
         example: {
           success: true,
-          message: 'Mot de passe changé avec succès',
-          user: {
-            _id: '64a1b2c3d4e5f6789abcdef0',
-            name: 'John Doe',
-            email: 'john@example.com',
-            role: 'user',
-            createdAt: '2023-07-01T10:00:00.000Z'
-          }
+          message: 'Mot de passe change avec succes',
         }
       }
     }
@@ -232,29 +228,23 @@ export class UserController {
   async changePassword(
     @Res() response,
     @Request() req,
-    @Body() updateUserDto: UpdateUserDto
+    @Body() changePasswordDto: ChangePasswordDto
   ) {
     try {
-      // Récupérer l'ID de l'utilisateur connecté depuis le token JWT
       const userId = req.user.sub || req.user._id;
-      
-      // Vérifier que le mot de passe est fourni
-      if (!updateUserDto.password) {
-        throw new Error('Le mot de passe est requis');
-      }
-      
-      const updatedUser = await this.userService.updateUserPassword(userId, updateUserDto);
+      await this.userService.updateUserPassword(userId, changePasswordDto);
+
       return response.status(HttpStatus.OK).json({
         success: true,
-        message: 'Mot de passe changé avec succès',
-        user: updatedUser,
+        message: 'Mot de passe change avec succes',
       });
     } catch (err) {
-      return response.status(HttpStatus.BAD_REQUEST).json({
+      const status = err?.getStatus?.() || err?.status || HttpStatus.BAD_REQUEST;
+      return response.status(status).json({
         success: false,
-        status: 400,
-        message: 'Erreur lors du changement de mot de passe',
-        error: 'BAD_REQUEST',
+        status,
+        message: err?.message || 'Erreur lors du changement de mot de passe',
+        error: status === HttpStatus.UNAUTHORIZED ? 'UNAUTHORIZED' : 'BAD_REQUEST',
         details: err.message
       });
     }
@@ -440,29 +430,39 @@ export class UserController {
         }
       }
     })
-    async deleteOwnAccount(@Res() response, @Request() req) {
+    @ApiBody({
+      type: DeleteAccountDto,
+      description: 'Delete account confirmation payload',
+      examples: {
+        'Delete Account': {
+          summary: 'Delete authenticated account',
+          value: {
+            currentPassword: 'currentpassword123',
+            confirmText: 'DELETE'
+          }
+        }
+      }
+    })
+    async deleteOwnAccount(@Res() response, @Request() req, @Body() deleteAccountDto: DeleteAccountDto) {
       try {
-        // Get user ID from JWT token
         const userId = req.user.sub || req.user._id;
-        
-        console.log(`🗑️ [DELETE ACCOUNT] User ${userId} requested account deletion`);
-        
-        // Delete user and all associated data
-        await this.userService.deleteUserAccount(userId);
-        
-        console.log(`✅ [DELETE ACCOUNT] User ${userId} account deleted successfully`);
-        
+        if ((deleteAccountDto.confirmText || '').trim() !== 'DELETE') {
+          throw new BadRequestException('Le texte de confirmation doit etre DELETE');
+        }
+
+        await this.userService.deleteUserAccount(userId, deleteAccountDto);
+
         return response.status(HttpStatus.OK).json({
           success: true,
           message: 'Your account and all associated data have been permanently deleted',
         });
       } catch (err) {
-        console.error(`❌ [DELETE ACCOUNT] Error deleting account:`, err);
-        return response.status(HttpStatus.BAD_REQUEST).json({
+        const status = err?.getStatus?.() || err?.status || HttpStatus.BAD_REQUEST;
+        return response.status(status).json({
           success: false,
-          status: 400,
-          message: 'Error deleting account',
-          error: 'BAD_REQUEST',
+          status,
+          message: err?.message || 'Error deleting account',
+          error: status === HttpStatus.UNAUTHORIZED ? 'UNAUTHORIZED' : 'BAD_REQUEST',
           details: err.message
         });
       }

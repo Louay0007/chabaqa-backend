@@ -64,5 +64,6 @@ uploads/video/
 # Misc
 .env.example
 .env
+.env.local-db
 # Mock data
 mock-data/

@@ -521,7 +521,37 @@ export class ProductService {
     page: number = 1,
     limit: number = 10,
   ): Promise<ProductListResponseDto> {
-    return this.findAll(page, limit, communityId);
+    const normalizedCommunityId = String(communityId || '').trim();
+    if (!normalizedCommunityId) {
+      return this.findAll(page, limit);
+    }
+
+    const communityMap = await this.resolveCommunitiesByKeys([normalizedCommunityId]);
+    const matchedCommunity = communityMap.get(normalizedCommunityId);
+
+    const lookupKeys = Array.from(
+      new Set(
+        [
+          normalizedCommunityId,
+          matchedCommunity?._id?.toString(),
+          String((matchedCommunity as any)?.id || ''),
+          String(matchedCommunity?.slug || ''),
+        ].filter(Boolean),
+      ),
+    );
+
+    let firstResult: ProductListResponseDto | null = null;
+    for (const key of lookupKeys) {
+      const result = await this.findAll(page, limit, key);
+      if (!firstResult) {
+        firstResult = result;
+      }
+      if ((result.products || []).length > 0) {
+        return result;
+      }
+    }
+
+    return firstResult || this.findAll(page, limit, normalizedCommunityId);
   }
 
   /**

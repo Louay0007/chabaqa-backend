@@ -9,10 +9,14 @@
 const mongoose = require('mongoose');
 const fs = require('fs');
 const path = require('path');
-require('dotenv').config({ path: path.join(__dirname, '../.env') });
+require('dotenv').config({ path: path.join(__dirname, '../.env'), quiet: true });
+require('dotenv').config({ path: path.join(__dirname, '../.env.local-db'), override: true, quiet: true });
 
 // MongoDB Connection
-const MONGO_URI = process.env.MONGODB_URI || 'mongodb+srv://admin:admin@chabaqa.bmmujoq.mongodb.net/?appName=chabaqa';
+const MONGO_URI = process.env.MONGO_URI;
+if (!MONGO_URI) {
+  throw new Error('MONGO_URI is required in .env or .env.local-db');
+}
 
 let markdown = '';
 

@@ -1,24 +1,8 @@
-#!/bin/bash
-node -e "
-const mongoose = require('mongoose');
-mongoose.connect('mongodb+srv://admin:admin@chabaqa.bmmujoq.mongodb.net/?appName=chabaqa')
-  .then(async () => {
-    const Community = mongoose.model('Community', new mongoose.Schema({}, {strict:false}));
-    const communities = await Community.find({}).lean();
-    console.log('Total communities:', communities.length);
-    communities.forEach((c, i) => {
-      console.log(\`\${i+1}. \${c.name || c.titre || 'No name'}\`);
-      console.log(\`   ID: \${c._id}\`);
-      console.log(\`   Slug: \${c.slug || 'N/A'}\`);
-      console.log(\`   Active: \${c.isActive}\`);
-      console.log(\`   Private: \${c.isPrivate}\`);
-      console.log(\`   Members: \${c.members?.length || 0}\`);
-      console.log('');
-    });
-    process.exit(0);
-  })
-  .catch(e => {
-    console.error(e);
-    process.exit(1);
-  });
-"
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+cd "${PROJECT_ROOT}"
+node scripts/run-with-local-db-env.js node scripts/list-communities.js

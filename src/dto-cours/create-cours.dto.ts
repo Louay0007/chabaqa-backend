@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsOptional, IsBoolean, IsNumber, IsArray, ValidateNested, Min, MinLength, MaxLength, IsEnum, Max } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsBoolean, IsNumber, IsArray, ValidateNested, Min, MinLength, MaxLength, IsEnum, Max, ValidateIf } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
@@ -170,15 +170,23 @@ export class CreateChapitreDto {
   @MaxLength(200)
   titre: string;
 
-  @ApiProperty({ description: 'Description/contenu du chapitre', example: 'Dans ce chapitre, nous apprendrons...' })
+  @ApiPropertyOptional({
+    description: 'Description/contenu du chapitre (optionnel si videoUrl est fourni)',
+    example: 'Dans ce chapitre, nous apprendrons...'
+  })
+  @ValidateIf((o) => !o.videoUrl || !String(o.videoUrl).trim())
   @IsString()
   @IsNotEmpty()
   @MaxLength(2000)
-  description: string;
+  description?: string;
 
-  @ApiPropertyOptional({ description: 'URL de la vidéo du chapitre', example: 'https://example.com/video.mp4' })
-  @IsOptional()
+  @ApiPropertyOptional({
+    description: 'URL de la vidéo du chapitre (optionnel si description est fourni)',
+    example: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
+  })
+  @ValidateIf((o) => !o.description || !String(o.description).trim())
   @IsString()
+  @IsNotEmpty()
   videoUrl?: string;
 
   @ApiProperty({ description: 'Si le chapitre est gratuit ou payant', example: false })
