@@ -41,10 +41,13 @@ export class GoogleCalendarService {
       process.env.GOOGLE_CLIENT_SECRET;
     this.oauthRedirectUri =
       process.env.GOOGLE_CALENDAR_REDIRECT_URI ||
+      (process.env.FRONTEND_URL
+        ? `${process.env.FRONTEND_URL.replace(/\/+$/, '')}/api/auth/google/callback`
+        : undefined) ||
       process.env.GOOGLE_AUTH_CALLBACK_URL ||
       process.env.GOOGLE_REDIRECT_URI ||
       process.env.GOOGLE_CALLBACK_URL ||
-      'http://localhost:3000/api/auth/google/callback';
+      'http://localhost:8080/api/auth/google/callback';
 
     this.oauth2Client = new google.auth.OAuth2(
       this.calendarClientId,

@@ -3,13 +3,25 @@ import { Document, Types } from 'mongoose';
 
 export type ConversationDocument = Conversation & Document;
 
-export type ConversationType = 'COMMUNITY_DM' | 'HELP_DM' | 'PEER_DM' | 'SESSION_TEMP_DM';
+export type ConversationType =
+  | 'COMMUNITY_DM'
+  | 'HELP_DM'
+  | 'PEER_DM'
+  | 'SESSION_TEMP_DM'
+  | 'LIVE_SUPPORT';
+
+export type LiveSupportStatus = 'BOT_ACTIVE' | 'WAITING_ADMIN' | 'ASSIGNED' | 'CLOSED';
 
 @Schema({ timestamps: true })
 export class Conversation {
   _id: Types.ObjectId;
 
-  @Prop({ type: String, required: true, enum: ['COMMUNITY_DM', 'HELP_DM', 'PEER_DM', 'SESSION_TEMP_DM'], index: true })
+  @Prop({
+    type: String,
+    required: true,
+    enum: ['COMMUNITY_DM', 'HELP_DM', 'PEER_DM', 'SESSION_TEMP_DM', 'LIVE_SUPPORT'],
+    index: true,
+  })
   type: ConversationType;
 
   @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
@@ -50,6 +62,21 @@ export class Conversation {
 
   @Prop({ type: String, required: false, enum: ['session_finished', 'booking_cancelled', 'booking_completed', 'manual'] })
   closeReason?: 'session_finished' | 'booking_cancelled' | 'booking_completed' | 'manual';
+
+  @Prop({ type: String, required: false, enum: ['BOT_ACTIVE', 'WAITING_ADMIN', 'ASSIGNED', 'CLOSED'], index: true })
+  supportStatus?: LiveSupportStatus;
+
+  @Prop({ type: Types.ObjectId, ref: 'Admin', required: false, index: true })
+  assignedAdminId?: Types.ObjectId;
+
+  @Prop({ type: Date, required: false, index: true })
+  requestedAdminAt?: Date;
+
+  @Prop({ type: Date, required: false, index: true })
+  claimedAt?: Date;
+
+  @Prop({ type: Types.ObjectId, ref: 'Admin', required: false, index: true })
+  closedByAdminId?: Types.ObjectId;
 }
 
 export const ConversationSchema = SchemaFactory.createForClass(Conversation);
@@ -77,5 +104,8 @@ ConversationSchema.index(
 );
 
 ConversationSchema.index({ lastMessageAt: -1 });
+ConversationSchema.index({ type: 1, participantA: 1, isOpen: 1, updatedAt: -1 });
+ConversationSchema.index({ type: 1, supportStatus: 1, requestedAdminAt: 1 });
+ConversationSchema.index({ type: 1, assignedAdminId: 1, updatedAt: -1 });
 
 

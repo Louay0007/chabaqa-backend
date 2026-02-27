@@ -30,6 +30,7 @@ import {
   CreateEmailCampaignDto,
   AudienceTargetType,
 } from './dto/create-email-campaign.dto';
+import { UpdateEmailCampaignDto } from './dto/update-email-campaign.dto';
 import { BulkMessageDto, MessageChannel } from './dto/bulk-message.dto';
 import {
   CampaignFiltersDto,
@@ -95,12 +96,15 @@ export class CommunicationManagementService {
       subject: dto.subject,
       content: dto.content,
       type: dto.type,
-      communityId: dto.communityId ? new Types.ObjectId(dto.communityId) : new Types.ObjectId(adminId), // Use adminId as fallback
+      communityId: dto.communityId
+        ? new Types.ObjectId(dto.communityId)
+        : new Types.ObjectId(), // Keep ObjectId valid even if campaign is global
       creatorId: new Types.ObjectId(adminId),
       scheduledAt: dto.scheduledAt ? new Date(dto.scheduledAt) : undefined,
       isHtml: dto.isHtml || false,
       trackOpens: dto.trackOpens !== false,
       trackClicks: dto.trackClicks !== false,
+      templateId: dto.templateId,
       templateData: dto.personalizationVariables,
       metadata: {
         ...dto.metadata,
@@ -129,11 +133,6 @@ export class CommunicationManagementService {
       ipAddress,
       userAgent,
     });
-
-    // If not scheduled, send immediately
-    if (!dto.scheduledAt) {
-      await this.sendCampaign(savedCampaign, targetUsers);
-    }
 
     return savedCampaign;
   }
@@ -267,7 +266,7 @@ export class CommunicationManagementService {
     const [data, total] = await Promise.all([
       this.emailCampaignModel
         .find(query)
-        .populate('createdBy', 'name email')
+        .populate('creatorId', 'name email username')
         .populate('communityId', 'name slug')
         .sort(sortOptions)
         .skip(skip)
@@ -288,6 +287,207 @@ export class CommunicationManagementService {
       hasNextPage: page < totalPages,
       hasPrevPage: page > 1,
     };
+  }
+
+  /**
+   * Get a campaign by ID
+   */
+  async getCampaignById(id: string): Promise<EmailCampaign> {
+    const campaign = await this.emailCampaignModel
+      .findById(id)
+      .populate('creatorId', 'name email username')
+      .populate('communityId', 'name slug')
+      .lean()
+      .exec();
+
+    if (!campaign) {
+      throw new NotFoundException('Campaign not found');
+    }
+
+    return campaign;
+  }
+
+  /**
+   * Update campaign details
+   */
+  async updateCampaign(
+    id: string,
+    dto: UpdateEmailCampaignDto,
+    adminId: string,
+    ipAddress: string,
+    userAgent: string,
+  ): Promise<EmailCampaign> {
+    const campaign = await this.emailCampaignModel.findById(id).exec();
+
+    if (!campaign) {
+      throw new NotFoundException('Campaign not found');
+    }
+
+    if (campaign.status === EmailCampaignStatus.SENDING || campaign.status === EmailCampaignStatus.SENT) {
+      throw new BadRequestException('Cannot update a campaign that is already sending or sent');
+    }
+
+    const previousData = {
+      title: campaign.title,
+      subject: campaign.subject,
+      content: campaign.content,
+      type: campaign.type,
+      status: campaign.status,
+      scheduledAt: campaign.scheduledAt,
+      metadata: campaign.metadata,
+      totalRecipients: campaign.totalRecipients,
+    };
+
+    if (dto.title !== undefined) campaign.title = dto.title;
+    if (dto.subject !== undefined) campaign.subject = dto.subject;
+    if (dto.content !== undefined) campaign.content = dto.content;
+    if (dto.type !== undefined) campaign.type = dto.type as any;
+    if (dto.communityId !== undefined) {
+      campaign.communityId = new Types.ObjectId(dto.communityId);
+    }
+    if (dto.templateId !== undefined) campaign.templateId = dto.templateId;
+    if (dto.isHtml !== undefined) campaign.isHtml = dto.isHtml;
+    if (dto.trackOpens !== undefined) campaign.trackOpens = dto.trackOpens;
+    if (dto.trackClicks !== undefined) campaign.trackClicks = dto.trackClicks;
+    if (dto.personalizationVariables !== undefined) {
+      campaign.templateData = dto.personalizationVariables;
+    }
+
+    const metadata = { ...(campaign.metadata || {}) };
+    if (dto.audienceTarget !== undefined) metadata.audienceTarget = dto.audienceTarget;
+    if (dto.specificUserIds !== undefined) metadata.specificUserIds = dto.specificUserIds;
+    if (dto.targetRoles !== undefined) metadata.targetRoles = dto.targetRoles;
+    if (dto.metadata !== undefined) Object.assign(metadata, dto.metadata);
+    campaign.metadata = metadata;
+
+    if (dto.scheduledAt !== undefined) {
+      campaign.scheduledAt = dto.scheduledAt ? new Date(dto.scheduledAt) : undefined;
+      campaign.status = dto.scheduledAt
+        ? EmailCampaignStatus.SCHEDULED
+        : EmailCampaignStatus.DRAFT;
+    }
+
+    // Recompute audience count when targeting fields are changed.
+    if (
+      dto.audienceTarget !== undefined ||
+      dto.specificUserIds !== undefined ||
+      dto.targetRoles !== undefined ||
+      dto.communityId !== undefined
+    ) {
+      const targetUsers = await this.getTargetAudienceFromCampaign(campaign);
+      campaign.totalRecipients = targetUsers.length;
+    }
+
+    const updatedCampaign = await campaign.save();
+
+    await this.auditLogService.logAction({
+      adminUserId: new Types.ObjectId(adminId),
+      action: AdminAction.SYSTEM_CONFIGURATION,
+      entityType: 'email_campaign',
+      entityId: updatedCampaign._id,
+      previousData: previousData as any,
+      newData: {
+        title: updatedCampaign.title,
+        subject: updatedCampaign.subject,
+        content: updatedCampaign.content,
+        type: updatedCampaign.type,
+        status: updatedCampaign.status,
+        scheduledAt: updatedCampaign.scheduledAt,
+        metadata: updatedCampaign.metadata,
+        totalRecipients: updatedCampaign.totalRecipients,
+      },
+      metadata: { action: 'update_campaign' },
+      ipAddress,
+      userAgent,
+    });
+
+    return await this.getCampaignById(id);
+  }
+
+  /**
+   * Delete a campaign
+   */
+  async deleteCampaign(
+    id: string,
+    adminId: string,
+    ipAddress: string,
+    userAgent: string,
+  ): Promise<void> {
+    const campaign = await this.emailCampaignModel.findById(id).lean().exec();
+
+    if (!campaign) {
+      throw new NotFoundException('Campaign not found');
+    }
+
+    if (campaign.status === EmailCampaignStatus.SENDING) {
+      throw new BadRequestException('Cannot delete a campaign while it is being sent');
+    }
+
+    await this.emailCampaignModel.findByIdAndDelete(id).exec();
+
+    await this.auditLogService.logAction({
+      adminUserId: new Types.ObjectId(adminId),
+      action: AdminAction.SYSTEM_CONFIGURATION,
+      entityType: 'email_campaign',
+      entityId: new Types.ObjectId(id),
+      metadata: {
+        action: 'delete_campaign',
+        title: campaign.title,
+        status: campaign.status,
+      },
+      ipAddress,
+      userAgent,
+    });
+  }
+
+  /**
+   * Send an existing campaign immediately
+   */
+  async sendCampaignById(
+    id: string,
+    adminId: string,
+    ipAddress: string,
+    userAgent: string,
+  ): Promise<EmailCampaign> {
+    const campaign = await this.emailCampaignModel.findById(id).exec();
+
+    if (!campaign) {
+      throw new NotFoundException('Campaign not found');
+    }
+
+    if (campaign.status === EmailCampaignStatus.SENDING) {
+      throw new BadRequestException('Campaign is already sending');
+    }
+
+    if (campaign.status === EmailCampaignStatus.SENT) {
+      throw new BadRequestException('Campaign has already been sent');
+    }
+
+    const targetUsers = await this.getTargetAudienceFromCampaign(campaign);
+
+    if (!targetUsers.length) {
+      throw new BadRequestException('No recipients found for this campaign');
+    }
+
+    campaign.totalRecipients = targetUsers.length;
+    await campaign.save();
+
+    await this.sendCampaign(campaign, targetUsers);
+
+    await this.auditLogService.logAction({
+      adminUserId: new Types.ObjectId(adminId),
+      action: AdminAction.EMAIL_CAMPAIGN_SEND,
+      entityType: 'email_campaign',
+      entityId: campaign._id,
+      metadata: {
+        title: campaign.title,
+        recipientCount: targetUsers.length,
+      },
+      ipAddress,
+      userAgent,
+    });
+
+    return await this.getCampaignById(id);
   }
 
   /**
@@ -777,6 +977,63 @@ export class CommunicationManagementService {
     };
   }
 
+  private normalizeTargetRole(role: string): string {
+    if (!role) return role;
+    const normalized = role.toLowerCase();
+    if (normalized === 'member' || normalized === 'members') {
+      return 'user';
+    }
+    return normalized;
+  }
+
+  private getLegacyAudienceTarget(targetAudience?: string): AudienceTargetType | undefined {
+    switch ((targetAudience || '').toLowerCase()) {
+      case 'all':
+        return AudienceTargetType.ALL_USERS;
+      case 'creators':
+        return AudienceTargetType.USER_ROLE;
+      case 'members':
+        return AudienceTargetType.USER_ROLE;
+      case 'custom':
+        return AudienceTargetType.SPECIFIC_USERS;
+      default:
+        return undefined;
+    }
+  }
+
+  private async getTargetAudienceFromCampaign(campaign: any): Promise<any[]> {
+    const metadata = campaign.metadata || {};
+    const audienceTarget =
+      metadata.audienceTarget ||
+      this.getLegacyAudienceTarget(metadata.targetAudience) ||
+      AudienceTargetType.ALL_USERS;
+
+    const specificUserIds: string[] =
+      metadata.specificUserIds || metadata.customAudienceIds || [];
+
+    const legacyRoleFromAudience =
+      metadata.targetAudience === 'creators'
+        ? ['creator']
+        : metadata.targetAudience === 'members'
+        ? ['user']
+        : [];
+    const targetRoles: string[] =
+      metadata.targetRoles && Array.isArray(metadata.targetRoles)
+        ? metadata.targetRoles
+        : legacyRoleFromAudience;
+
+    return await this.getTargetAudience({
+      title: campaign.title || 'Campaign',
+      subject: campaign.subject || 'Campaign',
+      content: campaign.content || '',
+      type: campaign.type || 'custom',
+      audienceTarget,
+      communityId: campaign.communityId?.toString?.(),
+      specificUserIds,
+      targetRoles: targetRoles.map((role) => this.normalizeTargetRole(role)),
+    } as any);
+  }
+
   /**
    * Helper: Get target audience for email campaign
    */
@@ -825,7 +1082,7 @@ export class CommunicationManagementService {
         if (!dto.targetRoles || dto.targetRoles.length === 0) {
           throw new BadRequestException('Target roles are required for user role targeting');
         }
-        query.role = { $in: dto.targetRoles };
+        query.role = { $in: dto.targetRoles.map((role) => this.normalizeTargetRole(role)) };
         break;
 
       default:
@@ -879,7 +1136,7 @@ export class CommunicationManagementService {
         if (!dto.targetRoles || dto.targetRoles.length === 0) {
           throw new BadRequestException('Target roles are required for user role targeting');
         }
-        query.role = { $in: dto.targetRoles };
+        query.role = { $in: dto.targetRoles.map((role) => this.normalizeTargetRole(role)) };
         break;
 
       default:

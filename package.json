@@ -29,6 +29,8 @@
     "db:seed:plans": "node scripts/run-with-local-db-env.js npx ts-node src/common/scripts/seed-plans.ts",
     "db:seed:achievements": "node scripts/run-with-local-db-env.js npx ts-node src/common/scripts/seed-achievements.ts",
     "db:seed": "npm run db:seed:plans && npm run db:seed:achievements",
+    "fix:community-invite-index": "node scripts/fix-community-invite-index.js",
+    "backfill:event-ids": "node scripts/backfill-event-ids.js",
     "backfill:usernames": "node scripts/run-with-local-db-env.js node scripts/backfill-usernames.js",
     "export:db": "node scripts/export-database.js",
     "audit:media": "node scripts/audit-media-integrity.js",

@@ -24,6 +24,7 @@ import { AdminRolesGuard } from '../common/guards/admin-roles.guard';
 import { RequireAdminRoles } from '../common/decorators/admin-roles.decorator';
 import { AdminRole } from '../schemas/admin-user.schema';
 import { CreateEmailCampaignDto } from './dto/create-email-campaign.dto';
+import { UpdateEmailCampaignDto } from './dto/update-email-campaign.dto';
 import { BulkMessageDto } from './dto/bulk-message.dto';
 import { CampaignFiltersDto } from './dto/campaign-filters.dto';
 import {
@@ -177,6 +178,128 @@ export class CommunicationManagementController {
   })
   async getCampaigns(@Query() filters: CampaignFiltersDto) {
     return await this.communicationManagementService.getCampaigns(filters);
+  }
+
+  @Get('campaigns/:id')
+  @RequireAdminRoles(
+    AdminRole.SUPER_ADMIN,
+    AdminRole.COMMUNITY_MANAGER,
+    AdminRole.ANALYTICS_VIEWER,
+  )
+  @ApiOperation({
+    summary: 'Get campaign by ID',
+    description: 'Retrieve a single campaign with recipient and analytics details.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Campaign retrieved successfully',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Campaign not found',
+  })
+  async getCampaignById(@Param('id') id: string) {
+    return await this.communicationManagementService.getCampaignById(id);
+  }
+
+  @Put('campaigns/:id')
+  @RequireAdminRoles(AdminRole.SUPER_ADMIN, AdminRole.COMMUNITY_MANAGER)
+  @ApiOperation({
+    summary: 'Update campaign',
+    description: 'Update a draft/scheduled campaign before sending.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Campaign updated successfully',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Campaign cannot be updated in current state',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Campaign not found',
+  })
+  async updateCampaign(
+    @Param('id') id: string,
+    @Body() dto: UpdateEmailCampaignDto,
+    @Req() req: any,
+  ) {
+    const adminId = req.user.sub;
+    const ipAddress = req.ip || req.connection.remoteAddress;
+    const userAgent = req.headers['user-agent'] || 'Unknown';
+
+    return await this.communicationManagementService.updateCampaign(
+      id,
+      dto,
+      adminId,
+      ipAddress,
+      userAgent,
+    );
+  }
+
+  @Delete('campaigns/:id')
+  @RequireAdminRoles(AdminRole.SUPER_ADMIN, AdminRole.COMMUNITY_MANAGER)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({
+    summary: 'Delete campaign',
+    description: 'Delete an existing campaign that is not currently sending.',
+  })
+  @ApiResponse({
+    status: 204,
+    description: 'Campaign deleted successfully',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Campaign cannot be deleted while sending',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Campaign not found',
+  })
+  async deleteCampaign(@Param('id') id: string, @Req() req: any) {
+    const adminId = req.user.sub;
+    const ipAddress = req.ip || req.connection.remoteAddress;
+    const userAgent = req.headers['user-agent'] || 'Unknown';
+
+    await this.communicationManagementService.deleteCampaign(
+      id,
+      adminId,
+      ipAddress,
+      userAgent,
+    );
+  }
+
+  @Post('campaigns/:id/send')
+  @RequireAdminRoles(AdminRole.SUPER_ADMIN, AdminRole.COMMUNITY_MANAGER)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Send campaign now',
+    description: 'Immediately send an existing draft/scheduled campaign.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Campaign sent successfully',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Campaign already sent/sending or has no recipients',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Campaign not found',
+  })
+  async sendCampaign(@Param('id') id: string, @Req() req: any) {
+    const adminId = req.user.sub;
+    const ipAddress = req.ip || req.connection.remoteAddress;
+    const userAgent = req.headers['user-agent'] || 'Unknown';
+
+    return await this.communicationManagementService.sendCampaignById(
+      id,
+      adminId,
+      ipAddress,
+      userAgent,
+    );
   }
 
   @Get('analytics/metrics')

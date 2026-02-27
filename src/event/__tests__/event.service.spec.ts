@@ -10,6 +10,8 @@ import { User, UserDocument } from '../../schema/user.schema';
 import { FeeService } from '../../common/services/fee.service';
 import { PromoService } from '../../common/services/promo.service';
 import { PolicyService } from '../../common/services/policy.service';
+import { CacheService } from '../../common/services/cache.service';
+import { UploadService } from '../../upload/upload.service';
 import { ContentTrackingService } from '../../common/services/content-tracking.service';
 import {
   eventSessionArbitrary,
@@ -53,6 +55,16 @@ describe('EventService - Property-Based Tests', () => {
     hasActiveSubscription: (jest.fn() as any).mockResolvedValue(true),
   };
 
+  const mockCacheService = {
+    deletePattern: jest.fn(),
+  };
+
+  const mockUploadService = {
+    uploadImage: jest.fn(),
+    uploadVideo: jest.fn(),
+    uploadDocument: jest.fn(),
+  };
+
   const mockContentTrackingService = {
     trackContentAccess: jest.fn(),
   };
@@ -88,6 +100,14 @@ describe('EventService - Property-Based Tests', () => {
         {
           provide: PolicyService,
           useValue: mockPolicyService,
+        },
+        {
+          provide: CacheService,
+          useValue: mockCacheService,
+        },
+        {
+          provide: UploadService,
+          useValue: mockUploadService,
         },
         {
           provide: ContentTrackingService,

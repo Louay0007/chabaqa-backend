@@ -1,11 +1,21 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsString, IsNotEmpty, IsOptional, IsDateString, IsEnum, IsBoolean, IsArray, IsNumber, Min, Max, MaxLength, MinLength, IsUrl, ArrayMaxSize, Validate, ValidateIf } from 'class-validator';
+import { Type } from 'class-transformer';
+import { ValidateNested } from 'class-validator';
 import { IsEndTimeAfterStartTimeConstraint, IsEndDateAfterOrEqualStartDateConstraint, IsLocationRequiredForEventType, IsOnlineUrlRequiredForEventType } from '.././common/validators/date-time.validators';
 
 /**
  * DTO pour créer une session d'événement
  */
 export class CreateEventSessionDto {
+  @ApiPropertyOptional({
+    description: 'ID de la session (utilisé pour la mise à jour)',
+    example: 'session_123'
+  })
+  @IsString()
+  @IsOptional()
+  id?: string;
+
   @ApiProperty({
     description: 'Titre de la session',
     example: 'Keynote: The Future of AI',
@@ -87,6 +97,14 @@ export class CreateEventSessionDto {
  * DTO pour créer un billet d'événement
  */
 export class CreateEventTicketDto {
+  @ApiPropertyOptional({
+    description: 'ID du billet (utilisé pour la mise à jour)',
+    example: 'ticket_123'
+  })
+  @IsString()
+  @IsOptional()
+  id?: string;
+
   @ApiProperty({
     description: 'Type de billet',
     example: 'regular',
@@ -154,6 +172,14 @@ export class CreateEventTicketDto {
  * DTO pour créer un conférencier d'événement
  */
 export class CreateEventSpeakerDto {
+  @ApiPropertyOptional({
+    description: 'ID du conférencier (utilisé pour la mise à jour)',
+    example: 'speaker_123'
+  })
+  @IsString()
+  @IsOptional()
+  id?: string;
+
   @ApiProperty({
     description: 'Nom du conférencier',
     example: 'Dr. Rebecca Miller',
@@ -335,6 +361,8 @@ export class CreateEventDto {
   })
   @IsArray()
   @IsOptional()
+  @ValidateNested({ each: true })
+  @Type(() => CreateEventSessionDto)
   @ArrayMaxSize(50, { message: 'Il ne peut pas y avoir plus de 50 sessions' })
   sessions?: CreateEventSessionDto[];
 
@@ -344,6 +372,8 @@ export class CreateEventDto {
   })
   @IsArray()
   @IsOptional()
+  @ValidateNested({ each: true })
+  @Type(() => CreateEventTicketDto)
   @ArrayMaxSize(20, { message: 'Il ne peut pas y avoir plus de 20 types de billets' })
   tickets?: CreateEventTicketDto[];
 
@@ -353,6 +383,8 @@ export class CreateEventDto {
   })
   @IsArray()
   @IsOptional()
+  @ValidateNested({ each: true })
+  @Type(() => CreateEventSpeakerDto)
   @ArrayMaxSize(50, { message: 'Il ne peut pas y avoir plus de 50 conférenciers' })
   speakers?: CreateEventSpeakerDto[];
 

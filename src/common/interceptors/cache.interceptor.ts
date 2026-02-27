@@ -163,8 +163,13 @@ export class HttpCacheInterceptor implements NestInterceptor {
     }
 
     // Catalog/content pages
-    if (url.includes('/cours') || url.includes('/products') || url.includes('/events')) {
+    if (url.includes('/cours') || url.includes('/products')) {
       return 900; // 15 minutes
+    }
+
+    // Events mutate frequently via publish/manage actions; keep cache short.
+    if (url.includes('/events')) {
+      return 120; // 2 minutes
     }
 
     // Feed-like endpoints

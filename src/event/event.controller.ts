@@ -62,18 +62,21 @@ export class EventController {
     @Query('communityId') communityId?: string,
     @Query('category') category?: string,
     @Query('type') type?: string,
-    @Query('isActive') isActive?: boolean,
-    @Query('isPublished') isPublished?: boolean,
+    @Query('isActive') isActive?: string | boolean,
+    @Query('isPublished') isPublished?: string | boolean,
     @Query('search') search?: string
   ): Promise<{ success: boolean; data: EventListResponseDto }> {
+    const parsedIsActive = this.parseBooleanQuery(isActive);
+    const parsedIsPublished = this.parseBooleanQuery(isPublished);
+
     const events = await this.eventService.findAll(
       page,
       limit,
       communityId,
       category,
       type,
-      isActive,
-      isPublished,
+      parsedIsActive,
+      parsedIsPublished,
       search
     );
     return { success: true, data: events };
@@ -117,13 +120,26 @@ export class EventController {
   @ApiOperation({ summary: 'Récupérer les événements d\'une communauté' })
   @ApiQuery({ name: 'page', required: false, type: Number, description: 'Numéro de page' })
   @ApiQuery({ name: 'limit', required: false, type: Number, description: 'Nombre d\'éléments par page' })
+  @ApiQuery({ name: 'isActive', required: false, type: Boolean, description: 'Filtrer par statut actif (défaut: true)' })
+  @ApiQuery({ name: 'isPublished', required: false, type: Boolean, description: 'Filtrer par statut publié (défaut: true)' })
   @ApiResponse({ status: 200, description: 'Événements de la communauté récupérés avec succès', type: EventListResponseDto })
   async findByCommunity(
     @Param('communityId') communityId: string,
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
-    @Query('limit', new DefaultValuePipe(10), ParseIntPipe) limit: number
+    @Query('limit', new DefaultValuePipe(10), ParseIntPipe) limit: number,
+    @Query('isActive') isActive?: string | boolean,
+    @Query('isPublished') isPublished?: string | boolean,
   ): Promise<{ success: boolean; data: EventListResponseDto }> {
-    const events = await this.eventService.findByCommunity(communityId, page, limit);
+    const parsedIsActive = this.parseBooleanQuery(isActive);
+    const parsedIsPublished = this.parseBooleanQuery(isPublished);
+
+    const events = await this.eventService.findByCommunity(
+      communityId,
+      page,
+      limit,
+      parsedIsActive ?? true,
+      parsedIsPublished ?? true,
+    );
     return { success: true, data: events };
   }
 
@@ -351,6 +367,31 @@ export class EventController {
     const userId = req.user._id || req.user.userId || req.user.id;
     const result = await this.eventService.togglePublished(eventId, userId);
     return { success: true, ...result };
+  }
+
+  private parseBooleanQuery(value?: string | boolean): boolean | undefined {
+    if (value === undefined || value === null) {
+      return undefined;
+    }
+
+    if (typeof value === 'boolean') {
+      return value;
+    }
+
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) {
+      return undefined;
+    }
+
+    if (['true', '1', 'yes', 'on'].includes(normalized)) {
+      return true;
+    }
+
+    if (['false', '0', 'no', 'off'].includes(normalized)) {
+      return false;
+    }
+
+    return undefined;
   }
 }
 

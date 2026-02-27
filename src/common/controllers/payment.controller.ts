@@ -424,6 +424,7 @@ export class PaymentController {
           order.paymentMethod = (verify as any).paymentMethod || order.paymentMethod;
           await order.save({ session });
         });
+        await this.incrementProductSalesFromOrder(order);
       }
       const enriched = await this.enrichOrderDetails(order);
       return { status: 'paid', orderId: order._id, ...enriched };
@@ -660,8 +661,15 @@ export class PaymentController {
   ) {
     const userId = (req.user?._id || req.user?.sub || '').toString();
     const offlineMode = (process.env.PAYMENT_MODE || 'instant') === 'offline';
-    const product = await this.productModel.findById(productId);
+    let product = await this.productModel.findById(productId);
+    if (!product) {
+      product = await this.productModel.findOne({ id: productId });
+    }
     if (!product) throw new BadRequestException('Produit non trouvé');
+    const existingPaidOrder = await this.findExistingPaidProductOrder(userId, product);
+    if (existingPaidOrder) {
+      throw new BadRequestException('Product already purchased. You already have lifetime access.');
+    }
     const price = product.price || 0; if (price <= 0) throw new BadRequestException('Produit gratuit');
     let amount = price; let discountDT = 0; let appliedCode: string | undefined;
     if (promoCode) {
@@ -1115,6 +1123,10 @@ export class PaymentController {
     const userId = (req.user?._id || req.user?.sub || '').toString();
     const product = await this.productModel.findOne({ id: productId }) || await this.productModel.findById(productId);
     if (!product) throw new BadRequestException('Product not found');
+    const existingPaidOrder = await this.findExistingPaidProductOrder(userId, product);
+    if (existingPaidOrder) {
+      throw new BadRequestException('Product already purchased. You already have lifetime access.');
+    }
 
     const price = product.price || 0;
     if (price <= 0) throw new BadRequestException('Free product');
@@ -1462,6 +1474,66 @@ export class PaymentController {
     }
   }
 
+  private buildBuyerIdFilter(userId: string): any {
+    if (Types.ObjectId.isValid(userId)) {
+      return { $in: [new Types.ObjectId(userId), userId] };
+    }
+    return userId;
+  }
+
+  private buildProductContentIdCandidates(product: ProductDocument): string[] {
+    return Array.from(
+      new Set([String(product?._id || ''), String((product as any)?.id || '')].filter(Boolean)),
+    );
+  }
+
+  private async findExistingPaidProductOrder(
+    userId: string,
+    product: ProductDocument,
+  ): Promise<OrderDocument | null> {
+    const buyerFilter = this.buildBuyerIdFilter(userId);
+    const productIds = this.buildProductContentIdCandidates(product);
+    if (!productIds.length) return null;
+
+    return this.orderModel
+      .findOne({
+        buyerId: buyerFilter,
+        contentType: TrackableContentType.PRODUCT,
+        contentId: { $in: productIds },
+        status: 'paid',
+      })
+      .sort({ createdAt: -1 })
+      .exec();
+  }
+
+  private async incrementProductSalesFromOrder(order: any): Promise<void> {
+    if (!order || order.contentType !== TrackableContentType.PRODUCT) return;
+    if (!order?._id) return;
+
+    const salesMark = await this.orderModel
+      .updateOne(
+        {
+          _id: order._id,
+          'metadata.productSaleCounted': { $ne: true },
+        },
+        {
+          $set: { 'metadata.productSaleCounted': true },
+        },
+      )
+      .exec();
+
+    if (Number(salesMark?.modifiedCount || 0) === 0) return;
+
+    const contentId = String(order.contentId || '').trim();
+    if (!contentId) return;
+
+    const query = Types.ObjectId.isValid(contentId)
+      ? { _id: new Types.ObjectId(contentId) }
+      : { id: contentId };
+
+    await this.productModel.updateOne(query, { $inc: { sales: 1 } }).exec();
+  }
+
   private isMissingScheduledAtError(error: any): boolean {
     const message = this.getErrorMessage(error).toLowerCase();
     return message.includes('la date de la session est obligatoire');
@@ -1646,6 +1718,8 @@ export class PaymentController {
           order.metadata = nextMetadata;
           await order.save({ session });
         });
+
+        await this.incrementProductSalesFromOrder(order);
       }
 
       // Repair entitlement drift on verify path (idempotent).
@@ -1843,6 +1917,8 @@ export class PaymentController {
               await this.grantAccess(order, dbSession, stripeSession.metadata);
               await order.save({ session: dbSession });
             });
+
+            await this.incrementProductSalesFromOrder(order);
           }
         }
         break;
@@ -2370,14 +2446,18 @@ export class PaymentController {
       product = await this.productModel.findOne({ id: productId });
     }
     if (!product) throw new BadRequestException('Product not found');
+    const buyerFilter = this.buildBuyerIdFilter(userId);
+    const productIdCandidates = this.buildProductContentIdCandidates(product);
+    const existingPaidOrder = await this.findExistingPaidProductOrder(userId, product);
+    if (existingPaidOrder) {
+      throw new BadRequestException('Product already purchased. You already have lifetime access.');
+    }
 
     const existing = await this.orderModel.findOne({
-      buyerId: new Types.ObjectId(userId),
-      creatorId: product.creatorId,
-      paymentMethod: 'manual',
+      buyerId: buyerFilter,
       contentType: TrackableContentType.PRODUCT,
-      contentId: product._id.toString(),
-      status: { $in: ['pending_verification', 'paid'] },
+      contentId: { $in: productIdCandidates },
+      status: { $in: ['pending_verification', 'pending'] },
     }).select('_id status').exec();
 
     if (existing) {
@@ -2682,6 +2762,7 @@ export class PaymentController {
           }
         } else if (order.contentType === TrackableContentType.PRODUCT) {
           // Product access is granted by paid order checks in downstream APIs.
+          await this.incrementProductSalesFromOrder(order);
         } else if (order.contentType === TrackableContentType.EVENT) {
           // Event ticket type isn't stored on the order; access is granted by paid order checks.
         }

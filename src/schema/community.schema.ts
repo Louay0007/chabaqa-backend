@@ -646,9 +646,7 @@ export class Community {
    */
   @Prop({
     type: String,
-    unique: true,
-    sparse: true,
-    default: null
+    trim: true
   })
   inviteCode: string;
 
@@ -657,7 +655,7 @@ export class Community {
    */
   @Prop({
     type: String,
-    default: null
+    trim: true
   })
   inviteLink: string;
 
@@ -841,6 +839,15 @@ CommunitySchema.index({ cours: 1 });
 CommunitySchema.index({ category: 1, featured: 1 });
 CommunitySchema.index({ rating: -1, membersCount: -1 });
 CommunitySchema.index({ isActive: 1, isPrivate: 1 });
+CommunitySchema.index(
+  { inviteCode: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      inviteCode: { $type: 'string', $ne: '' },
+    },
+  },
+);
 CommunitySchema.index(
   { 'settings.customDomain': 1 },
   {

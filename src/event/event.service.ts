@@ -10,6 +10,7 @@ import { EventResponseDto, EventListResponseDto, EventStatsResponseDto } from '.
 import { FeeService } from '../common/services/fee.service';
 import { PromoService } from '../common/services/promo.service';
 import { PolicyService } from '../common/services/policy.service';
+import { CacheService } from '../common/services/cache.service';
 import { UploadService } from '../upload/upload.service';
 import { ContentTrackingService } from '../common/services/content-tracking.service';
 import { TrackableContentType } from '../schema/content-tracking.schema';
@@ -24,6 +25,7 @@ export class EventService {
     private readonly feeService: FeeService,
     private readonly promoService: PromoService,
     private readonly policyService: PolicyService,
+    private readonly cacheService: CacheService,
     private readonly uploadService: UploadService,
     private readonly trackingService: ContentTrackingService,
   ) {}
@@ -71,6 +73,86 @@ export class EventService {
     }
   }
 
+  private normalizeTicketDescription(description: unknown, ticketName: unknown): string {
+    const normalizedDescription = String(description || '').trim();
+    if (normalizedDescription) {
+      return normalizedDescription;
+    }
+
+    const normalizedName = String(ticketName || '').trim();
+    if (normalizedName) {
+      return `${normalizedName} ticket`;
+    }
+
+    return 'Event ticket';
+  }
+
+  private normalizeTicketQuantity(quantity: unknown): number | undefined {
+    if (quantity === null || quantity === undefined || quantity === '') {
+      return undefined;
+    }
+
+    const parsed = Number(quantity);
+    if (!Number.isFinite(parsed)) {
+      return undefined;
+    }
+
+    return parsed;
+  }
+
+  private throwReadableValidationError(error: any): never {
+    if (error?.name === 'ValidationError') {
+      const validationMessages = Object.values(error?.errors || {})
+        .map((entry: any) => String(entry?.message || '').trim())
+        .filter(Boolean);
+
+      throw new BadRequestException(
+        validationMessages.length > 0
+          ? validationMessages.join('; ')
+          : "Données d'événement invalides",
+      );
+    }
+
+    throw error;
+  }
+
+  private async findEventByIdentifier(idOrMongoId: string): Promise<EventDocument | null> {
+    let event = await this.eventModel.findOne({ id: idOrMongoId });
+    if (!event && Types.ObjectId.isValid(idOrMongoId)) {
+      event = await this.eventModel.findById(idOrMongoId);
+    }
+    return event;
+  }
+
+  private async findPopulatedEventByIdentifier(idOrMongoId: string): Promise<EventDocument | null> {
+    let event = await this.eventModel
+      .findOne({ id: idOrMongoId })
+      .populate('communityId', 'name slug')
+      .populate('creatorId', 'name email profile_picture photo_profil')
+      .exec();
+
+    if (!event && Types.ObjectId.isValid(idOrMongoId)) {
+      event = await this.eventModel
+        .findById(idOrMongoId)
+        .populate('communityId', 'name slug')
+        .populate('creatorId', 'name email profile_picture photo_profil')
+        .exec();
+    }
+
+    return event;
+  }
+
+  private async invalidateEventCaches(eventIdentifier?: string): Promise<void> {
+    const patterns = ['http:/api/events*', 'http:/api/communities*'];
+    if (eventIdentifier) {
+      patterns.unshift(`http:/api/events/${eventIdentifier}*`);
+    }
+
+    await Promise.allSettled(
+      patterns.map((pattern) => this.cacheService.deletePattern(pattern)),
+    );
+  }
+
   /**
    * Créer un nouvel événement
    */
@@ -105,6 +187,8 @@ export class EventService {
     const tickets = createEventDto.tickets?.map(ticket => ({
       id: new Types.ObjectId().toString(),
       ...ticket,
+      description: this.normalizeTicketDescription(ticket.description, ticket.name),
+      quantity: this.normalizeTicketQuantity(ticket.quantity),
       sold: ticket.sold ?? 0
     })) || [];
 
@@ -113,9 +197,12 @@ export class EventService {
       ...speaker
     })) || [];
 
+    const requestedPublished = Boolean(createEventDto.isPublished);
+    const requestedActive = createEventDto.isActive ?? requestedPublished;
+
     // Gating: require active subscription to publish/activate events
     const hasSub = await this.policyService.hasActiveSubscription(userId);
-    if (!hasSub && (createEventDto.isActive || createEventDto.isPublished)) {
+    if (!hasSub && (requestedActive || requestedPublished)) {
       throw new ForbiddenException('Un abonnement actif est requis pour publier ou activer un événement');
     }
 
@@ -132,13 +219,19 @@ export class EventService {
       tickets,
       speakers,
       attendees: [],
-      isActive: createEventDto.isActive ?? true,
-      isPublished: createEventDto.isPublished ?? false,
+      isActive: requestedActive,
+      isPublished: requestedPublished,
       tags: createEventDto.tags || []
     };
 
     const event = new this.eventModel(eventData);
-    await event.save();
+    try {
+      await event.save();
+    } catch (error) {
+      this.throwReadableValidationError(error);
+    }
+
+    await this.invalidateEventCaches(generatedId);
 
     return this.transformToResponseDto(event, community);
   }
@@ -217,11 +310,7 @@ export class EventService {
    * Récupérer un événement par ID
    */
   async findOne(id: string): Promise<EventResponseDto> {
-    const event = await this.eventModel
-      .findOne({ id })
-      .populate('communityId', 'name slug')
-      .populate('creatorId', 'name email profile_picture photo_profil')
-      .exec();
+    const event = await this.findPopulatedEventByIdentifier(id);
 
     if (!event) {
       throw new NotFoundException('Événement non trouvé');
@@ -233,8 +322,14 @@ export class EventService {
   /**
    * Récupérer les événements d'une communauté
    */
-  async findByCommunity(communityId: string, page: number = 1, limit: number = 10): Promise<EventListResponseDto> {
-    return this.findAll(page, limit, communityId);
+  async findByCommunity(
+    communityId: string,
+    page: number = 1,
+    limit: number = 10,
+    isActive: boolean = true,
+    isPublished: boolean = true,
+  ): Promise<EventListResponseDto> {
+    return this.findAll(page, limit, communityId, undefined, undefined, isActive, isPublished);
   }
 
   /**
@@ -263,7 +358,7 @@ export class EventService {
    * Mettre à jour un événement
    */
   async update(id: string, updateEventDto: UpdateEventDto, userId: string): Promise<EventResponseDto> {
-    const event = await this.eventModel.findOne({ id });
+    const event = await this.findEventByIdentifier(id);
     if (!event) {
       throw new NotFoundException('Événement non trouvé');
     }
@@ -325,13 +420,15 @@ export class EventService {
         // Find existing ticket to preserve sold count
         const existingTicket = event.tickets.find(t => t.id === ticketId);
         // Validate quantity is not less than sold count
-        const newQuantity = (ticket as any).quantity;
-        if (existingTicket && typeof newQuantity === 'number' && newQuantity < existingTicket.sold) {
+        const normalizedQuantity = this.normalizeTicketQuantity((ticket as any).quantity);
+        if (existingTicket && typeof normalizedQuantity === 'number' && normalizedQuantity < existingTicket.sold) {
           throw new BadRequestException(`Ticket quantity for id=${ticketId} cannot be less than sold count (${existingTicket.sold})`);
         }
         return {
           id: ticketId,
           ...ticket,
+          description: this.normalizeTicketDescription((ticket as any).description, (ticket as any).name),
+          quantity: normalizedQuantity,
           sold: existingTicket?.sold ?? ticket.sold ?? 0
         };
       }) as any;
@@ -349,7 +446,13 @@ export class EventService {
     }
 
     Object.assign(event, updateEventDto);
-    await event.save();
+    try {
+      await event.save();
+    } catch (error) {
+      this.throwReadableValidationError(error);
+    }
+
+    await this.invalidateEventCaches(event.id || event._id?.toString());
 
     const community = await this.communityModel.findById(event.communityId);
     return this.transformToResponseDto(event, community);
@@ -359,7 +462,7 @@ export class EventService {
    * Supprimer un événement
    */
   async remove(id: string, userId: string): Promise<{ message: string }> {
-    const event = await this.eventModel.findOne({ id });
+    const event = await this.findEventByIdentifier(id);
     if (!event) {
       throw new NotFoundException('Événement non trouvé');
     }
@@ -367,7 +470,8 @@ export class EventService {
     // Vérifier que l'utilisateur peut modifier l'événement
     await this.verifyCanModifyEvent(event, userId);
 
-    await this.eventModel.deleteOne({ id });
+    await this.eventModel.deleteOne({ _id: event._id });
+    await this.invalidateEventCaches(event.id || event._id?.toString());
     return { message: 'Événement supprimé avec succès' };
   }
 
@@ -375,7 +479,7 @@ export class EventService {
    * Ajouter une session à un événement
    */
   async addSession(eventId: string, createSessionDto: CreateEventSessionDto, userId: string): Promise<any> {
-    const event = await this.eventModel.findOne({ id: eventId });
+    const event = await this.findEventByIdentifier(eventId);
     if (!event) {
       throw new NotFoundException('Événement non trouvé');
     }
@@ -392,6 +496,7 @@ export class EventService {
 
     event.sessions.push(session);
     await event.save();
+    await this.invalidateEventCaches(event.id || event._id?.toString());
 
     return {
       id: session.id,
@@ -410,7 +515,7 @@ export class EventService {
    * Supprimer une session d'un événement
    */
   async removeSession(eventId: string, sessionId: string, userId: string): Promise<{ message: string }> {
-    const event = await this.eventModel.findOne({ id: eventId });
+    const event = await this.findEventByIdentifier(eventId);
     if (!event) {
       throw new NotFoundException('Événement non trouvé');
     }
@@ -425,6 +530,7 @@ export class EventService {
 
     event.sessions.splice(sessionIndex, 1);
     await event.save();
+    await this.invalidateEventCaches(event.id || event._id?.toString());
 
     return { message: 'Session supprimée avec succès' };
   }
@@ -433,7 +539,7 @@ export class EventService {
    * Ajouter un billet à un événement
    */
   async addTicket(eventId: string, createTicketDto: CreateEventTicketDto, userId: string): Promise<any> {
-    const event = await this.eventModel.findOne({ id: eventId });
+    const event = await this.findEventByIdentifier(eventId);
     if (!event) {
       throw new NotFoundException('Événement non trouvé');
     }
@@ -444,11 +550,18 @@ export class EventService {
     const ticket = {
       id: new Types.ObjectId().toString(),
       ...createTicketDto,
+      description: this.normalizeTicketDescription(createTicketDto.description, createTicketDto.name),
+      quantity: this.normalizeTicketQuantity(createTicketDto.quantity),
       sold: createTicketDto.sold ?? 0
     };
 
     event.tickets.push(ticket);
-    await event.save();
+    try {
+      await event.save();
+    } catch (error) {
+      this.throwReadableValidationError(error);
+    }
+    await this.invalidateEventCaches(event.id || event._id?.toString());
 
     return {
       id: ticket.id,
@@ -465,7 +578,7 @@ export class EventService {
    * Supprimer un billet d'un événement
    */
   async removeTicket(eventId: string, ticketId: string, userId: string): Promise<{ message: string }> {
-    const event = await this.eventModel.findOne({ id: eventId });
+    const event = await this.findEventByIdentifier(eventId);
     if (!event) {
       throw new NotFoundException('Événement non trouvé');
     }
@@ -486,6 +599,7 @@ export class EventService {
 
     event.tickets.splice(ticketIndex, 1);
     await event.save();
+    await this.invalidateEventCaches(event.id || event._id?.toString());
 
     return { message: 'Billet supprimé avec succès' };
   }
@@ -494,7 +608,7 @@ export class EventService {
    * Ajouter un conférencier à un événement
    */
   async addSpeaker(eventId: string, createSpeakerDto: CreateEventSpeakerDto, userId: string): Promise<any> {
-    const event = await this.eventModel.findOne({ id: eventId });
+    const event = await this.findEventByIdentifier(eventId);
     if (!event) {
       throw new NotFoundException('Événement non trouvé');
     }
@@ -509,6 +623,7 @@ export class EventService {
 
     event.speakers.push(speaker);
     await event.save();
+    await this.invalidateEventCaches(event.id || event._id?.toString());
 
     return {
       id: speaker.id,
@@ -523,7 +638,7 @@ export class EventService {
    * Supprimer un conférencier d'un événement
    */
   async removeSpeaker(eventId: string, speakerId: string, userId: string): Promise<{ message: string }> {
-    const event = await this.eventModel.findOne({ id: eventId });
+    const event = await this.findEventByIdentifier(eventId);
     if (!event) {
       throw new NotFoundException('Événement non trouvé');
     }
@@ -538,6 +653,7 @@ export class EventService {
 
     event.speakers.splice(speakerIndex, 1);
     await event.save();
+    await this.invalidateEventCaches(event.id || event._id?.toString());
 
     return { message: 'Conférencier supprimé avec succès' };
   }
@@ -546,13 +662,7 @@ export class EventService {
    * Inscrire un utilisateur à un événement
    */
   async registerAttendee(eventId: string, ticketType: string, userId: string, promoCode?: string): Promise<{ message: string }> {
-    // Try to find event by custom id first, then by MongoDB _id
-    let event = await this.eventModel.findOne({ id: eventId });
-    if (!event) {
-      if (Types.ObjectId.isValid(eventId)) {
-        event = await this.eventModel.findById(eventId);
-      }
-    }
+    const event = await this.findEventByIdentifier(eventId);
 
     if (!event) {
       throw new NotFoundException('Événement non trouvé');
@@ -668,6 +778,7 @@ export class EventService {
     }
     
     await event.save();
+    await this.invalidateEventCaches(event.id || event._id?.toString());
 
     return { message: 'Inscription réussie' };
   }
@@ -676,11 +787,7 @@ export class EventService {
    * Désinscrire un utilisateur d'un événement
    */
   async unregisterAttendee(eventId: string, userId: string): Promise<{ message: string }> {
-    // Try to find event by custom id first, then by MongoDB _id
-    let event = await this.eventModel.findOne({ id: eventId });
-    if (!event) {
-      event = await this.eventModel.findById(eventId);
-    }
+    const event = await this.findEventByIdentifier(eventId);
     if (!event) {
       throw new NotFoundException('Événement non trouvé');
     }
@@ -710,6 +817,7 @@ export class EventService {
 
     event.attendees.splice(attendeeIndex, 1);
     await event.save();
+    await this.invalidateEventCaches(event.id || event._id?.toString());
 
     // TODO: Handle refund logic for paid tickets if needed
     // This would require checking if there was a payment and processing a refund
@@ -721,7 +829,7 @@ export class EventService {
    * Basculer le statut de publication d'un événement
    */
   async togglePublished(eventId: string, userId: string): Promise<{ message: string; isPublished: boolean }> {
-    const event = await this.eventModel.findOne({ id: eventId });
+    const event = await this.findEventByIdentifier(eventId);
     if (!event) {
       throw new NotFoundException('Événement non trouvé');
     }
@@ -755,6 +863,7 @@ export class EventService {
     }
 
     await event.save();
+    await this.invalidateEventCaches(event.id || event._id?.toString());
 
     return {
       message: `Événement ${event.isPublished ? 'publié' : 'dépublié'} avec succès`,
@@ -865,7 +974,7 @@ export class EventService {
     ).then(results => results.filter(attendee => attendee !== null));
 
     return {
-      id: event.id,
+      id: event.id || (event as any)?._id?.toString() || '',
       title: event.title,
       description: event.description,
       startDate: event.startDate?.toISOString() || new Date().toISOString(),
@@ -970,6 +1079,7 @@ export class EventService {
             endDate: event.endDate?.toISOString(),
             startTime: event.startTime,
             endTime: event.endTime,
+            timezone: event.timezone,
             location: event.location,
             venue: event.location, // Keep venue for backward compatibility if needed
             onlineUrl: event.onlineUrl,
@@ -977,6 +1087,7 @@ export class EventService {
             type: event.type,
             isActive: event.isActive,
             isPublished: event.isPublished,
+            notes: event.notes,
             attendeesCount: event.attendees.length,
             maxAttendees: event.tickets.reduce((total, ticket) => total + (ticket.quantity || 0), 0),
             thumbnail: event.image,

@@ -850,11 +850,7 @@ export class ProductService {
    * Incrémenter les ventes d'un produit
    */
   async incrementSales(productId: string, amount: number = 1): Promise<void> {
-    const product = await this.productModel.findOne({ id: productId });
-    if (!product) {
-      throw new NotFoundException('Produit non trouvé');
-    }
-
+    const product = await this.findProductByAnyId(productId);
     product.incrementSales(amount);
     await product.save();
   }
@@ -1097,110 +1093,169 @@ export class ProductService {
    */
   async getMyPurchases(userId: string): Promise<any[]> {
     try {
-      // Chercher toutes les commandes de l'utilisateur pour des produits
+      const buyerFilter: any = Types.ObjectId.isValid(userId)
+        ? { $in: [new Types.ObjectId(userId), userId] }
+        : userId;
+
       const orders = await this.orderModel
         .find({
-          user: userId,
-          status: 'completed',
-          'items.type': 'product',
-        })
-        .populate({
-          path: 'items.itemId',
-          model: 'Product',
-          populate: [
-            {
-              path: 'communityId',
-              model: 'Community',
-              select: 'name slug',
-            },
-            {
-              path: 'creatorId',
-              model: 'User',
-              select: 'name email profile_picture photo_profil',
-            },
-          ],
+          buyerId: buyerFilter,
+          contentType: TrackableContentType.PRODUCT,
+          status: 'paid',
         })
         .sort({ createdAt: -1 })
+        .lean()
         .exec();
 
-      // Extraire les produits uniques des commandes
-      const purchasedProducts: any[] = [];
-      const seenProductIds = new Set();
+      if (!orders?.length) return [];
 
+      // Keep the most recent paid order per product content id.
+      const latestOrderByContentId = new Map<string, any>();
       for (const order of orders) {
-        for (const item of order.items) {
-          if (
-            item.type === 'product' &&
-            item.itemId &&
-            !seenProductIds.has(item.itemId._id.toString())
-          ) {
-            seenProductIds.add(item.itemId._id.toString());
+        const contentId = String(order?.contentId || '');
+        if (!contentId || latestOrderByContentId.has(contentId)) continue;
+        latestOrderByContentId.set(contentId, order);
+      }
 
-            const product = item.itemId;
+      const contentIds = Array.from(latestOrderByContentId.keys());
+      const mongoContentIds = contentIds.filter((id) => Types.ObjectId.isValid(id));
 
-            // Informations de la communauté
-            const communityInfo = product.communityId
-              ? {
-                  _id: product.communityId._id.toString(),
-                  name: product.communityId.name,
-                  slug: product.communityId.slug,
-                }
-              : null;
+      const [productsByMongoId, productsByCustomId] = await Promise.all([
+        mongoContentIds.length > 0
+          ? this.productModel
+              .find({ _id: { $in: mongoContentIds.map((id) => new Types.ObjectId(id)) } })
+              .lean()
+              .exec()
+          : Promise.resolve([]),
+        this.productModel
+          .find({ id: { $in: contentIds } })
+          .lean()
+          .exec(),
+      ]);
 
-            // Informations du créateur
-            const creatorInfo = product.creatorId
-              ? {
-                  _id: product.creatorId._id.toString(),
-                  name: product.creatorId.name,
-                  email: product.creatorId.email,
-                  avatar: this.uploadService.ensureAbsoluteUrl(
-                    product.creatorId.profile_picture ||
-                      product.creatorId.photo_profil,
-                  ),
-                }
-              : null;
+      const productsLookup = new Map<string, any>();
+      for (const product of [...productsByMongoId, ...productsByCustomId]) {
+        const mongoId = product?._id?.toString();
+        if (mongoId) productsLookup.set(mongoId, product);
+        if (product?.id) productsLookup.set(String(product.id), product);
+      }
 
-            purchasedProducts.push({
-              _id: product._id.toString(),
-              title: product.title,
-              description: product.description,
-              short_description: product.description,
-              price: product.price,
-              currency: product.currency,
-              category: product.category,
-              type: product.type,
-              images: product.images || [],
-              thumbnail: product.images?.[0],
-              is_published: product.isPublished,
-              stock_quantity: product.inventory,
-              rating: product.rating || 0,
-              reviews_count: product.ratingCount || 0,
-              downloads_count:
-                product.files?.reduce(
-                  (total, file) => total + (file.downloadCount || 0),
-                  0,
-                ) || 0,
-              purchases_count: product.sales || 0,
-              variants: product.variants || [],
-              files: product.files || [],
-              tags: product.tags || [],
-              created_at:
-                product.createdAt?.toISOString() || new Date().toISOString(),
-              updated_at:
-                product.updatedAt?.toISOString() || new Date().toISOString(),
-              created_by: creatorInfo,
-              community_id: communityInfo,
-              // Détails de l'achat
-              purchase_details: {
-                order_id: order._id.toString(),
-                purchased_at: order.createdAt.toISOString(),
-                amount_paid: item.price,
-                currency: order.currency || 'TND',
-                quantity: item.quantity || 1,
-              },
-            });
-          }
-        }
+      const communityKeyMap = await this.resolveCommunitiesByKeys(
+        Array.from(
+          new Set(
+            [...productsByMongoId, ...productsByCustomId]
+              .map((product: any) => String(product?.communityId || '').trim())
+              .filter(Boolean),
+          ),
+        ),
+      );
+
+      const creatorIds = Array.from(
+        new Set(
+          [...productsByMongoId, ...productsByCustomId]
+            .map((product: any) => product?.creatorId?.toString?.() || '')
+            .filter(Boolean),
+        ),
+      );
+
+      const creators =
+        creatorIds.length > 0
+          ? await this.userModel
+              .find({ _id: { $in: creatorIds.map((id) => new Types.ObjectId(id)) } })
+              .select('name email profile_picture photo_profil')
+              .lean()
+              .exec()
+          : [];
+      const creatorsLookup = new Map<string, any>();
+      for (const creator of creators) {
+        creatorsLookup.set(String(creator?._id), creator);
+      }
+
+      const purchasedProducts: any[] = [];
+      for (const [contentId, order] of latestOrderByContentId.entries()) {
+        const product = productsLookup.get(contentId);
+        if (!product) continue;
+
+        const productMongoId = String(product?._id || '');
+        const productCustomId = String(product?.id || productMongoId || contentId);
+        const totalDownloads =
+          (product?.files || []).reduce(
+            (sum: number, file: any) => sum + Number(file?.downloadCount || 0),
+            0,
+          ) || 0;
+
+        const creator = creatorsLookup.get(String(product?.creatorId || ''));
+        const creatorInfo = creator
+          ? {
+              _id: String(creator._id),
+              name: creator.name,
+              email: creator.email,
+              avatar: this.uploadService.ensureAbsoluteUrl(
+                creator.profile_picture || creator.photo_profil,
+              ),
+            }
+          : null;
+
+        const communityKey = String(product?.communityId || '').trim();
+        const community = communityKey ? communityKeyMap.get(communityKey) : null;
+        const communityInfo = community
+          ? {
+              _id: String(community._id),
+              id: String((community as any).id || ''),
+              name: community.name,
+              slug: community.slug,
+            }
+          : null;
+
+        purchasedProducts.push({
+          _id: productMongoId,
+          id: productCustomId,
+          productId: productCustomId,
+          contentId: productMongoId,
+          title: product.title,
+          description: product.description,
+          short_description: product.description,
+          price: product.price,
+          currency: product.currency || 'TND',
+          category: product.category,
+          type: product.type,
+          images: product.images || [],
+          thumbnail: product.images?.[0] || null,
+          is_published: Boolean(product.isPublished),
+          stock_quantity: product.inventory,
+          rating: Number((product as any).averageRating || product.rating || 0),
+          reviews_count: Number((product as any).ratingCount || 0),
+          downloads_count: totalDownloads,
+          purchases_count: Number(product.sales || 0),
+          variants: product.variants || [],
+          files:
+            (product.files || []).map((file: any) => ({
+              ...file,
+              url: this.uploadService.ensureAbsoluteUrl(file?.url),
+            })) || [],
+          tags: product.tags || [],
+          created_at:
+            product.createdAt instanceof Date
+              ? product.createdAt.toISOString()
+              : new Date(product.createdAt || Date.now()).toISOString(),
+          updated_at:
+            product.updatedAt instanceof Date
+              ? product.updatedAt.toISOString()
+              : new Date(product.updatedAt || Date.now()).toISOString(),
+          created_by: creatorInfo,
+          community_id: communityInfo,
+          purchase_details: {
+            order_id: String(order?._id || ''),
+            purchased_at: new Date(order?.createdAt || Date.now()).toISOString(),
+            amount_paid: Number(order?.amountDT || product.price || 0),
+            currency: 'TND',
+            quantity: 1,
+          },
+          purchasedAt: new Date(order?.createdAt || Date.now()).toISOString(),
+          downloadCount: totalDownloads,
+          orderId: String(order?._id || ''),
+          amountPaid: Number(order?.amountDT || product.price || 0),
+        });
       }
 
       return purchasedProducts;
@@ -1245,10 +1300,18 @@ export class ProductService {
       }
 
       // Check for existing order (manual payment flow)
+      const buyerFilter: any = Types.ObjectId.isValid(userId)
+        ? { $in: [new Types.ObjectId(userId), userId] }
+        : userId;
+
+      const productContentIds = Array.from(
+        new Set([String(product._id || ''), String(product.id || '')].filter(Boolean)),
+      );
+
       const order = await this.orderModel.findOne({
-        buyerId: new Types.ObjectId(userId),
+        buyerId: buyerFilter,
         contentType: TrackableContentType.PRODUCT,
-        contentId: product._id.toString(),
+        contentId: { $in: productContentIds },
         status: 'paid',
       });
 

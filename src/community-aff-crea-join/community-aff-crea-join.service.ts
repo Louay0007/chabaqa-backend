@@ -1,4 +1,4 @@
-import { Injectable, ConflictException, NotFoundException, InternalServerErrorException, ForbiddenException, BadRequestException } from '@nestjs/common';
+import { Injectable, ConflictException, NotFoundException, InternalServerErrorException, ForbiddenException, BadRequestException, OnModuleInit } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Connection, Model, Types } from 'mongoose';
 import { Community, CommunityDocument } from '../schema/community.schema';
@@ -16,7 +16,7 @@ import { ContentTrackingService } from '../common/services/content-tracking.serv
 import { PaginatedResponseDto } from '../common/dto/paginated-response.dto';
 
 @Injectable()
-export class CommunityAffCreaJoinService {
+export class CommunityAffCreaJoinService implements OnModuleInit {
   constructor(
     @InjectModel(Community.name) private communityModel: Model<CommunityDocument>,
     @InjectModel(User.name) private userModel: Model<UserDocument>,
@@ -29,6 +29,64 @@ export class CommunityAffCreaJoinService {
     private readonly notificationService: NotificationService,
     private readonly trackingService: ContentTrackingService,
   ) { }
+
+  async onModuleInit(): Promise<void> {
+    await this.repairInviteCodeIndex();
+  }
+
+  private isInviteCodeDuplicateError(error: any): boolean {
+    const message = String(error?.message || '');
+    const code = Number(error?.code || error?.errorResponse?.code || 0);
+    const keyPatternInvite =
+      Boolean(error?.keyPattern?.inviteCode) || Boolean(error?.errorResponse?.keyPattern?.inviteCode);
+    return code === 11000 && (keyPatternInvite || message.includes('inviteCode_1') || message.includes('inviteCode'));
+  }
+
+  private async repairInviteCodeIndex(): Promise<void> {
+    try {
+      const collection = this.communityModel.collection;
+
+      await collection.updateMany(
+        { inviteCode: null },
+        { $unset: { inviteCode: '', inviteLink: '' } },
+      );
+
+      const indexes = await collection.indexes();
+      const inviteIndex = indexes.find(
+        (index: any) =>
+          index &&
+          index.key &&
+          Object.keys(index.key).length === 1 &&
+          index.key.inviteCode === 1,
+      ) as any | undefined;
+
+      const partial = (inviteIndex?.partialFilterExpression?.inviteCode || {}) as any;
+      const hasDesiredInviteIndex =
+        Boolean(inviteIndex) &&
+        inviteIndex.unique === true &&
+        partial.$type === 'string' &&
+        partial.$ne === '';
+
+      if (inviteIndex && !hasDesiredInviteIndex && typeof inviteIndex.name === 'string') {
+        await collection.dropIndex(inviteIndex.name);
+      }
+
+      if (!hasDesiredInviteIndex) {
+        await collection.createIndex(
+          { inviteCode: 1 },
+          {
+            name: 'inviteCode_1',
+            unique: true,
+            partialFilterExpression: {
+              inviteCode: { $type: 'string', $ne: '' },
+            },
+          },
+        );
+      }
+    } catch (error) {
+      console.error('⚠️ Failed to repair communities inviteCode index:', error);
+    }
+  }
 
   private getModelIfRegistered<T = any>(connection: Connection, modelName: string): Model<T> | null {
     return connection.modelNames().includes(modelName) ? (connection.model(modelName) as Model<T>) : null;
@@ -117,9 +175,15 @@ export class CommunityAffCreaJoinService {
       console.log('   Cover Image from DTO:', createCommunityDto.coverImage);
 
       // Intégrer le logo dans les données de la communauté (même pattern que le thumbnail)
+      const sanitizedCreateCommunityDto = {
+        ...(createCommunityDto as any),
+      };
+      delete (sanitizedCreateCommunityDto as any).inviteCode;
+      delete (sanitizedCreateCommunityDto as any).inviteLink;
+
       const communityDataAvecLogo = {
-        ...createCommunityDto,
-        logo: uploadedFiles.logo || createCommunityDto.logo
+        ...sanitizedCreateCommunityDto,
+        logo: uploadedFiles.logo || sanitizedCreateCommunityDto.logo
       };
       
       console.log('🖼️ [CREATE COMMUNITY] Cover image URL:', communityDataAvecLogo.coverImage);
@@ -149,7 +213,9 @@ export class CommunityAffCreaJoinService {
       const socialLinks = communityDataAvecLogo.socialLinks || {};
       console.log('🔍 [SERVICE] Social links:', JSON.stringify(socialLinks, null, 2));
 
-      const hasAtLeastOneLink = Object.values(socialLinks).some(link => link && link.trim() !== '');
+      const hasAtLeastOneLink = Object.values(socialLinks).some((link) => {
+        return typeof link === 'string' && link.trim() !== '';
+      });
 
       if (!hasAtLeastOneLink) {
         throw new BadRequestException('Au moins un lien social est requis pour créer une communauté');
@@ -284,6 +350,9 @@ export class CommunityAffCreaJoinService {
 
       if (community.isPrivate) {
         await this.ensurePrivateInviteData(community);
+      } else {
+        community.set('inviteCode', undefined);
+        community.set('inviteLink', undefined);
       }
 
       const savedCommunity = await community.save();
@@ -354,6 +423,9 @@ export class CommunityAffCreaJoinService {
     } catch (error) {
       if (error instanceof ConflictException || error instanceof NotFoundException || error instanceof BadRequestException) {
         throw error;
+      }
+      if (this.isInviteCodeDuplicateError(error)) {
+        throw new ConflictException('Conflit sur le code d\'invitation. Reessayez la creation de la communaute.');
       }
 
       console.error('Erreur lors de la création de la communauté:', error);
@@ -1042,8 +1114,8 @@ export class CommunityAffCreaJoinService {
       if (community.isPrivate) {
         await this.ensurePrivateInviteData(community);
       } else {
-        community.inviteCode = null as any;
-        community.inviteLink = null as any;
+        community.set('inviteCode', undefined);
+        community.set('inviteLink', undefined);
       }
 
       await community.save();
@@ -1058,6 +1130,9 @@ export class CommunityAffCreaJoinService {
         error instanceof BadRequestException
       ) {
         throw error;
+      }
+      if (this.isInviteCodeDuplicateError(error)) {
+        throw new ConflictException('Conflit sur le code d\'invitation. Reessayez la mise a jour.');
       }
       console.error('Erreur lors de la mise à jour de la communauté:', error);
       throw new InternalServerErrorException('Erreur lors de la mise à jour de la communauté');
