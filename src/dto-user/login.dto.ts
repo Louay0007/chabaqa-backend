@@ -1,5 +1,6 @@
 import { IsEmail, IsNotEmpty, IsString, MinLength, IsOptional, IsBoolean } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
 
 export class LoginDto {
   @ApiProperty({
@@ -7,6 +8,7 @@ export class LoginDto {
     example: 'user@example.com',
     format: 'email'
   })
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim().toLowerCase() : value))
   @IsEmail({}, { message: 'Veuillez fournir une adresse email valide' })
   @IsNotEmpty({ message: 'L\'email est requis' })
   email: string;
@@ -16,6 +18,7 @@ export class LoginDto {
     example: 'password123',
     minLength: 8
   })
+  @Transform(({ value }) => (typeof value === 'string' ? value : String(value ?? '')))
   @IsString({ message: 'Le mot de passe doit être une chaîne de caractères' })
   @IsNotEmpty({ message: 'Le mot de passe est requis' })
   @MinLength(8, { message: 'Le mot de passe doit contenir au moins 8 caractères' })

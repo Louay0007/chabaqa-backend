@@ -250,6 +250,7 @@ export interface SessionDocument extends Document {
   id: string;
   title: string;
   description: string;
+  thumbnail?: string;
   duration: number;
   price: number;
   currency: string;
@@ -354,6 +355,15 @@ export class Session {
     maxlength: 2000
   })
   description: string;
+
+  /**
+   * Image de couverture (thumbnail) de la session
+   */
+  @Prop({
+    trim: true,
+    maxlength: 2000
+  })
+  thumbnail?: string;
 
   /**
    * Durée de la session en minutes

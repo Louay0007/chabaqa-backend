@@ -7,6 +7,7 @@ import { LoginDto } from '../dto-user/login.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { RegisterDto } from '../dto-user/register.dto';
 import { GoogleAuthGuard } from './guards/google-auth.guard';
+import { CookieUtil } from '../common/utils/cookie.util';
 
 @ApiTags('Authentication')
 @Controller('auth')
@@ -61,8 +62,15 @@ export class AuthController {
     }
   })
   @ApiResponse({ status: 401, description: 'Invalid credentials' })
-  async login(@Body() loginDto: LoginDto) {
-    return this.authService.login(loginDto);
+  async login(@Body() loginDto: LoginDto, @Res({ passthrough: true }) res: Response) {
+    const result = await this.authService.login(loginDto);
+    if (result?.accessToken) {
+      res.cookie(CookieUtil.COOKIE_NAMES.ACCESS_TOKEN, result.accessToken, {
+        ...CookieUtil.ACCESS_TOKEN_CONFIG,
+        maxAge: 7 * 24 * 60 * 60 * 1000,
+      });
+    }
+    return result;
   }
 
   @UseGuards(JwtAuthGuard)
@@ -107,7 +115,24 @@ export class AuthController {
     description: 'Logout user (client should remove token).',
   })
   @ApiResponse({ status: 200, description: 'Logout successful' })
-  async logout() {
+  async logout(@Req() req, @Res({ passthrough: true }) res: Response) {
+    const accessToken = (
+      req.headers?.authorization?.replace('Bearer ', '')
+      || req.cookies?.accessToken
+      || req.cookies?.access_token
+      || ''
+    ).trim();
+
+    try {
+      if (accessToken) {
+        await this.authService.revokeToken(accessToken);
+      }
+    } catch {
+      // Keep logout idempotent even with invalid/expired token
+    }
+
+    CookieUtil.clearTokenCookies(res as any);
+
     return {
       success: true,
       message: 'Déconnexion réussie.',
@@ -121,7 +146,23 @@ export class AuthController {
     description: 'Revoke all user tokens (Placeholder for stateless JWT).',
   })
   @ApiResponse({ status: 200, description: 'Tokens revoked successfully' })
-  async revokeAllTokens() {
+  async revokeAllTokens(@Req() req, @Res({ passthrough: true }) res: Response) {
+    const accessToken = (
+      req.headers?.authorization?.replace('Bearer ', '')
+      || req.cookies?.accessToken
+      || req.cookies?.access_token
+      || ''
+    ).trim();
+
+    try {
+      if (accessToken) {
+        await this.authService.revokeAllTokensFromAccessToken(accessToken);
+      }
+    } catch {
+      // Keep endpoint idempotent.
+    }
+    CookieUtil.clearTokenCookies(res as any);
+
     return {
       success: true,
       message: 'Tous les tokens ont été révoqués.',

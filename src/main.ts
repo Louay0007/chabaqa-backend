@@ -3,15 +3,18 @@ import { AppModule } from './app.module';
 import { BadRequestException, ValidationPipe, ValidationError } from '@nestjs/common';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import cookieParser from 'cookie-parser';
-import cors from 'cors';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import * as express from 'express';
-import { SecurityMiddleware } from './common/middleware/security.middleware';
-import { WAFMiddleware } from './common/middleware/waf.middleware';
 import { AbsoluteUploadsUrlInterceptor } from './common/interceptors/absolute-uploads-url.interceptor';
 import { UploadService } from './upload/upload.service';
 import os from 'os';
 import { webcrypto } from 'node:crypto';
+import {
+  getAllowedCorsOrigins,
+  isCorsOriginAllowed,
+  isProductionEnvironment,
+  isSwaggerEnabled,
+} from './common/utils/security-config.util';
 
 // Compatibility for Node < 20 where globalThis.crypto may be undefined.
 if (!globalThis.crypto) {
@@ -34,6 +37,15 @@ const getLocalNetworkIp = (): string => {
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  const expressApp = app.getHttpAdapter().getInstance();
+  expressApp.disable('x-powered-by');
+
+  const trustProxy = process.env.TRUST_PROXY;
+  if (trustProxy === 'true') {
+    expressApp.set('trust proxy', 1);
+  } else if (trustProxy && /^\d+$/.test(trustProxy)) {
+    expressApp.set('trust proxy', Number(trustProxy));
+  }
 
   // Temporary backward-compat alias: /api/payments/* -> /api/payment/*
   // Keep this during migration to avoid breaking older frontend clients.
@@ -50,8 +62,10 @@ async function bootstrap() {
   // app.use('/uploads', cors(), express.static('uploads')); // Handled by ServeStaticModule in AppModule
 
 
-  app.use(express.json({ limit: '1gb' }));
-  app.use(express.urlencoded({ limit: '1gb', extended: true }));
+  const jsonBodyLimit = process.env.JSON_BODY_LIMIT || '2mb';
+  const urlEncodedBodyLimit = process.env.URLENCODED_BODY_LIMIT || '2mb';
+  app.use(express.json({ limit: jsonBodyLimit }));
+  app.use(express.urlencoded({ limit: urlEncodedBodyLimit, extended: true }));
 
 
   app.use('/api/payment/stripe-link/webhook', express.raw({ type: 'application/json' }));
@@ -114,15 +128,46 @@ async function bootstrap() {
   app.setGlobalPrefix('api');
 
 
-  const isProduction = process.env.NODE_ENV === 'production';
+  const isProduction = isProductionEnvironment();
+  const allowedOrigins = getAllowedCorsOrigins();
+
+  if (isProduction && allowedOrigins.length === 0) {
+    throw new Error(
+      '[SECURITY] No allowed CORS origins configured. Set FRONTEND_URL and/or CORS_ALLOWED_ORIGINS.',
+    );
+  }
+
+  app.use((req: any, res: any, next: any) => {
+    // Swagger UI needs scripts/styles. Keep strict headers for API routes.
+    if (!(req.path || '').startsWith('/api/docs')) {
+      res.setHeader(
+        'Content-Security-Policy',
+        "default-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+      );
+    }
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+    res.setHeader('X-Permitted-Cross-Domain-Policies', 'none');
+    if (isProduction) {
+      res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
+    }
+    next();
+  });
 
   if (!isProduction) {
     console.log(`🌐 CORS Mode: ${isProduction ? 'PRODUCTION (restrictif)' : 'DEVELOPMENT (permissif)'}`);
   }
 
   app.enableCors({
-
-    origin: true,
+    origin: (origin, callback) => {
+      if (isCorsOriginAllowed(origin, allowedOrigins)) {
+        callback(null, true);
+        return;
+      }
+      callback(null, false);
+    },
     credentials: true,
     methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
     allowedHeaders: [
@@ -143,7 +188,7 @@ async function bootstrap() {
   });
 
   if (!isProduction) {
-    console.log('✅ CORS enabled - Accepting all origins in development mode');
+    console.log(`✅ CORS enabled with allowlist: ${allowedOrigins.join(', ')}`);
   }
 
   // Access log middleware (production-friendly). This feeds Dozzle with request/response stats.
@@ -179,9 +224,11 @@ async function bootstrap() {
   const port = process.env.PORT || 3000;
   const localIP = getLocalNetworkIp();
 
-  const config = new DocumentBuilder()
-    .setTitle('Shabaka API')
-    .setDescription(`
+  const swaggerEnabled = isSwaggerEnabled();
+  if (swaggerEnabled) {
+    const config = new DocumentBuilder()
+      .setTitle('Shabaka API')
+      .setDescription(`
       # Welcome to Shabaka API! 🚀
       
       A comprehensive community-based learning platform API that enables users to create, join, and manage educational communities, courses, challenges, and events.
@@ -270,34 +317,34 @@ async function bootstrap() {
     .addTag('Admin', 'Administrative operations, system management, and admin-only features')
     .addTag('Resources', 'Resource management, organization, and content library features')
     .addTag('Sessions', 'User session management, booking, and one-on-one interactions')
-    .build();
+      .build();
 
-  const document = SwaggerModule.createDocument(app, config, {
-    operationIdFactory: (controllerKey: string, methodKey: string) => methodKey,
-    deepScanRoutes: true,
-    ignoreGlobalPrefix: false,
-  });
+    const document = SwaggerModule.createDocument(app, config, {
+      operationIdFactory: (controllerKey: string, methodKey: string) => methodKey,
+      deepScanRoutes: true,
+      ignoreGlobalPrefix: false,
+    });
 
-  // Custom Swagger UI configuration
-  SwaggerModule.setup('api/docs', app, document, {
-    swaggerOptions: {
-      persistAuthorization: true,
-      docExpansion: 'list',
-      tryItOutEnabled: true,
-      filter: true,
-      showRequestHeaders: true,
-      defaultModelsExpandDepth: 2,
-      defaultModelExpandDepth: 2,
-      displayRequestDuration: true,
-      deepLinking: true,
-      tagsSorter: 'alpha',
-      operationsSorter: 'alpha',
-      validatorUrl: null,
-      supportedSubmitMethods: ['get', 'post', 'put', 'delete', 'patch']
-    },
-    customSiteTitle: 'Shabaka API Documentation',
-    customfavIcon: '/favicon.ico',
-    customCss: `
+    // Custom Swagger UI configuration
+    SwaggerModule.setup('api/docs', app, document, {
+      swaggerOptions: {
+        persistAuthorization: true,
+        docExpansion: 'list',
+        tryItOutEnabled: true,
+        filter: true,
+        showRequestHeaders: true,
+        defaultModelsExpandDepth: 2,
+        defaultModelExpandDepth: 2,
+        displayRequestDuration: true,
+        deepLinking: true,
+        tagsSorter: 'alpha',
+        operationsSorter: 'alpha',
+        validatorUrl: null,
+        supportedSubmitMethods: ['get', 'post', 'put', 'delete', 'patch']
+      },
+      customSiteTitle: 'Shabaka API Documentation',
+      customfavIcon: '/favicon.ico',
+      customCss: `
       .swagger-ui .topbar { display: none; }
       .swagger-ui .info .title { 
         color: #2c3e50; 
@@ -428,34 +475,37 @@ async function bootstrap() {
         line-height: 1.4;
       }
     `,
-    customJs: [
-      'https://unpkg.com/swagger-ui-dist@4.15.5/swagger-ui-bundle.js',
-      'https://unpkg.com/swagger-ui-dist@4.15.5/swagger-ui-standalone-preset.js'
-    ],
-    customJsStr: [
-      'console.log("Shabaka API Documentation loaded successfully!");',
-      '',
-      '// Wait for Swagger UI to be ready',
-      'setTimeout(() => {',
-      '  // Add copy button for code examples',
-      '  const codeBlocks = document.querySelectorAll(".highlight-code pre");',
-      '  codeBlocks.forEach(block => {',
-      '    const button = document.createElement("button");',
-      '    button.textContent = "Copy";',
-      '    button.className = "copy-button";',
-      '    button.style.cssText = "position: absolute; top: 10px; right: 10px; background: #007bff; color: white; border: none; padding: 5px 10px; border-radius: 3px; cursor: pointer; font-size: 12px;";',
-      '    block.style.position = "relative";',
-      '    block.appendChild(button);',
-      '    ',
-      '    button.addEventListener("click", () => {',
-      '      navigator.clipboard.writeText(block.textContent);',
-      '      button.textContent = "Copied!";',
-      '      setTimeout(() => { button.textContent = "Copy"; }, 2000);',
-      '    });',
-      '  });',
-      '}, 1000);'
-    ].join('\n')
-  });
+      customJs: [
+        'https://unpkg.com/swagger-ui-dist@4.15.5/swagger-ui-bundle.js',
+        'https://unpkg.com/swagger-ui-dist@4.15.5/swagger-ui-standalone-preset.js'
+      ],
+      customJsStr: [
+        'console.log("Shabaka API Documentation loaded successfully!");',
+        '',
+        '// Wait for Swagger UI to be ready',
+        'setTimeout(() => {',
+        '  // Add copy button for code examples',
+        '  const codeBlocks = document.querySelectorAll(".highlight-code pre");',
+        '  codeBlocks.forEach(block => {',
+        '    const button = document.createElement("button");',
+        '    button.textContent = "Copy";',
+        '    button.className = "copy-button";',
+        '    button.style.cssText = "position: absolute; top: 10px; right: 10px; background: #007bff; color: white; border: none; padding: 5px 10px; border-radius: 3px; cursor: pointer; font-size: 12px;";',
+        '    block.style.position = "relative";',
+        '    block.appendChild(button);',
+        '    ',
+        '    button.addEventListener("click", () => {',
+        '      navigator.clipboard.writeText(block.textContent);',
+        '      button.textContent = "Copied!";',
+        '      setTimeout(() => { button.textContent = "Copy"; }, 2000);',
+        '    });',
+        '  });',
+        '}, 1000);'
+      ].join('\n')
+    });
+  } else {
+    console.log('🔒 Swagger UI is disabled (set ENABLE_SWAGGER=true to enable in production).');
+  }
 
   // Bind to 0.0.0.0 to allow connections from both localhost and network
   await app.listen(port, '0.0.0.0');

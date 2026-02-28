@@ -435,7 +435,7 @@ export class ProgressionService {
 
     const docs = await this.sessionModel
       .find({ id: { $in: ids } })
-      .select('id title description communityId duration price category isActive')
+      .select('id title description thumbnail communityId duration price category isActive')
       .lean()
       .exec();
 
@@ -446,7 +446,7 @@ export class ProgressionService {
           id: doc.id,
           title: doc.title,
           description: doc.description,
-          thumbnail: undefined,
+          thumbnail: doc.thumbnail,
           communityId: doc.communityId,
           meta: {
             duration: doc.duration,

@@ -94,6 +94,123 @@ export class AnalyticsService {
     match.communityId = { $in: communityIdStrings };
   }
 
+  private buildOrderContentCommunityLookup(collection: string, contentType: string, alias: string) {
+    return {
+      $lookup: {
+        from: collection,
+        let: { orderContentId: '$contentId', orderContentType: '$contentType' },
+        pipeline: [
+          {
+            $match: {
+              $expr: {
+                $and: [
+                  { $eq: ['$$orderContentType', contentType] },
+                  {
+                    $or: [
+                      { $eq: ['$id', '$$orderContentId'] },
+                      { $eq: [{ $toString: '$_id' }, '$$orderContentId'] },
+                    ],
+                  },
+                ],
+              },
+            },
+          },
+          { $project: { _id: 0, communityId: 1 } },
+          { $limit: 1 },
+        ],
+        as: alias,
+      },
+    } as any;
+  }
+
+  private async aggregateCreatorRevenue(
+    creatorId: string,
+    from: Date,
+    to: Date,
+    communityScope: { hasFilter: boolean; lookupCommunityValues: Array<string | Types.ObjectId> },
+    extraMatch?: Record<string, any>,
+  ): Promise<{ total: number; count: number }> {
+    const ordersCollection = this.dbConnection.db?.collection('orders');
+    if (!ordersCollection) return { total: 0, count: 0 };
+
+    const match: any = {
+      creatorId: this.getCreatorObjectId(creatorId),
+      status: 'paid',
+      createdAt: { $gte: from, $lte: to },
+      ...(extraMatch || {}),
+    };
+
+    const revenueGroupStages: any[] = [
+      {
+        $group: {
+          _id: null,
+          total: { $sum: '$creatorNetDT' },
+          count: { $sum: 1 },
+        },
+      },
+      { $project: { _id: 0, total: 1, count: 1 } },
+    ];
+
+    if (!communityScope.hasFilter) {
+      const rows = await ordersCollection.aggregate([{ $match: match }, ...revenueGroupStages]).toArray();
+      return {
+        total: Number(rows?.[0]?.total ?? 0) || 0,
+        count: Number(rows?.[0]?.count ?? 0) || 0,
+      };
+    }
+
+    const resolvedCommunityIdExpr = {
+      $ifNull: [
+        '$communityId',
+        {
+          $ifNull: [
+            { $cond: [{ $eq: ['$contentType', 'community'] }, '$contentId', null] },
+            {
+              $ifNull: [
+                { $arrayElemAt: ['$courseDoc.communityId', 0] },
+                {
+                  $ifNull: [
+                    { $arrayElemAt: ['$challengeDoc.communityId', 0] },
+                    {
+                      $ifNull: [
+                        { $arrayElemAt: ['$sessionDoc.communityId', 0] },
+                        {
+                          $ifNull: [
+                            { $arrayElemAt: ['$eventDoc.communityId', 0] },
+                            { $arrayElemAt: ['$productDoc.communityId', 0] },
+                          ],
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+
+    const rows = await ordersCollection
+      .aggregate([
+        { $match: match },
+        this.buildOrderContentCommunityLookup('cours', 'course', 'courseDoc'),
+        this.buildOrderContentCommunityLookup('challenges', 'challenge', 'challengeDoc'),
+        this.buildOrderContentCommunityLookup('sessions', 'session', 'sessionDoc'),
+        this.buildOrderContentCommunityLookup('events', 'event', 'eventDoc'),
+        this.buildOrderContentCommunityLookup('products', 'product', 'productDoc'),
+        { $addFields: { resolvedCommunityId: resolvedCommunityIdExpr } },
+        { $match: { resolvedCommunityId: { $in: communityScope.lookupCommunityValues } } },
+        ...revenueGroupStages,
+      ])
+      .toArray();
+
+    return {
+      total: Number(rows?.[0]?.total ?? 0) || 0,
+      count: Number(rows?.[0]?.count ?? 0) || 0,
+    };
+  }
+
   private async resolveCommunityScope(
     creatorId: string,
     communityId?: string,
@@ -394,31 +511,8 @@ export class AnalyticsService {
         : mongoTotals;
 
 
-    // Calculate revenue from orders
-    const revenueMatch: any = {
-      creatorId: this.getCreatorObjectId(creatorId),
-      status: 'paid',
-      createdAt: { $gte: from, $lte: to },
-    };
-
-    if (communityScope.hasFilter) {
-      revenueMatch.communityId = { $in: communityScope.lookupCommunityValues };
-    }
-
-    // Note: Orders currently don't store communityId, so we only filter by creator/date/status
-    const revenueAgg = await this.dbConnection.db?.collection('orders').aggregate([
-      { $match: revenueMatch },
-      {
-        $group: {
-          _id: null,
-          total: { $sum: '$creatorNetDT' }, // Use creator net amount
-          count: { $sum: 1 }
-        }
-      },
-      { $project: { _id: 0 } }
-    ]);
-
-    const revenue = revenueAgg?.[0] || { total: 0, count: 0 };
+    // Revenue must include orders without `communityId`, so resolve community from content when needed.
+    const revenue = await this.aggregateCreatorRevenue(creatorId, from, to, communityScope);
 
     // Calculate engagement rate: (interactions / views) * 100
     // Interactions include: starts, completes, likes, shares, downloads, bookmarks

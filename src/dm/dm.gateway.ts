@@ -1,8 +1,12 @@
 import { OnGatewayConnection, OnGatewayDisconnect, SubscribeMessage, WebSocketGateway, WebSocketServer } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { JwtService } from '@nestjs/jwt';
+import { getAllowedCorsOrigins, getJwtSecret } from '../common/utils/security-config.util';
 
-@WebSocketGateway({ namespace: '/dm', cors: { origin: '*' } })
+@WebSocketGateway({
+  namespace: '/dm',
+  cors: { origin: getAllowedCorsOrigins(), credentials: true },
+})
 export class DmGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   server: Server;
@@ -14,8 +18,8 @@ export class DmGateway implements OnGatewayConnection, OnGatewayDisconnect {
   async handleConnection(client: Socket) {
     try {
       const token = (client.handshake.auth?.token || client.handshake.headers['authorization'] || '').toString().replace('Bearer ', '');
-      const payload: any = this.jwtService.verify(token, { secret: process.env.JWT_SECRET });
-      const userId = payload?.userId;
+      const payload: any = this.jwtService.verify(token, { secret: getJwtSecret() });
+      const userId = payload?.userId || payload?.sub;
       if (!userId) return client.disconnect();
 
       if (!this.onlineUsers.has(userId)) {

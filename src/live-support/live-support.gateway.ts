@@ -8,8 +8,12 @@ import {
 } from '@nestjs/websockets';
 import { JwtService } from '@nestjs/jwt';
 import { Server, Socket } from 'socket.io';
+import { getAllowedCorsOrigins, getJwtSecret } from '../common/utils/security-config.util';
 
-@WebSocketGateway({ namespace: '/live-support', cors: { origin: '*' } })
+@WebSocketGateway({
+  namespace: '/live-support',
+  cors: { origin: getAllowedCorsOrigins(), credentials: true },
+})
 export class LiveSupportGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   server: Server;
@@ -23,7 +27,7 @@ export class LiveSupportGateway implements OnGatewayConnection, OnGatewayDisconn
         .replace('Bearer ', '')
         .trim();
       const payload: any = this.jwtService.verify(token, {
-        secret: process.env.JWT_SECRET || 'your-secret-key',
+        secret: getJwtSecret(),
       });
 
       const actorId = String(payload?.sub || payload?.userId || '').trim();

@@ -56,6 +56,12 @@ export class SessionService {
     return this.communityModel.findOne({ id: communityId });
   }
 
+  private normalizeOptionalString(value?: string): string | undefined {
+    if (typeof value !== 'string') return undefined;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  }
+
   private getBookingById(sessionDoc: SessionDocument, bookingId: string): any | undefined {
     return (sessionDoc.bookings || []).find((booking: any) => booking.id === bookingId);
   }
@@ -413,6 +419,7 @@ export class SessionService {
       id: sessionId,
       title: createSessionDto.title,
       description: createSessionDto.description,
+      thumbnail: this.normalizeOptionalString(createSessionDto.thumbnail),
       duration: createSessionDto.duration,
       price: createSessionDto.price,
       currency: createSessionDto.currency,
@@ -596,7 +603,11 @@ export class SessionService {
     // }
 
     // Mettre à jour la session
-    Object.assign(session, updateSessionDto);
+    const sanitizedUpdate: any = { ...updateSessionDto };
+    if (Object.prototype.hasOwnProperty.call(updateSessionDto, 'thumbnail')) {
+      sanitizedUpdate.thumbnail = this.normalizeOptionalString((updateSessionDto as any).thumbnail);
+    }
+    Object.assign(session, sanitizedUpdate);
     const updatedSession = await session.save();
     await this.invalidateSessionCaches(session.creatorId.toString());
 
@@ -1931,11 +1942,13 @@ export class SessionService {
       id: session.id,
       title: session.title,
       description: session.description,
+      thumbnail: this.normalizeOptionalString((session as any).thumbnail),
       duration: session.duration,
       price: session.price,
       currency: session.currency,
       communityId: session.communityId,
       communitySlug: community?.slug || '',
+      communityName: community?.name || '',
       creatorId: session.creatorId.toString(),
       creatorName: creator?.name || 'Créateur inconnu',
       creatorAvatar: creatorAvatar,

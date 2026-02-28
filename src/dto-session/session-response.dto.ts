@@ -98,6 +98,9 @@ export class SessionResponseDto {
   @ApiProperty({ description: 'Description de la session', example: 'Get personalized feedback on your code and projects' })
   description: string;
 
+  @ApiPropertyOptional({ description: 'URL de l\'image de couverture (thumbnail)', example: 'https://example.com/session-cover.jpg' })
+  thumbnail?: string;
+
   @ApiProperty({ description: 'Durée de la session en minutes', example: 60 })
   duration: number;
 
@@ -112,6 +115,9 @@ export class SessionResponseDto {
 
   @ApiProperty({ description: 'Slug de la communauté', example: 'web-dev-community' })
   communitySlug: string;
+
+  @ApiPropertyOptional({ description: 'Nom de la communauté', example: 'Web Dev Community' })
+  communityName?: string;
 
   @ApiProperty({ description: 'ID du créateur', example: 'user_789' })
   creatorId: string;

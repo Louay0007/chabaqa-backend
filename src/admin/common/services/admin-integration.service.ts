@@ -20,6 +20,7 @@ import { User, UserDocument } from '../../../schema/user.schema';
 import { Admin, AdminDocument } from '../../../schema/admin.schema';
 import { AdminUser, AdminUserDocument } from '../../schemas/admin-user.schema';
 import { AuditLog, AuditLogDocument, AdminAction } from '../../schemas/audit-log.schema';
+import { getJwtSecret } from '../../../common/utils/security-config.util';
 
 /**
  * AdminIntegrationService handles integration between admin module and existing platform systems
@@ -157,11 +158,11 @@ export class AdminIntegrationService implements OnModuleInit {
       const testPayload = { sub: 'test', email: 'test@test.com', role: 'admin' };
       const testToken = this.jwtService.sign(testPayload, {
         expiresIn: '1m',
-        secret: process.env.JWT_SECRET || 'your-secret-key',
+        secret: getJwtSecret(),
       });
 
       const verified = this.jwtService.verify(testToken, {
-        secret: process.env.JWT_SECRET || 'your-secret-key',
+        secret: getJwtSecret(),
       });
 
       if (!verified || verified.sub !== 'test') {
@@ -222,7 +223,7 @@ export class AdminIntegrationService implements OnModuleInit {
     try {
       // Verify JWT token
       const payload = this.jwtService.verify(token, {
-        secret: process.env.JWT_SECRET || 'your-secret-key',
+        secret: getJwtSecret(),
       });
 
       if (!payload || !payload.sub) {

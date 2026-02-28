@@ -1,4 +1,4 @@
-import { Controller, Post, Body, HttpStatus, Res, ConflictException, HttpCode, Response as ExpressResponse, Req, UseGuards, Delete } from '@nestjs/common';
+import { Controller, Post, Body, HttpStatus, Res, ConflictException, HttpCode, Response as ExpressResponse, Req, UseGuards, Delete, ForbiddenException } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBody, ApiExtraModels } from '@nestjs/swagger';
 import { AdminService } from './admin.service';
 import { CreateAdminDto } from '../dto-admin/create-admin.dto';
@@ -9,6 +9,7 @@ import { AdminVerify2FADto } from '../dto-admin/verify-2fa.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AdminForgotPasswordDto } from '../dto-admin/forgot-password.dto';
 import { AdminResetPasswordDto } from '../dto-admin/reset-password.dto';
+import { AdminGuard } from '../auth/guards/admin.guard';
 
 @ApiTags('Admin')
 @ApiExtraModels(AdminLoginDto, AdminVerify2FADto, AdminForgotPasswordDto, AdminResetPasswordDto, AdminLoginResponseDto)
@@ -16,8 +17,43 @@ import { AdminResetPasswordDto } from '../dto-admin/reset-password.dto';
 export class AdminController {
   constructor(private readonly adminService: AdminService) {}
 
+  @Post('bootstrap')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Bootstrap first admin account',
+    description: 'Creates the first admin account only when no admin exists and a bootstrap key is provided.',
+    tags: ['Admin'],
+  })
+  async bootstrapAdmin(@Req() req, @Res() response, @Body() createAdminDto: CreateAdminDto) {
+    const hasAdmins = await this.adminService.hasAnyAdminAccount();
+    if (hasAdmins) {
+      throw new ForbiddenException('Bootstrap endpoint is disabled after first admin creation');
+    }
+
+    const expectedBootstrapKey = (process.env.ADMIN_BOOTSTRAP_KEY || '').trim();
+    const providedBootstrapKey = String(req.headers['x-admin-bootstrap-key'] || '').trim();
+
+    if (!expectedBootstrapKey || !providedBootstrapKey || providedBootstrapKey !== expectedBootstrapKey) {
+      throw new ForbiddenException('Invalid bootstrap key');
+    }
+
+    const admin = await this.adminService.createAdmin(createAdminDto);
+    return response.status(HttpStatus.CREATED).json({
+      success: true,
+      message: 'Admin created successfully',
+      admin: {
+        _id: admin._id,
+        name: admin.name,
+        email: admin.email,
+        role: admin.role,
+        createdAt: admin.createdAt,
+      },
+    });
+  }
+
   // create admin
   @Post('create')
+  @UseGuards(JwtAuthGuard, AdminGuard)
   @ApiOperation({
     summary: 'Create Admin Account',
     description: 'Create a new admin account in the system.',
@@ -345,7 +381,7 @@ export class AdminController {
 
   // ⚠️ DANGER: Delete all database data
   @Delete('cleanup-database')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, AdminGuard)
   @ApiOperation({
     summary: '⚠️ DANGER: Delete All Database Data',
     description: 'Deletes ALL data from the database. Use with extreme caution!',
@@ -366,6 +402,9 @@ export class AdminController {
   @HttpCode(HttpStatus.OK)
   async cleanupDatabase(@Res() response) {
     try {
+      if (process.env.ALLOW_ADMIN_DB_CLEANUP !== 'true') {
+        throw new ForbiddenException('Database cleanup is disabled. Set ALLOW_ADMIN_DB_CLEANUP=true to enable.');
+      }
       const result = await this.adminService.cleanupDatabase();
       return response.status(HttpStatus.OK).json({
         success: true,
@@ -373,6 +412,14 @@ export class AdminController {
         deletedCollections: result.deletedCollections,
       });
     } catch (err) {
+      if (err instanceof ForbiddenException) {
+        return response.status(HttpStatus.FORBIDDEN).json({
+          success: false,
+          status: 403,
+          message: err.message,
+          error: 'FORBIDDEN',
+        });
+      }
       return response.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
         success: false,
         status: 500,

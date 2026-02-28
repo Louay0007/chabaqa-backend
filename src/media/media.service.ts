@@ -22,13 +22,14 @@ import {
 import { DiskStorageAdapter } from './storage/disk-storage.adapter';
 import { S3StorageAdapter } from './storage/s3-storage.adapter';
 import { StorageAdapter } from './storage/storage-adapter.interface';
+import { getMediaPrivateTokenSecret } from '../common/utils/security-config.util';
 
 @Injectable()
 export class MediaService {
   private readonly uploadsRoot = join(process.cwd(), process.env.UPLOAD_PATH || 'uploads');
   private readonly publicBaseUrl = (process.env.MEDIA_PUBLIC_BASE_URL || process.env.SERVER_URL || 'https://api.chabaqa.io').replace(/\/+$/, '');
   private readonly privateEnforcement = process.env.MEDIA_PRIVATE_ENFORCEMENT === 'true';
-  private readonly tokenSecret = process.env.MEDIA_PRIVATE_TOKEN_SECRET || process.env.JWT_SECRET || 'media-dev-secret';
+  private readonly tokenSecret = getMediaPrivateTokenSecret();
   private readonly presignedEnabled = process.env.MEDIA_PRESIGNED_ENABLED === 'true';
 
   constructor(
@@ -266,4 +267,3 @@ export class MediaService {
     return this.mediaModel.findById(assetId);
   }
 }
-

@@ -16,6 +16,7 @@ import { AdminVerify2FADto } from '../dto-admin/verify-2fa.dto';
 import { TokenBlacklistService } from '../common/services/token-blacklist.service';
 import { AdminForgotPasswordDto } from '../dto-admin/forgot-password.dto';
 import { AdminResetPasswordDto } from '../dto-admin/reset-password.dto';
+import { getJwtRefreshSecret, getJwtSecret, isProductionEnvironment } from '../common/utils/security-config.util';
 
 // Import new admin-specific schemas and interfaces
 import { AdminUser, AdminUserDocument, AdminRole, AdminPermission } from './schemas/admin-user.schema';
@@ -103,7 +104,7 @@ export class AdminService {
       },
       {
         expiresIn: accessTokenDuration,
-        secret: process.env.JWT_SECRET || 'your-secret-key',
+        secret: getJwtSecret(),
       }
     );
 
@@ -114,7 +115,7 @@ export class AdminService {
       },
       {
         expiresIn: refreshTokenDuration,
-        secret: process.env.JWT_REFRESH_SECRET || 'your-refresh-secret-key',
+        secret: getJwtRefreshSecret(),
       }
     );
 
@@ -124,8 +125,32 @@ export class AdminService {
   // login admin
   async loginAdmin(loginAdminDto: AdminLoginDto): Promise<AdminLoginResponseDto> {
     const admin = await this.validateAdmin(loginAdminDto.email, loginAdminDto.password);
-    
-    // Bypass 2FA - Generate tokens directly
+
+    const shouldRequire2FA =
+      isProductionEnvironment() && process.env.ADMIN_ALLOW_PASSWORD_ONLY_LOGIN !== 'true';
+
+    if (shouldRequire2FA) {
+      const verificationCode = this.generateVerificationCode();
+      const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+
+      await this.verificationCodeModel.deleteMany({ adminId: admin._id, type: '2fa' });
+      await this.verificationCodeModel.create({
+        adminId: admin._id,
+        code: verificationCode,
+        type: '2fa',
+        expiresAt,
+        isUsed: false,
+        rememberMe: Boolean(loginAdminDto.remember_me),
+      });
+
+      await this.emailService.send2FACode(admin.email, verificationCode, admin.name);
+
+      return {
+        requires2FA: true,
+        message: 'Code de vérification envoyé. Veuillez confirmer le 2FA.',
+      } as AdminLoginResponseDto;
+    }
+
     const { accessToken, refreshToken, rememberMe } = this.generateTokens(admin, loginAdminDto.remember_me);
 
     return {
@@ -142,6 +167,10 @@ export class AdminService {
       rememberMe,
       message: 'Connexion réussie',
     };
+  }
+
+  async hasAnyAdminAccount(): Promise<boolean> {
+    return (await this.adminModel.countDocuments({})) > 0;
   }
 
   // verify 2fa
@@ -192,7 +221,7 @@ export class AdminService {
   async refreshToken(refreshToken: string): Promise<{ access_token: string; expires_in: number }> {
     try {
       const payload = this.jwtService.verify(refreshToken, {
-        secret: process.env.JWT_REFRESH_SECRET || 'your-refresh-secret-key',
+        secret: getJwtRefreshSecret(),
       });
       // Vérifier si le token est dans la blacklist
       const tokenId = payload.jti || `${payload.sub}-${payload.iat}`;
@@ -217,7 +246,7 @@ export class AdminService {
 
       const newAccessToken = this.jwtService.sign(newPayload, {
         expiresIn: '2h',
-        secret: process.env.JWT_SECRET || 'your-secret-key',
+        secret: getJwtSecret(),
       });
 
       return {
@@ -236,7 +265,7 @@ export class AdminService {
       // Révoquer l'access token s'il est fourni
       if (accessToken) {
         const accessPayload = this.jwtService.verify(accessToken, {
-          secret: process.env.JWT_SECRET || 'your-secret-key',
+          secret: getJwtSecret(),
         });
         await this.tokenBlacklistService.revokeTokenFromJWT(
           accessPayload.sub,
@@ -248,7 +277,7 @@ export class AdminService {
       // Révoquer le refresh token s'il est fourni
       if (refreshToken) {
         const refreshPayload = this.jwtService.verify(refreshToken, {
-          secret: process.env.JWT_REFRESH_SECRET || 'your-refresh-secret-key',
+          secret: getJwtRefreshSecret(),
         });
         await this.tokenBlacklistService.revokeTokenFromJWT(
           refreshPayload.sub,

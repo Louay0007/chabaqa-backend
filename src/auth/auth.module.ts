@@ -16,6 +16,7 @@ import { EmailService } from '../common/services/email.service';
 import { TokenBlacklistService } from '../common/services/token-blacklist.service';
 import { UserLoginActivityModule } from '../user-login-activity/user-login-activity.module';
 import { UploadModule } from '../upload/upload.module';
+import { getJwtSecret } from '../common/utils/security-config.util';
 
 @Module({
   imports: [
@@ -25,10 +26,12 @@ import { UploadModule } from '../upload/upload.module';
       { name: Admin.name, schema: AdminSchema },
       { name: RevokedToken.name, schema: RevokedTokenSchema }
     ]),
-    JwtModule.register({
+    JwtModule.registerAsync({
       global: true,
-      secret: process.env.JWT_SECRET || 'your-secret-key',
-      signOptions: { expiresIn: '2h' },
+      useFactory: () => ({
+        secret: getJwtSecret(),
+        signOptions: { expiresIn: '2h' },
+      }),
     }),
     UserLoginActivityModule,
     UploadModule,

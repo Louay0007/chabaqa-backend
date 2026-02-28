@@ -54,6 +54,12 @@ export class CreateSessionDto {
   @MaxLength(2000)
   description: string;
 
+  @ApiPropertyOptional({ description: 'URL de l\'image de couverture (thumbnail)', example: 'https://example.com/session-cover.jpg' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  thumbnail?: string;
+
   @ApiProperty({ description: 'Durée de la session en minutes', example: 60 })
   @IsNumber()
   @Min(15)

@@ -1,7 +1,7 @@
 import { Injectable, UnauthorizedException, BadRequestException, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import * as bcrypt from 'bcryptjs';
 import { OAuth2Client } from 'google-auth-library';
 import { User, UserDocument } from '../schema/user.schema';
@@ -13,6 +13,8 @@ import { UserLoginActivityService } from '../user-login-activity/user-login-acti
 import { RegisterDto } from '../dto-user/register.dto';
 import { UploadService } from '../upload/upload.service';
 import { generateUniqueUsername } from '../common/utils/username.util';
+import { TokenBlacklistService } from '../common/services/token-blacklist.service';
+import { getJwtSecret } from '../common/utils/security-config.util';
 
 @Injectable()
 export class AuthService {
@@ -24,6 +26,7 @@ export class AuthService {
     private emailService: EmailService,
     private userLoginActivityService: UserLoginActivityService,
     private uploadService: UploadService,
+    private tokenBlacklistService: TokenBlacklistService,
   ) { }
 
   async loginWithGoogle(oauthUser: {
@@ -96,7 +99,15 @@ export class AuthService {
   }
 
   async validateUser(email: string, password: string): Promise<UserDocument> {
-    const user = await this.userModel.findOne({ email }).select('+password');
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    const escapedEmail = normalizedEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    let user = await this.userModel.findOne({ email: normalizedEmail }).select('+password').exec();
+    if (!user) {
+      user = await this.userModel
+        .findOne({ email: { $regex: `^${escapedEmail}$`, $options: 'i' } })
+        .select('+password')
+        .exec();
+    }
     if (!user) {
       throw new UnauthorizedException('Email ou mot de passe incorrect');
     }
@@ -104,7 +115,7 @@ export class AuthService {
     if (!isPasswordValid) {
       throw new UnauthorizedException('Email ou mot de passe incorrect');
     }
-    return user;
+    return user as UserDocument;
   }
 
   public generateToken(user: UserDocument): string {
@@ -112,12 +123,39 @@ export class AuthService {
       sub: user._id,
       email: user.email,
       role: user.role,
+      jti: `${user._id}-${Date.now()}`,
     };
 
     return this.jwtService.sign(payload, {
       expiresIn: '7d', // Longer expiration for simple auth
-      secret: process.env.JWT_SECRET || 'your-secret-key',
+      secret: getJwtSecret(),
     });
+  }
+
+  async revokeToken(token: string): Promise<void> {
+    const parsed = token?.trim();
+    if (!parsed) return;
+    const payload: any = this.jwtService.verify(parsed, { secret: getJwtSecret() });
+    if (!payload?.sub) return;
+    await this.tokenBlacklistService.revokeTokenFromJWT(
+      new Types.ObjectId(payload.sub),
+      payload,
+      'access',
+    );
+  }
+
+  async revokeAllTokensForUser(userId: string): Promise<void> {
+    if (!Types.ObjectId.isValid(userId)) return;
+    await this.tokenBlacklistService.revokeAllUserTokens(new Types.ObjectId(userId));
+  }
+
+  async revokeAllTokensFromAccessToken(token: string): Promise<void> {
+    const parsed = token?.trim();
+    if (!parsed) return;
+    const payload: any = this.jwtService.verify(parsed, { secret: getJwtSecret() });
+    const userId = payload?.sub ? String(payload.sub) : '';
+    if (!userId) return;
+    await this.revokeAllTokensForUser(userId);
   }
 
   async login(loginDto: LoginDto): Promise<{ accessToken: string; user: any }> {
