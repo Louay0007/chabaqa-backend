@@ -6,7 +6,7 @@
   "private": true,
   "license": "UNLICENSED",
   "scripts": {
-    "build": "nest build",
+    "build": "NODE_OPTIONS='--max-old-space-size=3072 --max-semi-space-size=128' nest build",
     "build:prod": "NODE_OPTIONS='--max-old-space-size=3072 --max-semi-space-size=128' nest build",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "nest start",
@@ -32,6 +32,7 @@
     "fix:community-invite-index": "node scripts/fix-community-invite-index.js",
     "backfill:event-ids": "node scripts/backfill-event-ids.js",
     "backfill:usernames": "node scripts/run-with-local-db-env.js node scripts/backfill-usernames.js",
+    "backfill:email-campaign-schedules": "node scripts/run-with-local-db-env.js npx ts-node scripts/backfill-email-campaign-schedules.ts",
     "export:db": "node scripts/export-database.js",
     "audit:media": "node scripts/audit-media-integrity.js",
     "backfill:media": "node scripts/backfill-media-assets.js",

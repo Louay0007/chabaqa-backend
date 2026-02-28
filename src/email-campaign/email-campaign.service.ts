@@ -1,913 +1,791 @@
 import {
+  BadRequestException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
-  ForbiddenException,
-  BadRequestException,
-  InternalServerErrorException
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
+import {
+  CampaignStatsDto,
+  CreateContentReminderDto,
+  CreateEmailCampaignDto,
+  CreateInactiveUserCampaignDto,
+  EmailCampaignQueryDto,
+  InactiveUserQueryDto,
+  InactiveUserStatsDto,
+  UpdateEmailCampaignDto,
+} from '../dto-email-campaign/email-campaign.dto';
+import { EmailService } from '../common/services/email.service';
+import { Community, CommunityDocument } from '../schema/community.schema';
 import {
   EmailCampaign,
   EmailCampaignDocument,
   EmailCampaignStatus,
   EmailCampaignType,
+  EmailRecipient,
   InactivityPeriod,
-  EmailRecipient
 } from '../schema/email-campaign.schema';
-import { UserLoginActivityDocument } from '../schema/user-login-activity.schema';
 import { User, UserDocument } from '../schema/user.schema';
-import { Community, CommunityDocument } from '../schema/community.schema';
-import { EmailService } from '../common/services/email.service';
+import { UserLoginActivityDocument } from '../schema/user-login-activity.schema';
 import { UserLoginActivityService } from '../user-login-activity/user-login-activity.service';
-import {
-  CreateEmailCampaignDto,
-  CreateInactiveUserCampaignDto,
-  UpdateEmailCampaignDto,
-  EmailCampaignQueryDto,
-  CampaignStatsDto,
-  InactiveUserStatsDto,
-  CreateContentReminderDto
-} from '../dto-email-campaign/email-campaign.dto';
+import { contentTypeToLabel, inactivityPeriodToText, renderTemplate } from './email-campaign-template.util';
+import { EmailCampaignQueueService } from './email-campaign.queue';
+import { EmailCampaignSendJobPayload } from './email-campaign.jobs';
 
-/**
- * Service for managing email campaigns including  inactive user targeting
- */
+type RecipientsQuery = { page?: number; limit?: number; status?: string; opened?: boolean };
+
 @Injectable()
 export class EmailCampaignService {
   private readonly logger = new Logger(EmailCampaignService.name);
 
   constructor(
     @InjectModel(EmailCampaign.name)
-    private emailCampaignModel: Model<EmailCampaignDocument>,
+    private readonly emailCampaignModel: Model<EmailCampaignDocument>,
     @InjectModel(User.name)
-    private userModel: Model<UserDocument>,
+    private readonly userModel: Model<UserDocument>,
     @InjectModel(Community.name)
-    private communityModel: Model<CommunityDocument>,
-    private emailService: EmailService,
-    private userLoginActivityService: UserLoginActivityService,
-  ) { }
+    private readonly communityModel: Model<CommunityDocument>,
+    private readonly emailService: EmailService,
+    private readonly userLoginActivityService: UserLoginActivityService,
+    private readonly emailCampaignQueueService: EmailCampaignQueueService,
+  ) {}
 
-  /**
-   * Create a regular email campaign
-   */
-  async createCampaign(
-    creatorId: string,
-    dto: CreateEmailCampaignDto
-  ): Promise<EmailCampaignDocument> {
-    try {
-      // Verify creator owns the community
-      const community = await this.verifyCommunityAccess(creatorId, dto.communityId);
+  async createCampaign(creatorId: string, dto: CreateEmailCampaignDto): Promise<EmailCampaignDocument> {
+    const community = await this.verifyCommunityAccess(creatorId, dto.communityId);
+    const recipients = await this.buildCommunityRecipients(community);
+    const scheduledAt = this.normalizeScheduledAt(dto.scheduledAt);
+    const status = this.resolveCampaignStatus(scheduledAt);
 
-      // Get community members
-      const members = await this.userModel.find({
-        _id: { $in: community.members }
-      }).select('_id email name');
+    const campaign = new this.emailCampaignModel({
+      title: dto.title,
+      subject: dto.subject,
+      content: dto.content,
+      communityId: new Types.ObjectId(dto.communityId),
+      creatorId: new Types.ObjectId(creatorId),
+      recipients,
+      totalRecipients: recipients.length,
+      scheduledAt,
+      type: dto.type || EmailCampaignType.CUSTOM,
+      status,
+      isHtml: dto.isHtml || false,
+      trackOpens: dto.trackOpens !== false,
+      trackClicks: dto.trackClicks !== false,
+      metadata: dto.metadata || {},
+    });
 
-      if (members.length === 0) {
-        // Allow creation with zero recipients so campaigns can be drafted even before members join
-        this.logger.warn(`Creating campaign with zero recipients for community ${dto.communityId}`);
-      }
+    const savedCampaign = await campaign.save();
+    await this.enqueueIfScheduled(savedCampaign, creatorId, 'scheduled');
 
-      // Create recipients list
-      const recipients: EmailRecipient[] = members.map(member => ({
-        userId: member._id,
-        email: member.email,
-        name: member.name,
-        status: 'pending',
-        opened: false,
-        clickCount: 0
-      }));
+    this.logger.log(
+      `Created campaign ${savedCampaign._id.toString()} for community ${dto.communityId} with ${recipients.length} recipients`,
+    );
 
-      const campaign = new this.emailCampaignModel({
-        title: dto.title,
-        subject: dto.subject,
-        content: dto.content,
-        communityId: new Types.ObjectId(dto.communityId),
-        creatorId: new Types.ObjectId(creatorId),
-        recipients,
-        totalRecipients: recipients.length,
-        scheduledAt: dto.scheduledAt ? new Date(dto.scheduledAt) : undefined,
-        type: dto.type || EmailCampaignType.CUSTOM,
-        status: EmailCampaignStatus.DRAFT,
-        isHtml: dto.isHtml || false,
-        trackOpens: dto.trackOpens !== false,
-        trackClicks: dto.trackClicks !== false,
-        metadata: dto.metadata || {}
-      });
-
-      const savedCampaign = await campaign.save();
-
-      this.logger.log(`Created campaign ${savedCampaign._id} for community ${dto.communityId} with ${recipients.length} recipients`);
-
-      return savedCampaign;
-    } catch (error) {
-      this.logger.error(`Error creating campaign:`, error);
-      throw error;
-    }
+    return savedCampaign;
   }
 
-  /**
-   * Create an inactive user campaign
-   */
   async createInactiveUserCampaign(
     creatorId: string,
-    dto: CreateInactiveUserCampaignDto
+    dto: CreateInactiveUserCampaignDto,
   ): Promise<EmailCampaignDocument> {
-    try {
-      // Verify creator owns the community
-      const community = await this.verifyCommunityAccess(creatorId, dto.communityId);
+    const community = await this.verifyCommunityAccess(creatorId, dto.communityId);
+    const inactiveUsers = await this.getInactiveUsersForCampaign(dto);
+    const recipients = inactiveUsers.map((userActivity) => {
+      const user = userActivity.userId as any;
+      return {
+        userId: user._id,
+        email: user.email,
+        name: user.name,
+        status: 'pending',
+        opened: false,
+        clickCount: 0,
+      } as EmailRecipient;
+    });
 
-      // Get inactive users based on selected period
-      let inactiveUsers: UserLoginActivityDocument[];
+    const scheduledAt = this.normalizeScheduledAt(dto.scheduledAt);
+    const status = this.resolveCampaignStatus(scheduledAt);
+    const targetDaysThreshold = this.getDaysThreshold(dto.inactivityPeriod);
 
-      if (dto.targetAllInactive) {
-        inactiveUsers = await this.userLoginActivityService.getAllInactiveUsers(dto.communityId);
-      } else {
-        inactiveUsers = await this.userLoginActivityService.getInactiveUsersByPeriod(
-          dto.communityId,
-          dto.inactivityPeriod
-        );
-      }
+    const campaign = new this.emailCampaignModel({
+      title: dto.title,
+      subject: dto.subject,
+      content: dto.content,
+      communityId: new Types.ObjectId(dto.communityId),
+      creatorId: new Types.ObjectId(creatorId),
+      recipients,
+      totalRecipients: recipients.length,
+      isInactiveUserCampaign: true,
+      targetInactivityPeriod: dto.inactivityPeriod,
+      targetDaysThreshold,
+      targetAllInactive: dto.targetAllInactive || false,
+      scheduledAt,
+      type: EmailCampaignType.INACTIVE_USER_REACTIVATION,
+      status,
+      trackOpens: dto.trackOpens !== false,
+      trackClicks: dto.trackClicks !== false,
+      isHtml: dto.isHtml || false,
+      metadata: {
+        ...dto.metadata,
+        reactivationCampaign: true,
+        targetPeriod: dto.inactivityPeriod,
+        targetDaysThreshold,
+        communityName: community.name,
+      },
+    });
 
-      if (inactiveUsers.length === 0) {
-        // Allow creation with zero recipients so campaigns can be drafted even before inactive users exist
-        this.logger.warn(`Creating inactive user campaign with zero recipients for community ${dto.communityId}`);
-      }
+    const savedCampaign = await campaign.save();
+    await this.enqueueIfScheduled(savedCampaign, creatorId, 'scheduled');
 
-      // Apply max recipients limit if specified
-      if (dto.maxRecipients && inactiveUsers.length > dto.maxRecipients) {
-        inactiveUsers = inactiveUsers.slice(0, dto.maxRecipients);
-      }
-
-      // Create recipients list
-      const recipients: EmailRecipient[] = inactiveUsers.map(userActivity => {
-        const user = userActivity.userId as any;
-        return {
-          userId: user._id,
-          email: user.email,
-          name: user.name,
-          status: 'pending',
-          opened: false,
-          clickCount: 0
-        };
-      });
-
-      // Process email content with variables
-      const processedContent = this.processInactiveUserContent(
-        dto.content,
-        dto.inactivityPeriod,
-        community.name
-      );
-
-      const processedSubject = this.processInactiveUserContent(
-        dto.subject,
-        dto.inactivityPeriod,
-        community.name
-      );
-
-      const campaign = new this.emailCampaignModel({
-        title: dto.title,
-        subject: processedSubject,
-        content: processedContent,
-        communityId: new Types.ObjectId(dto.communityId),
-        creatorId: new Types.ObjectId(creatorId),
-        recipients,
-        totalRecipients: recipients.length,
-        isInactiveUserCampaign: true,
-        targetInactivityPeriod: dto.inactivityPeriod,
-        targetDaysThreshold: this.getDaysThreshold(dto.inactivityPeriod),
-        targetAllInactive: dto.targetAllInactive || false,
-        scheduledAt: dto.scheduledAt ? new Date(dto.scheduledAt) : undefined,
-        type: EmailCampaignType.INACTIVE_USER_REACTIVATION,
-        status: EmailCampaignStatus.DRAFT,
-        trackOpens: dto.trackOpens !== false,
-        trackClicks: dto.trackClicks !== false,
-        isHtml: dto.isHtml || false,
-        metadata: {
-          ...dto.metadata,
-          reactivationCampaign: true,
-          targetPeriod: dto.inactivityPeriod
-        }
-      });
-
-      const savedCampaign = await campaign.save();
-
-      this.logger.log(
-        `Created inactive user campaign ${savedCampaign._id} for community ${dto.communityId} ` +
-        `with ${recipients.length} inactive users (period: ${dto.inactivityPeriod})`
-      );
-
-      return savedCampaign;
-    } catch (error) {
-      this.logger.error(`Error creating inactive user campaign:`, error);
-      throw error;
-    }
+    return savedCampaign;
   }
 
-  /**
-   * Send an email campaign
-   */
-  async sendCampaign(campaignId: string, creatorId: string): Promise<void> {
-    try {
-      const campaign = await this.emailCampaignModel.findById(campaignId);
+  async createAndSendContentReminder(
+    creatorId: string,
+    dto: CreateContentReminderDto,
+  ): Promise<{ campaignId: string; queued: true }> {
+    const community = await this.verifyCommunityAccess(creatorId, dto.communityId);
+    const recipients = await this.buildCommunityRecipients(community);
+    const scheduledAt = this.normalizeScheduledAt(dto.scheduledAt);
+    const status = this.resolveCampaignStatus(scheduledAt);
 
-      if (!campaign) {
-        throw new NotFoundException('Campaign not found');
-      }
+    const campaign = new this.emailCampaignModel({
+      title: dto.title,
+      subject: dto.subject,
+      content: dto.content,
+      communityId: new Types.ObjectId(dto.communityId),
+      creatorId: new Types.ObjectId(creatorId),
+      recipients,
+      totalRecipients: recipients.length,
+      scheduledAt,
+      type: EmailCampaignType.CUSTOM,
+      status,
+      trackOpens: dto.trackOpens !== false,
+      trackClicks: dto.trackClicks !== false,
+      isHtml: dto.isHtml || false,
+      metadata: {
+        ...dto.metadata,
+        contentReminder: true,
+        contentType: dto.contentType,
+        contentId: dto.contentId,
+        communityName: community.name,
+      },
+    });
 
-      // Verify creator owns the campaign
-      if (!campaign.creatorId.equals(creatorId)) {
-        throw new ForbiddenException('You can only send campaigns you created');
-      }
+    const savedCampaign = await campaign.save();
+    await this.emailCampaignQueueService.queueCampaignSend(
+      {
+        campaignId: savedCampaign._id.toString(),
+        requestedBy: creatorId,
+        trigger: scheduledAt ? 'scheduled' : 'content-reminder',
+      },
+      scheduledAt,
+    );
 
-      if (campaign.status !== EmailCampaignStatus.DRAFT &&
-        campaign.status !== EmailCampaignStatus.SCHEDULED) {
-        throw new BadRequestException('Campaign cannot be sent in current status');
-      }
+    return { campaignId: savedCampaign._id.toString(), queued: true };
+  }
 
-      // Update campaign status
-      campaign.status = EmailCampaignStatus.SENDING;
-      await campaign.save();
+  async sendCampaign(
+    campaignId: string,
+    creatorId: string,
+  ): Promise<{ queued: true; campaignId: string; message: string }> {
+    const campaign = await this.emailCampaignModel.findById(campaignId).exec();
+    if (!campaign) {
+      throw new NotFoundException('Campaign not found');
+    }
+    if (!campaign.creatorId.equals(creatorId)) {
+      throw new ForbiddenException('You can only send campaigns you created');
+    }
+    if (
+      campaign.status !== EmailCampaignStatus.DRAFT &&
+      campaign.status !== EmailCampaignStatus.SCHEDULED
+    ) {
+      throw new BadRequestException('Campaign cannot be sent in current status');
+    }
 
-      this.logger.log(`Starting to send campaign ${campaignId} to ${campaign.totalRecipients} recipients`);
+    campaign.status = EmailCampaignStatus.DRAFT;
+    campaign.scheduledAt = undefined;
+    await campaign.save();
 
-      // Send emails in batches to avoid overwhelming the email service
-      const batchSize = 10;
-      const batches = this.chunkArray(campaign.recipients, batchSize);
+    await this.emailCampaignQueueService.queueCampaignSend({
+      campaignId,
+      requestedBy: creatorId,
+      trigger: 'manual',
+    });
 
-      for (let i = 0; i < batches.length; i++) {
-        const batch = batches[i];
+    return {
+      queued: true,
+      campaignId,
+      message: 'Campaign queued for sending',
+    };
+  }
 
-        this.logger.log(`Sending batch ${i + 1}/${batches.length} (${batch.length} emails)`);
+  async executeSendCampaignJob(payload: EmailCampaignSendJobPayload): Promise<void> {
+    const { campaignId } = payload;
+    const campaign = await this.emailCampaignModel.findById(campaignId).exec();
 
-        await Promise.allSettled(
-          batch.map(recipient => this.sendEmailToRecipient(campaign, recipient))
-        );
+    if (!campaign) {
+      this.logger.warn(`Skipping send job for missing campaign ${campaignId}`);
+      return;
+    }
 
-        // Small delay between batches to avoid rate limiting
-        if (i < batches.length - 1) {
-          await new Promise(resolve => setTimeout(resolve, 1000));
-        }
-      }
+    if (campaign.status === EmailCampaignStatus.CANCELLED || campaign.status === EmailCampaignStatus.SENT) {
+      this.logger.log(`Skipping campaign ${campaignId} with status ${campaign.status}`);
+      return;
+    }
+    if (campaign.status === EmailCampaignStatus.SENDING) {
+      this.logger.warn(`Skipping campaign ${campaignId} because it is already sending`);
+      return;
+    }
+    if (
+      campaign.status !== EmailCampaignStatus.DRAFT &&
+      campaign.status !== EmailCampaignStatus.SCHEDULED
+    ) {
+      this.logger.warn(`Campaign ${campaignId} has unsupported status ${campaign.status}`);
+      return;
+    }
 
-      // Update campaign status
-      campaign.status = EmailCampaignStatus.SENT;
+    const community = await this.communityModel.findById(campaign.communityId).select('name').lean().exec();
+    const communityName = community?.name || '';
+
+    campaign.status = EmailCampaignStatus.SENDING;
+    await campaign.save();
+
+    const recipientsToProcess = campaign.recipients.filter((recipient) => recipient.status !== 'sent');
+    if (recipientsToProcess.length === 0) {
+      campaign.sentCount = campaign.recipients.filter((recipient) => recipient.status === 'sent').length;
+      campaign.failedCount = campaign.recipients.filter((recipient) => recipient.status === 'failed').length;
+      campaign.status = campaign.failedCount > 0 ? EmailCampaignStatus.FAILED : EmailCampaignStatus.SENT;
       campaign.sentAt = new Date();
       await campaign.save();
+      return;
+    }
 
-      // Update reactivation email tracking for inactive user campaigns
-      if (campaign.isInactiveUserCampaign) {
-        await this.updateReactivationEmailTracking(campaign);
+    const batchSize = 10;
+    const batches = this.chunkArray(recipientsToProcess, batchSize);
+
+    for (let index = 0; index < batches.length; index += 1) {
+      const batch = batches[index];
+      await Promise.allSettled(
+        batch.map((recipient) => this.sendEmailToRecipient(campaign, recipient, communityName)),
+      );
+
+      if (index < batches.length - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
       }
+    }
 
-      this.logger.log(`Campaign ${campaignId} sent successfully. Sent: ${campaign.sentCount}, Failed: ${campaign.failedCount}`);
-    } catch (error) {
-      this.logger.error(`Error sending campaign ${campaignId}:`, error);
+    campaign.sentCount = campaign.recipients.filter((recipient) => recipient.status === 'sent').length;
+    campaign.failedCount = campaign.recipients.filter((recipient) => recipient.status === 'failed').length;
+    campaign.sentAt = new Date();
+    campaign.status =
+      campaign.sentCount > 0 ? EmailCampaignStatus.SENT : EmailCampaignStatus.FAILED;
+    await campaign.save();
 
-      // Update campaign status to failed
-      try {
-        await this.emailCampaignModel.updateOne(
-          { _id: campaignId },
-          { status: EmailCampaignStatus.FAILED }
-        );
-      } catch (updateError) {
-        this.logger.error(`Error updating campaign status to failed:`, updateError);
-      }
-
-      throw error;
+    if (campaign.isInactiveUserCampaign) {
+      await this.updateReactivationEmailTracking(campaign);
     }
   }
 
-  /**
-   * Get campaigns for a community
-   */
+  async markCampaignSendFailed(campaignId: string, errorMessage: string): Promise<void> {
+    const campaign = await this.emailCampaignModel.findById(campaignId).exec();
+    if (!campaign) return;
+    if (
+      campaign.status === EmailCampaignStatus.SENT ||
+      campaign.status === EmailCampaignStatus.CANCELLED
+    ) {
+      return;
+    }
+
+    campaign.status = EmailCampaignStatus.FAILED;
+    campaign.metadata = {
+      ...(campaign.metadata || {}),
+      queueError: errorMessage,
+      queueFailedAt: new Date().toISOString(),
+    };
+    if (!campaign.sentAt) {
+      campaign.sentAt = new Date();
+    }
+    await campaign.save();
+  }
+
   async getCommunityCampaigns(
     creatorId: string,
     communityId: string,
-    query: EmailCampaignQueryDto
-  ): Promise<{ campaigns: EmailCampaignDocument[]; total: number }> {
-    try {
-      // Verify creator has access to community
-      await this.verifyCommunityAccess(creatorId, communityId);
+    query: EmailCampaignQueryDto,
+  ): Promise<{ campaigns: EmailCampaignDocument[]; total: number; page: number; limit: number }> {
+    await this.verifyCommunityAccess(creatorId, communityId);
 
-      const filter: any = {
-        communityId: new Types.ObjectId(communityId)
-      };
+    const filter: Record<string, any> = {
+      communityId: new Types.ObjectId(communityId),
+    };
 
-      // Apply filters
-      if (query.status) {
-        filter.status = query.status;
-      }
-      if (query.type) {
-        filter.type = query.type;
-      }
-      if (query.inactiveUserCampaigns !== undefined) {
-        filter.isInactiveUserCampaign = query.inactiveUserCampaigns;
-      }
-      if (query.search) {
-        filter.$or = [
-          { title: { $regex: query.search, $options: 'i' } },
-          { subject: { $regex: query.search, $options: 'i' } }
-        ];
-      }
-
-      const skip = ((query.page || 1) - 1) * (query.limit || 10);
-
-      const [campaigns, total] = await Promise.all([
-        this.emailCampaignModel
-          .find(filter)
-          .sort({ createdAt: -1 })
-          .skip(skip)
-          .limit(query.limit || 10)
-          .populate('creatorId', 'name email')
-          .exec(),
-        this.emailCampaignModel.countDocuments(filter)
-      ]);
-
-      return { campaigns, total };
-    } catch (error) {
-      this.logger.error(`Error getting community campaigns:`, error);
-      throw error;
+    if (query.status) filter.status = query.status;
+    if (query.type) filter.type = query.type;
+    if (query.inactiveUserCampaigns !== undefined) {
+      filter.isInactiveUserCampaign = query.inactiveUserCampaigns;
     }
-  }
-
-  /**
-   * Get campaign statistics
-   */
-  async getCampaignStats(creatorId: string, communityId: string): Promise<CampaignStatsDto> {
-    try {
-      // Verify creator has access to community
-      await this.verifyCommunityAccess(creatorId, communityId);
-
-      const campaigns = await this.emailCampaignModel.find({
-        communityId: new Types.ObjectId(communityId)
-      });
-
-      const stats: CampaignStatsDto = {
-        totalCampaigns: campaigns.length,
-        totalEmailsSent: campaigns.reduce((sum, c) => sum + c.sentCount, 0),
-        totalEmailsFailed: campaigns.reduce((sum, c) => sum + c.failedCount, 0),
-        totalOpens: campaigns.reduce((sum, c) => sum + c.openCount, 0),
-        totalClicks: campaigns.reduce((sum, c) => sum + c.clickCount, 0),
-        averageOpenRate: 0,
-        averageClickRate: 0,
-        reactivationCampaigns: campaigns.filter(c => c.isInactiveUserCampaign).length,
-        reactivationSuccessRate: 0
-      };
-
-      // Calculate rates
-      if (stats.totalEmailsSent > 0) {
-        stats.averageOpenRate = (stats.totalOpens / stats.totalEmailsSent) * 100;
-        stats.averageClickRate = (stats.totalClicks / stats.totalEmailsSent) * 100;
-      }
-
-      // Calculate reactivation success rate
-      const reactivationCampaigns = campaigns.filter(c => c.isInactiveUserCampaign);
-      if (reactivationCampaigns.length > 0) {
-        const totalReactivationEmails = reactivationCampaigns.reduce((sum, c) => sum + c.sentCount, 0);
-        const totalReactivationOpens = reactivationCampaigns.reduce((sum, c) => sum + c.openCount, 0);
-        stats.reactivationSuccessRate = totalReactivationEmails > 0
-          ? (totalReactivationOpens / totalReactivationEmails) * 100
-          : 0;
-      }
-
-      return stats;
-    } catch (error) {
-      this.logger.error(`Error getting campaign stats:`, error);
-      throw error;
+    if (query.search) {
+      filter.$or = [
+        { title: { $regex: query.search, $options: 'i' } },
+        { subject: { $regex: query.search, $options: 'i' } },
+      ];
     }
-  }
 
-  /**
-    * Get inactive user statistics
-    */
-  async getInactiveUserStats(communityId: string): Promise<InactiveUserStatsDto> {
-    try {
-      return await this.userLoginActivityService.getInactivityStats(communityId);
-    } catch (error) {
-      this.logger.error(`Error getting inactive user stats:`, error);
-      throw error;
-    }
-  }
+    const page = query.page || 1;
+    const limit = query.limit || 10;
+    const skip = (page - 1) * limit;
 
-  /**
-   * Create and send a content reminder campaign
-   */
-  async createAndSendContentReminder(
-    creatorId: string,
-    dto: CreateContentReminderDto
-  ): Promise<{ campaignId: string }> {
-    try {
-      // Verify creator owns the community
-      const community = await this.verifyCommunityAccess(creatorId, dto.communityId);
-
-      // Get community members
-      const members = await this.userModel.find({
-        _id: { $in: community.members }
-      }).select('_id email name');
-
-      if (members.length === 0) {
-        throw new BadRequestException('No members found in this community');
-      }
-
-      // Process content with template variables
-      const processedContent = this.processContentReminderContent(
-        dto.content,
-        dto.contentType,
-        community.name
-      );
-
-      const processedSubject = this.processContentReminderContent(
-        dto.subject,
-        dto.contentType,
-        community.name
-      );
-
-      // Create recipients list
-      const recipients: EmailRecipient[] = members.map(member => ({
-        userId: member._id,
-        email: member.email,
-        name: member.name,
-        status: 'pending',
-        opened: false,
-        clickCount: 0
-      }));
-
-      // Create the campaign
-      const campaign = new this.emailCampaignModel({
-        title: dto.title,
-        subject: processedSubject,
-        content: processedContent,
-        communityId: new Types.ObjectId(dto.communityId),
-        creatorId: new Types.ObjectId(creatorId),
-        recipients,
-        totalRecipients: recipients.length,
-        scheduledAt: dto.scheduledAt ? new Date(dto.scheduledAt) : undefined,
-        type: EmailCampaignType.CUSTOM,
-        status: EmailCampaignStatus.DRAFT,
-        trackOpens: dto.trackOpens !== false,
-        trackClicks: dto.trackClicks !== false,
-        isHtml: dto.isHtml || false,
-        metadata: {
-          ...dto.metadata,
-          contentReminder: true,
-          contentType: dto.contentType,
-          contentId: dto.contentId
-        }
-      });
-
-      const savedCampaign = await campaign.save();
-
-      // Send the campaign immediately
-      await this.sendCampaign(savedCampaign._id.toString(), creatorId);
-
-      this.logger.log(
-        `Created and sent content reminder campaign ${savedCampaign._id} for community ${dto.communityId} ` +
-        `for content type: ${dto.contentType}`
-      );
-
-      return { campaignId: savedCampaign._id.toString() };
-    } catch (error) {
-      this.logger.error(`Error creating content reminder campaign:`, error);
-      throw error;
-    }
-  }
-
-  /**
-   * Get a specific campaign
-   */
-  async getCampaign(campaignId: string, creatorId: string): Promise<EmailCampaignDocument> {
-    try {
-      const campaign = await this.emailCampaignModel
-        .findById(campaignId)
+    const [campaigns, total] = await Promise.all([
+      this.emailCampaignModel
+        .find(filter)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
         .populate('creatorId', 'name email')
-        .exec();
+        .exec(),
+      this.emailCampaignModel.countDocuments(filter).exec(),
+    ]);
 
-      if (!campaign) {
-        throw new NotFoundException('Campaign not found');
-      }
-
-      // Verify creator has access to the campaign's community
-      await this.verifyCommunityAccess(creatorId, campaign.communityId.toString());
-
-      return campaign;
-    } catch (error) {
-      this.logger.error(`Error getting campaign ${campaignId}:`, error);
-      throw error;
-    }
+    return { campaigns, total, page, limit };
   }
 
-  /**
-   * Update a campaign
-   */
+  async getCampaignStats(creatorId: string, communityId: string): Promise<CampaignStatsDto> {
+    await this.verifyCommunityAccess(creatorId, communityId);
+
+    const campaigns = await this.emailCampaignModel
+      .find({ communityId: new Types.ObjectId(communityId) })
+      .lean()
+      .exec();
+
+    const totalCampaigns = campaigns.length;
+    const totalEmailsSent = campaigns.reduce((sum, campaign) => sum + (campaign.sentCount || 0), 0);
+    const totalEmailsFailed = campaigns.reduce((sum, campaign) => sum + (campaign.failedCount || 0), 0);
+    const totalOpens = campaigns.reduce((sum, campaign) => sum + (campaign.openCount || 0), 0);
+    const totalClicks = campaigns.reduce((sum, campaign) => sum + (campaign.clickCount || 0), 0);
+
+    const reactivationCampaigns = campaigns.filter((campaign) => campaign.isInactiveUserCampaign).length;
+    const reactivationSent = campaigns
+      .filter((campaign) => campaign.isInactiveUserCampaign)
+      .reduce((sum, campaign) => sum + (campaign.sentCount || 0), 0);
+    const reactivationOpens = campaigns
+      .filter((campaign) => campaign.isInactiveUserCampaign)
+      .reduce((sum, campaign) => sum + (campaign.openCount || 0), 0);
+
+    return {
+      totalCampaigns,
+      totalEmailsSent,
+      totalEmailsFailed,
+      totalOpens,
+      totalClicks,
+      averageOpenRate: totalEmailsSent > 0 ? (totalOpens / totalEmailsSent) * 100 : 0,
+      averageClickRate: totalEmailsSent > 0 ? (totalClicks / totalEmailsSent) * 100 : 0,
+      reactivationCampaigns,
+      reactivationSuccessRate: reactivationSent > 0 ? (reactivationOpens / reactivationSent) * 100 : 0,
+    };
+  }
+
+  async getInactiveUsers(
+    creatorId: string,
+    communityId: string,
+    query: InactiveUserQueryDto,
+  ): Promise<UserLoginActivityDocument[]> {
+    await this.verifyCommunityAccess(creatorId, communityId);
+    const limit = query.limit || 100;
+    if (query.period) {
+      return this.userLoginActivityService.getInactiveUsersByPeriod(communityId, query.period, limit);
+    }
+    return this.userLoginActivityService.getAllInactiveUsers(communityId, limit);
+  }
+
+  async getInactiveUserStats(creatorId: string, communityId: string): Promise<InactiveUserStatsDto> {
+    await this.verifyCommunityAccess(creatorId, communityId);
+    return this.userLoginActivityService.getInactivityStats(communityId);
+  }
+
+  async getCampaign(campaignId: string, creatorId: string): Promise<EmailCampaignDocument> {
+    const campaign = await this.emailCampaignModel
+      .findById(campaignId)
+      .populate('creatorId', 'name email')
+      .exec();
+
+    if (!campaign) {
+      throw new NotFoundException('Campaign not found');
+    }
+    await this.verifyCommunityAccess(creatorId, campaign.communityId.toString());
+    return campaign;
+  }
+
   async updateCampaign(
     campaignId: string,
     dto: UpdateEmailCampaignDto,
-    creatorId: string
+    creatorId: string,
   ): Promise<EmailCampaignDocument> {
-    try {
-      const campaign = await this.emailCampaignModel.findById(campaignId);
+    const campaign = await this.emailCampaignModel.findById(campaignId).exec();
+    if (!campaign) {
+      throw new NotFoundException('Campaign not found');
+    }
+    if (!campaign.creatorId.equals(creatorId)) {
+      throw new ForbiddenException('You can only update campaigns you created');
+    }
+    if (
+      campaign.status !== EmailCampaignStatus.DRAFT &&
+      campaign.status !== EmailCampaignStatus.SCHEDULED
+    ) {
+      throw new BadRequestException('Campaign cannot be updated in current status');
+    }
 
-      if (!campaign) {
-        throw new NotFoundException('Campaign not found');
+    if (dto.title !== undefined) campaign.title = dto.title;
+    if (dto.subject !== undefined) campaign.subject = dto.subject;
+    if (dto.content !== undefined) campaign.content = dto.content;
+    if (dto.isHtml !== undefined) campaign.isHtml = dto.isHtml;
+    if (dto.trackOpens !== undefined) campaign.trackOpens = dto.trackOpens;
+    if (dto.trackClicks !== undefined) campaign.trackClicks = dto.trackClicks;
+    if (dto.metadata !== undefined) campaign.metadata = dto.metadata;
+
+    if (dto.scheduledAt !== undefined) {
+      campaign.scheduledAt = this.normalizeScheduledAt(dto.scheduledAt);
+      campaign.status = this.resolveCampaignStatus(campaign.scheduledAt);
+    } else if (dto.status === EmailCampaignStatus.DRAFT) {
+      campaign.status = EmailCampaignStatus.DRAFT;
+      campaign.scheduledAt = undefined;
+    } else if (dto.status === EmailCampaignStatus.SCHEDULED) {
+      if (!campaign.scheduledAt) {
+        throw new BadRequestException('scheduledAt is required when setting status to scheduled');
       }
-
-      // Verify creator owns the campaign
-      if (!campaign.creatorId.equals(creatorId)) {
-        throw new ForbiddenException('You can only update campaigns you created');
-      }
-
-      // Only allow updates if campaign is in draft status
-      if (campaign.status !== EmailCampaignStatus.DRAFT) {
-        throw new BadRequestException('Campaign cannot be updated in current status');
-      }
-
-      // Update allowed fields
-      const updateData: any = {};
-      if (dto.title !== undefined) updateData.title = dto.title;
-      if (dto.subject !== undefined) updateData.subject = dto.subject;
-      if (dto.content !== undefined) updateData.content = dto.content;
-      if (dto.status !== undefined) updateData.status = dto.status;
-      if (dto.scheduledAt !== undefined) updateData.scheduledAt = dto.scheduledAt ? new Date(dto.scheduledAt) : undefined;
-      if (dto.isHtml !== undefined) updateData.isHtml = dto.isHtml;
-      if (dto.trackOpens !== undefined) updateData.trackOpens = dto.trackOpens;
-      if (dto.trackClicks !== undefined) updateData.trackClicks = dto.trackClicks;
-      if (dto.metadata !== undefined) updateData.metadata = dto.metadata;
-
-      const updatedCampaign = await this.emailCampaignModel
-        .findByIdAndUpdate(campaignId, updateData, { new: true })
-        .populate('creatorId', 'name email')
-        .exec();
-
-      this.logger.log(`Updated campaign ${campaignId}`);
-
-      return updatedCampaign!;
-    } catch (error) {
-      this.logger.error(`Error updating campaign ${campaignId}:`, error);
-      throw error;
-    }
-  }
-
-  /**
-   * Delete a campaign
-   */
-  async deleteCampaign(campaignId: string, creatorId: string): Promise<void> {
-    try {
-      const campaign = await this.emailCampaignModel.findById(campaignId);
-
-      if (!campaign) {
-        throw new NotFoundException('Campaign not found');
-      }
-
-      // Verify creator owns the campaign
-      if (!campaign.creatorId.equals(creatorId)) {
-        throw new ForbiddenException('You can only delete campaigns you created');
-      }
-
-      // Only allow deletion if campaign is in draft status
-      if (campaign.status !== EmailCampaignStatus.DRAFT) {
-        throw new BadRequestException('Campaign cannot be deleted in current status');
-      }
-
-      await this.emailCampaignModel.findByIdAndDelete(campaignId);
-
-      this.logger.log(`Deleted campaign ${campaignId}`);
-    } catch (error) {
-      this.logger.error(`Error deleting campaign ${campaignId}:`, error);
-      throw error;
-    }
-  }
-
-  /**
-   * Private helper methods
-   */
-  private async verifyCommunityAccess(creatorId: string, communityId: string): Promise<CommunityDocument> {
-    const community = await this.communityModel.findOne({
-      _id: communityId,
-      $or: [
-        { createur: new Types.ObjectId(creatorId) },
-        { admins: new Types.ObjectId(creatorId) }
-      ]
-    });
-
-    if (!community) {
-      throw new ForbiddenException('You can only manage campaigns for communities you own or admin');
+      campaign.status = EmailCampaignStatus.SCHEDULED;
     }
 
-    return community;
-  }
+    const updatedCampaign = await campaign.save();
 
-  private async sendEmailToRecipient(
-    campaign: EmailCampaignDocument,
-    recipient: EmailRecipient
-  ): Promise<void> {
-    try {
-      await this.emailService.sendGenericEmail({
-        to: recipient.email,
-        subject: campaign.subject,
-        text: campaign.isHtml ? '' : (campaign.content || ''),
-        html: campaign.isHtml ? (campaign.content || '') : undefined,
-      });
-
-      recipient.status = 'sent';
-      recipient.sentAt = new Date();
-      campaign.sentCount++;
-
-      this.logger.debug(`Email sent successfully to ${recipient.email}`);
-    } catch (error) {
-      recipient.status = 'failed';
-      recipient.errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      campaign.failedCount++;
-
-      this.logger.error(`Failed to send email to ${recipient.email}:`, error);
-    }
-  }
-
-  private processInactiveUserContent(
-    template: string,
-    inactivityPeriod: InactivityPeriod,
-    communityName: string
-  ): string {
-    let processedContent = template;
-
-    // Replace template variables
-    processedContent = processedContent.replace(/{{communityName}}/g, communityName);
-    processedContent = processedContent.replace(/{{inactivityPeriod}}/g, this.getPeriodText(inactivityPeriod));
-    processedContent = processedContent.replace(/{{daysThreshold}}/g, this.getDaysThreshold(inactivityPeriod).toString());
-
-    return processedContent;
-  }
-
-  private getDaysThreshold(period: InactivityPeriod): number {
-    switch (period) {
-      case InactivityPeriod.LAST_7_DAYS: return 7;
-      case InactivityPeriod.LAST_15_DAYS: return 15;
-      case InactivityPeriod.LAST_30_DAYS: return 30;
-      case InactivityPeriod.LAST_60_DAYS: return 60;
-      case InactivityPeriod.MORE_THAN_60_DAYS: return 60;
-      default: return 7;
-    }
-  }
-
-  private getPeriodText(period: InactivityPeriod): string {
-    switch (period) {
-      case InactivityPeriod.LAST_7_DAYS: return '7 days';
-      case InactivityPeriod.LAST_15_DAYS: return '15 days';
-      case InactivityPeriod.LAST_30_DAYS: return '30 days';
-      case InactivityPeriod.LAST_60_DAYS: return '60 days';
-      case InactivityPeriod.MORE_THAN_60_DAYS: return 'more than 60 days';
-      default: return '7 days';
-    }
-  }
-
-  private chunkArray<T>(array: T[], size: number): T[][] {
-    const chunks: T[][] = [];
-    for (let i = 0; i < array.length; i += size) {
-      chunks.push(array.slice(i, i + size));
-    }
-    return chunks;
-  }
-
-  private async updateReactivationEmailTracking(campaign: EmailCampaignDocument): Promise<void> {
-    try {
-      const promises = campaign.recipients.map(recipient =>
-        this.userLoginActivityService.updateReactivationEmailSent(
-          recipient.userId.toString(),
-          campaign.communityId.toString()
-        )
+    if (updatedCampaign.status === EmailCampaignStatus.SCHEDULED && updatedCampaign.scheduledAt) {
+      await this.emailCampaignQueueService.queueCampaignSend(
+        {
+          campaignId: updatedCampaign._id.toString(),
+          requestedBy: creatorId,
+          trigger: 'scheduled',
+        },
+        updatedCampaign.scheduledAt,
       );
-
-      await Promise.all(promises);
-
-      this.logger.log(`Updated reactivation email tracking for campaign ${campaign._id}`);
-    } catch (error) {
-      this.logger.error(`Error updating reactivation email tracking:`, error);
+    } else {
+      await this.emailCampaignQueueService.removeScheduledCampaignSend(updatedCampaign._id.toString());
     }
+
+    await updatedCampaign.populate('creatorId', 'name email');
+    return updatedCampaign;
   }
 
-  private processContentReminderContent(
-    template: string,
-    contentType: string,
-    communityName: string
-  ): string {
-    let processedContent = template;
+  async deleteCampaign(campaignId: string, creatorId: string): Promise<void> {
+    const campaign = await this.emailCampaignModel.findById(campaignId).exec();
+    if (!campaign) {
+      throw new NotFoundException('Campaign not found');
+    }
+    if (!campaign.creatorId.equals(creatorId)) {
+      throw new ForbiddenException('You can only delete campaigns you created');
+    }
+    if (
+      campaign.status !== EmailCampaignStatus.DRAFT &&
+      campaign.status !== EmailCampaignStatus.SCHEDULED
+    ) {
+      throw new BadRequestException('Campaign cannot be deleted in current status');
+    }
 
-    // Replace template variables
-    processedContent = processedContent.replace(/{{communityName}}/g, communityName);
-    processedContent = processedContent.replace(/{{contentType}}/g, contentType);
-
-    // Add specific content type labels
-    const contentTypeLabels: Record<string, string> = {
-      'event': 'event',
-      'challenge': 'challenge',
-      'cours': 'course',
-      'product': 'product',
-      'session': 'session',
-      'all': 'content'
-    };
-
-    processedContent = processedContent.replace(/{{contentTypeLabel}}/g, contentTypeLabels[contentType] || contentType);
-
-    return processedContent;
+    await this.emailCampaignQueueService.removeScheduledCampaignSend(campaignId);
+    await this.emailCampaignModel.deleteOne({ _id: campaignId }).exec();
   }
 
-  /**
-   * Cancel a scheduled campaign
-   */
   async cancelCampaign(campaignId: string, creatorId: string): Promise<void> {
-    try {
-      const campaign = await this.emailCampaignModel.findById(campaignId);
-
-      if (!campaign) {
-        throw new NotFoundException('Campaign not found');
-      }
-
-      // Verify creator owns the campaign
-      if (!campaign.creatorId.equals(creatorId)) {
-        throw new ForbiddenException('You can only cancel campaigns you created');
-      }
-
-      // Only allow cancellation if campaign is scheduled
-      if (campaign.status !== EmailCampaignStatus.SCHEDULED) {
-        throw new BadRequestException('Only scheduled campaigns can be cancelled');
-      }
-
-      campaign.status = EmailCampaignStatus.CANCELLED;
-      await campaign.save();
-
-      this.logger.log(`Cancelled campaign ${campaignId}`);
-    } catch (error) {
-      this.logger.error(`Error cancelling campaign ${campaignId}:`, error);
-      throw error;
+    const campaign = await this.emailCampaignModel.findById(campaignId).exec();
+    if (!campaign) {
+      throw new NotFoundException('Campaign not found');
     }
+    if (!campaign.creatorId.equals(creatorId)) {
+      throw new ForbiddenException('You can only cancel campaigns you created');
+    }
+    if (campaign.status !== EmailCampaignStatus.SCHEDULED) {
+      throw new BadRequestException('Only scheduled campaigns can be cancelled');
+    }
+
+    campaign.status = EmailCampaignStatus.CANCELLED;
+    await campaign.save();
+    await this.emailCampaignQueueService.removeScheduledCampaignSend(campaignId);
   }
 
-  /**
-   * Duplicate/copy a campaign
-   */
   async duplicateCampaign(
     campaignId: string,
     creatorId: string,
-    newTitle?: string
+    newTitle?: string,
   ): Promise<EmailCampaignDocument> {
-    try {
-      const originalCampaign = await this.emailCampaignModel.findById(campaignId);
-
-      if (!originalCampaign) {
-        throw new NotFoundException('Campaign not found');
-      }
-
-      // Verify creator has access to the original campaign's community
-      await this.verifyCommunityAccess(creatorId, originalCampaign.communityId.toString());
-
-      // Get current community members for new recipient list
-      const community = await this.communityModel.findById(originalCampaign.communityId);
-      if (!community) {
-        throw new NotFoundException('Community not found');
-      }
-      const members = await this.userModel.find({
-        _id: { $in: community.members }
-      }).select('_id email name');
-
-      if (members.length === 0) {
-        throw new BadRequestException('No members found in this community');
-      }
-
-      // Create new recipients list
-      const recipients: EmailRecipient[] = members.map(member => ({
-        userId: member._id,
-        email: member.email,
-        name: member.name,
-        status: 'pending',
-        opened: false,
-        clickCount: 0
-      }));
-
-      const duplicatedCampaign = new this.emailCampaignModel({
-        title: newTitle || `Copy of ${originalCampaign.title}`,
-        subject: originalCampaign.subject,
-        content: originalCampaign.content,
-        communityId: originalCampaign.communityId,
-        creatorId: new Types.ObjectId(creatorId),
-        recipients,
-        totalRecipients: recipients.length,
-        type: originalCampaign.type,
-        isHtml: originalCampaign.isHtml,
-        trackOpens: originalCampaign.trackOpens,
-        trackClicks: originalCampaign.trackClicks,
-        metadata: originalCampaign.metadata,
-        status: EmailCampaignStatus.DRAFT
-      });
-
-      const savedCampaign = await duplicatedCampaign.save();
-
-      this.logger.log(`Duplicated campaign ${campaignId} as ${savedCampaign._id}`);
-
-      return savedCampaign;
-    } catch (error) {
-      this.logger.error(`Error duplicating campaign ${campaignId}:`, error);
-      throw error;
+    const source = await this.emailCampaignModel.findById(campaignId).exec();
+    if (!source) {
+      throw new NotFoundException('Campaign not found');
     }
+    await this.verifyCommunityAccess(creatorId, source.communityId.toString());
+
+    const community = await this.communityModel.findById(source.communityId).exec();
+    if (!community) {
+      throw new NotFoundException('Community not found');
+    }
+    const recipients = await this.buildCommunityRecipients(community);
+
+    const duplicate = new this.emailCampaignModel({
+      title: newTitle || `Copy of ${source.title}`,
+      subject: source.subject,
+      content: source.content,
+      communityId: source.communityId,
+      creatorId: new Types.ObjectId(creatorId),
+      recipients,
+      totalRecipients: recipients.length,
+      type: source.type,
+      isHtml: source.isHtml,
+      trackOpens: source.trackOpens,
+      trackClicks: source.trackClicks,
+      metadata: source.metadata || {},
+      status: EmailCampaignStatus.DRAFT,
+    });
+
+    return duplicate.save();
   }
 
-  /**
-   * Get campaign recipients details
-   */
   async getCampaignRecipients(
     campaignId: string,
     creatorId: string,
-    query: { page?: number; limit?: number; status?: string; opened?: boolean }
+    query: RecipientsQuery,
   ): Promise<{ recipients: any[]; total: number; page: number; limit: number }> {
-    try {
-      const campaign = await this.getCampaign(campaignId, creatorId);
+    const campaign = await this.getCampaign(campaignId, creatorId);
 
-      // Build filter for recipients
-      const filter: any = {};
-      if (query.status) {
-        filter.status = query.status;
-      }
-      if (query.opened !== undefined) {
-        filter.opened = query.opened;
-      }
+    let recipients = campaign.recipients.slice();
+    if (query.status) recipients = recipients.filter((recipient) => recipient.status === query.status);
+    if (query.opened !== undefined) recipients = recipients.filter((recipient) => recipient.opened === query.opened);
 
-      // Apply pagination
-      const page = query.page || 1;
-      const limit = Math.min(query.limit || 50, 100);
-      const skip = (page - 1) * limit;
+    const page = query.page || 1;
+    const limit = Math.min(query.limit || 50, 100);
+    const start = (page - 1) * limit;
+    const paged = recipients.slice(start, start + limit).map((recipient) => ({
+      userId: recipient.userId,
+      email: recipient.email,
+      name: recipient.name,
+      status: recipient.status,
+      sentAt: recipient.sentAt,
+      opened: recipient.opened,
+      openedAt: recipient.openedAt,
+      clickCount: recipient.clickCount,
+      clickedAt: recipient.clickedAt,
+      errorMessage: recipient.errorMessage,
+    }));
 
-      // Filter recipients
-      let filteredRecipients = campaign.recipients;
-      if (query.status) {
-        filteredRecipients = filteredRecipients.filter(r => r.status === query.status);
-      }
-      if (query.opened !== undefined) {
-        filteredRecipients = filteredRecipients.filter(r => r.opened === query.opened);
-      }
-
-      const total = filteredRecipients.length;
-      const recipients = filteredRecipients
-        .slice(skip, skip + limit)
-        .map(recipient => ({
-          userId: recipient.userId,
-          email: recipient.email,
-          name: recipient.name,
-          status: recipient.status,
-          sentAt: recipient.sentAt,
-          opened: recipient.opened,
-          openedAt: recipient.openedAt,
-          clickCount: recipient.clickCount,
-          clickedAt: recipient.clickedAt,
-          errorMessage: recipient.errorMessage
-        }));
-
-      return {
-        recipients,
-        total,
-        page,
-        limit
-      };
-    } catch (error) {
-      this.logger.error(`Error getting campaign recipients ${campaignId}:`, error);
-      throw error;
-    }
+    return {
+      recipients: paged,
+      total: recipients.length,
+      page,
+      limit,
+    };
   }
 
-  /**
-   * Send test email
-   */
   async sendTestEmail(
     toEmail: string,
     subject: string,
     content: string,
     communityId?: string,
-    isHtml: boolean = false
+    isHtml = false,
   ): Promise<void> {
+    let communityName = '';
+    if (communityId && Types.ObjectId.isValid(communityId)) {
+      const community = await this.communityModel.findById(communityId).select('name').lean().exec();
+      communityName = community?.name || '';
+    }
+
+    const variables = this.buildBaseVariables({
+      recipientName: 'Test User',
+      communityName,
+      targetDaysThreshold: undefined,
+      targetInactivityPeriod: undefined,
+      contentType: undefined,
+    });
+
+    const processedSubject = renderTemplate(subject, variables);
+    const processedContent = renderTemplate(content, variables);
+
+    await this.emailService.sendGenericEmail({
+      to: toEmail,
+      subject: processedSubject,
+      text: isHtml ? '' : processedContent,
+      html: isHtml ? processedContent : undefined,
+    });
+  }
+
+  private async verifyCommunityAccess(creatorId: string, communityId: string): Promise<CommunityDocument> {
+    const community = await this.communityModel
+      .findOne({
+        _id: new Types.ObjectId(communityId),
+        $or: [
+          { createur: new Types.ObjectId(creatorId) },
+          { admins: new Types.ObjectId(creatorId) },
+        ],
+      })
+      .exec();
+
+    if (!community) {
+      throw new ForbiddenException('You can only manage campaigns for communities you own or admin');
+    }
+    return community;
+  }
+
+  private async buildCommunityRecipients(community: CommunityDocument): Promise<EmailRecipient[]> {
+    const members = await this.userModel
+      .find({ _id: { $in: community.members } })
+      .select('_id email name')
+      .lean()
+      .exec();
+
+    return members.map((member) => ({
+      userId: member._id as any,
+      email: member.email,
+      name: member.name,
+      status: 'pending',
+      opened: false,
+      clickCount: 0,
+    }));
+  }
+
+  private async getInactiveUsersForCampaign(
+    dto: CreateInactiveUserCampaignDto,
+  ): Promise<UserLoginActivityDocument[]> {
+    const limit = dto.maxRecipients || 1000;
+    if (dto.targetAllInactive) {
+      return this.userLoginActivityService.getAllInactiveUsers(dto.communityId, limit);
+    }
+    return this.userLoginActivityService.getInactiveUsersByPeriod(
+      dto.communityId,
+      dto.inactivityPeriod,
+      limit,
+    );
+  }
+
+  private normalizeScheduledAt(raw?: string): Date | undefined {
+    if (!raw) return undefined;
+    const parsed = new Date(raw);
+    if (Number.isNaN(parsed.getTime())) {
+      throw new BadRequestException('Invalid scheduledAt value');
+    }
+    return parsed.getTime() > Date.now() ? parsed : undefined;
+  }
+
+  private resolveCampaignStatus(scheduledAt?: Date): EmailCampaignStatus {
+    return scheduledAt ? EmailCampaignStatus.SCHEDULED : EmailCampaignStatus.DRAFT;
+  }
+
+  private async enqueueIfScheduled(
+    campaign: EmailCampaignDocument,
+    creatorId: string,
+    trigger: EmailCampaignSendJobPayload['trigger'],
+  ): Promise<void> {
+    if (campaign.status !== EmailCampaignStatus.SCHEDULED || !campaign.scheduledAt) return;
+    await this.emailCampaignQueueService.queueCampaignSend(
+      {
+        campaignId: campaign._id.toString(),
+        requestedBy: creatorId,
+        trigger,
+      },
+      campaign.scheduledAt,
+    );
+  }
+
+  private async sendEmailToRecipient(
+    campaign: EmailCampaignDocument,
+    recipient: EmailRecipient,
+    communityName: string,
+  ): Promise<void> {
+    const variables = this.buildBaseVariables({
+      recipientName: recipient.name,
+      communityName,
+      targetDaysThreshold: campaign.targetDaysThreshold,
+      targetInactivityPeriod: campaign.targetInactivityPeriod,
+      contentType: String(campaign.metadata?.contentType || ''),
+    });
+
+    const subject = renderTemplate(campaign.subject, variables);
+    const content = renderTemplate(campaign.content, variables);
+
     try {
-      let processedSubject = subject;
-      let processedContent = content;
-
-      // Process template variables if communityId is provided
-      if (communityId) {
-        const community = await this.communityModel.findById(communityId);
-        if (community) {
-          processedSubject = processedSubject.replace(/{{communityName}}/g, community.name);
-          processedContent = processedContent.replace(/{{communityName}}/g, community.name);
-        }
-      }
-
       await this.emailService.sendGenericEmail({
-        to: toEmail,
-        subject: processedSubject,
-        text: isHtml ? '' : processedContent,
-        html: isHtml ? processedContent : undefined,
+        to: recipient.email,
+        subject,
+        text: campaign.isHtml ? '' : content,
+        html: campaign.isHtml ? content : undefined,
       });
 
-      this.logger.log(`Test email sent successfully to ${toEmail}`);
+      recipient.status = 'sent';
+      recipient.sentAt = new Date();
+      recipient.errorMessage = undefined;
+      recipient.personalizedSubject = subject;
+      recipient.personalizedContent = content;
     } catch (error) {
-      this.logger.error(`Error sending test email to ${toEmail}:`, error);
-      throw error;
+      recipient.status = 'failed';
+      recipient.errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      recipient.personalizedSubject = subject;
+      recipient.personalizedContent = content;
+      this.logger.error(
+        `Failed sending campaign ${campaign._id.toString()} to ${recipient.email}: ${recipient.errorMessage}`,
+      );
     }
+  }
+
+  private buildBaseVariables(input: {
+    recipientName: string;
+    communityName: string;
+    targetDaysThreshold?: number;
+    targetInactivityPeriod?: InactivityPeriod;
+    contentType?: string;
+  }): Record<string, string | number> {
+    const now = new Date();
+    const contentType = input.contentType || '';
+    return {
+      userName: input.recipientName || '',
+      communityName: input.communityName || '',
+      currentDate: now.toISOString().slice(0, 10),
+      currentYear: now.getUTCFullYear(),
+      daysThreshold: input.targetDaysThreshold || '',
+      inactivityPeriod: inactivityPeriodToText(input.targetInactivityPeriod),
+      contentType,
+      contentTypeLabel: contentTypeToLabel(contentType),
+    };
+  }
+
+  private async updateReactivationEmailTracking(campaign: EmailCampaignDocument): Promise<void> {
+    const sentRecipients = campaign.recipients.filter((recipient) => recipient.status === 'sent');
+    await Promise.all(
+      sentRecipients.map((recipient) =>
+        this.userLoginActivityService.updateReactivationEmailSent(
+          recipient.userId.toString(),
+          campaign.communityId.toString(),
+        ),
+      ),
+    );
+  }
+
+  private getDaysThreshold(period: InactivityPeriod): number {
+    switch (period) {
+      case InactivityPeriod.LAST_7_DAYS:
+        return 7;
+      case InactivityPeriod.LAST_15_DAYS:
+        return 15;
+      case InactivityPeriod.LAST_30_DAYS:
+        return 30;
+      case InactivityPeriod.LAST_60_DAYS:
+        return 60;
+      case InactivityPeriod.MORE_THAN_60_DAYS:
+        return 61;
+      default:
+        return 7;
+    }
+  }
+
+  private chunkArray<T>(array: T[], size: number): T[][] {
+    const chunks: T[][] = [];
+    for (let index = 0; index < array.length; index += size) {
+      chunks.push(array.slice(index, index + size));
+    }
+    return chunks;
   }
 }

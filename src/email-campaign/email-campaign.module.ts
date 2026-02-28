@@ -7,6 +7,8 @@ import { EmailCampaignController } from './email-campaign.controller';
 import { EmailCampaignService } from './email-campaign.service';
 import { UserLoginActivityModule } from '../user-login-activity/user-login-activity.module';
 import { EmailService } from '../common/services/email.service';
+import { EmailCampaignQueueService } from './email-campaign.queue';
+import { EmailCampaignProcessor } from './email-campaign.processor';
 
 /**
  * Module for managing email campaigns including inactive user targeting
@@ -21,7 +23,7 @@ import { EmailService } from '../common/services/email.service';
     UserLoginActivityModule,
   ],
   controllers: [EmailCampaignController],
-  providers: [EmailCampaignService, EmailService],
-  exports: [EmailCampaignService],
+  providers: [EmailCampaignService, EmailCampaignQueueService, EmailCampaignProcessor, EmailService],
+  exports: [EmailCampaignService, EmailCampaignQueueService],
 })
 export class EmailCampaignModule {}

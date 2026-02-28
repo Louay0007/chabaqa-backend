@@ -152,42 +152,32 @@ export class UserLoginActivityService {
    */
   async getInactiveUsersByPeriod(
     communityId: string, 
-    inactivityPeriod: string
+    inactivityPeriod: string,
+    limit: number = 100,
   ): Promise<UserLoginActivityDocument[]> {
     try {
-      let statusQuery: string;
+      const { minDays, maxDays } = this.resolveInactivityRange(inactivityPeriod);
+      const effectiveLimit = Math.min(Math.max(limit || 100, 1), 1000);
 
-      switch (inactivityPeriod) {
-        case 'last_7_days':
-          statusQuery = 'inactive_7d';
-          break;
-        case 'last_15_days':
-          statusQuery = 'inactive_15d';
-          break;
-        case 'last_30_days':
-          statusQuery = 'inactive_30d';
-          break;
-        case 'last_60_days':
-          statusQuery = 'inactive_30d'; // Same as 30d for now
-          break;
-        case 'more_than_60_days':
-          statusQuery = 'inactive_60d_plus';
-          break;
-        default:
-          statusQuery = 'inactive_7d';
+      const rangeQuery: Record<string, number> = { $gte: minDays };
+      if (maxDays !== undefined) {
+        rangeQuery.$lte = maxDays;
       }
 
       const inactiveUsers = await this.userLoginActivityModel
         .find({
           communityId: new Types.ObjectId(communityId),
-          inactivityStatus: statusQuery,
-          isReactivationTarget: true
+          isReactivationTarget: true,
+          daysSinceLastLogin: rangeQuery,
         })
         .populate('userId', 'name email')
         .sort({ daysSinceLastLogin: -1 })
+        .limit(effectiveLimit)
         .exec();
 
-      this.logger.log(`Found ${inactiveUsers.length} inactive users for period ${inactivityPeriod} in community ${communityId}`);
+      this.logger.log(
+        `Found ${inactiveUsers.length} inactive users for period ${inactivityPeriod} in community ${communityId}`,
+      );
       return inactiveUsers;
     } catch (error) {
       this.logger.error(`Error getting inactive users for period ${inactivityPeriod}:`, error);
@@ -198,16 +188,18 @@ export class UserLoginActivityService {
   /**
    * Get all inactive users for a community (any period)
    */
-  async getAllInactiveUsers(communityId: string): Promise<UserLoginActivityDocument[]> {
+  async getAllInactiveUsers(communityId: string, limit: number = 1000): Promise<UserLoginActivityDocument[]> {
     try {
+      const effectiveLimit = Math.min(Math.max(limit || 1000, 1), 1000);
       const inactiveUsers = await this.userLoginActivityModel
         .find({
           communityId: new Types.ObjectId(communityId),
-          inactivityStatus: { $ne: 'active' },
-          isReactivationTarget: true
+          isReactivationTarget: true,
+          daysSinceLastLogin: { $gt: 7 },
         })
         .populate('userId', 'name email')
         .sort({ daysSinceLastLogin: -1 })
+        .limit(effectiveLimit)
         .exec();
 
       this.logger.log(`Found ${inactiveUsers.length} total inactive users in community ${communityId}`);
@@ -352,6 +344,25 @@ export class UserLoginActivityService {
       this.logger.log('✅ Weekly inactivity report generation completed');
     } catch (error) {
       this.logger.error('❌ Error in weekly inactivity report:', error);
+    }
+  }
+
+  private resolveInactivityRange(
+    inactivityPeriod: string,
+  ): { minDays: number; maxDays?: number } {
+    switch (inactivityPeriod) {
+      case 'last_7_days':
+        return { minDays: 8, maxDays: 14 };
+      case 'last_15_days':
+        return { minDays: 15, maxDays: 29 };
+      case 'last_30_days':
+        return { minDays: 30, maxDays: 59 };
+      case 'last_60_days':
+        return { minDays: 60, maxDays: 60 };
+      case 'more_than_60_days':
+        return { minDays: 61 };
+      default:
+        return { minDays: 8, maxDays: 14 };
     }
   }
 }
