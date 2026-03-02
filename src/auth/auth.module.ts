@@ -10,6 +10,7 @@ import { JwtAuthGuard } from './jwt-auth.guard';
 import { GoogleAuthGuard } from './guards/google-auth.guard';
 import { OptionalJwtAuthGuard } from './guards/optional-jwt-auth.guard';
 import { User, UserSchema } from '../schema/user.schema';
+import { VerificationCode, VerificationCodeSchema } from '../schema/verification-code.schema';
 import { Admin, AdminSchema } from '../schema/admin.schema';
 import { RevokedToken, RevokedTokenSchema } from '../schema/revoked-token.schema';
 import { EmailService } from '../common/services/email.service';
@@ -23,6 +24,7 @@ import { getJwtSecret } from '../common/utils/security-config.util';
     PassportModule,
     MongooseModule.forFeature([
       { name: User.name, schema: UserSchema },
+      { name: VerificationCode.name, schema: VerificationCodeSchema },
       { name: Admin.name, schema: AdminSchema },
       { name: RevokedToken.name, schema: RevokedTokenSchema }
     ]),

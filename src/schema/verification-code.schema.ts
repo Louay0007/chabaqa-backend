@@ -9,6 +9,7 @@ export interface VerificationCodeDocument extends Document {
   email?: string;
   userId?: Types.ObjectId;
   adminId?: Types.ObjectId;
+  metadata?: Record<string, any>;
   code: string;
   type: string;
   expiresAt: Date;
@@ -57,6 +58,15 @@ export class VerificationCode {
   adminId?: Types.ObjectId;
 
   /**
+   * Données contextuelles liées au code (ex: inscription en attente)
+   */
+  @Prop({
+    required: false,
+    type: Object,
+  })
+  metadata?: Record<string, any>;
+
+  /**
    * Code de vérification à 6 chiffres
    */
   @Prop({
@@ -66,11 +76,11 @@ export class VerificationCode {
   code: string;
 
   /**
-   * Type de vérification ('password_reset', '2fa', ou '2fa_login')
+   * Type de vérification
    */
   @Prop({
     required: true,
-    enum: ['password_reset', '2fa', '2fa_login'],
+    enum: ['password_reset', '2fa', '2fa_login', 'email_verification'],
     default: 'password_reset'
   })
   type: string;

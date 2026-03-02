@@ -30,7 +30,7 @@ export class NotificationScheduler {
 
     for (const event of upcomingEvents) {
       for (const attendee of event.attendees) {
-        this.notificationService.createNotification({
+        await this.notificationService.createNotification({
           recipient: attendee.userId.toString(),
           type: 'event_reminder',
           title: `Reminder: ${event.title}`,

@@ -4,6 +4,7 @@ import { EmailCampaign, EmailCampaignSchema } from '../schema/email-campaign.sch
 import { User, UserSchema } from '../schema/user.schema';
 import { Community, CommunitySchema } from '../schema/community.schema';
 import { EmailCampaignController } from './email-campaign.controller';
+import { EmailCampaignTrackingController } from './email-campaign-tracking.controller';
 import { EmailCampaignService } from './email-campaign.service';
 import { UserLoginActivityModule } from '../user-login-activity/user-login-activity.module';
 import { EmailService } from '../common/services/email.service';
@@ -22,7 +23,7 @@ import { EmailCampaignProcessor } from './email-campaign.processor';
     ]),
     UserLoginActivityModule,
   ],
-  controllers: [EmailCampaignController],
+  controllers: [EmailCampaignController, EmailCampaignTrackingController],
   providers: [EmailCampaignService, EmailCampaignQueueService, EmailCampaignProcessor, EmailService],
   exports: [EmailCampaignService, EmailCampaignQueueService],
 })

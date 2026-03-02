@@ -159,6 +159,71 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
     return Boolean(isCreator || isAdmin);
   }
 
+  private hasObjectId(items: any[] | undefined, targetId: string): boolean {
+    if (!Array.isArray(items)) return false;
+    return items.some((item: any) => {
+      if (!item) return false;
+      if (typeof item.equals === 'function') {
+        return item.equals(targetId);
+      }
+      return String(item) === String(targetId);
+    });
+  }
+
+  private resolveMemberDisplayName(user: any): string {
+    const explicitName = String(user?.name || '').trim();
+    if (explicitName) return explicitName;
+
+    const firstName = String(user?.firstName || '').trim();
+    const lastName = String(user?.lastName || '').trim();
+    const fullName = `${firstName} ${lastName}`.trim();
+    if (fullName) return fullName;
+
+    const username = String(user?.username || '').trim();
+    if (username) return username;
+
+    return 'A new member';
+  }
+
+  private async notifyCreatorMemberJoined(
+    community: CommunityDocument,
+    userId: string,
+    userName?: string,
+  ): Promise<void> {
+    try {
+      const creatorId = community?.createur ? String(community.createur) : '';
+      if (!creatorId || creatorId === String(userId)) {
+        return;
+      }
+
+      let memberName = String(userName || '').trim();
+      if (!memberName) {
+        const member = await this.userModel
+          .findById(userId)
+          .select('name username firstName lastName')
+          .lean();
+        memberName = this.resolveMemberDisplayName(member);
+      }
+
+      await this.notificationService.createNotification({
+        recipient: creatorId,
+        sender: userId,
+        type: 'new_community_member',
+        title: 'New Member',
+        body: `${memberName} has joined your community ${community.name}`,
+        data: {
+          communityId: community._id.toString(),
+          userId,
+          memberName,
+        },
+      });
+    } catch (error: any) {
+      console.warn(
+        `Failed to notify creator ${community?.createur?.toString?.() || ''} about new member ${userId}: ${error?.message || error}`,
+      );
+    }
+  }
+
   /**
    * Créer une nouvelle communauté
    * @param createCommunityDto - Données de la communauté à créer selon l'interface CommunityFormData
@@ -1230,7 +1295,7 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
       }
     }
 
-    if (community.members.includes(new Types.ObjectId(userId))) {
+    if (this.hasObjectId(community.members as any[], userId)) {
       return { message: 'Déjà membre de cette communauté' };
     }
 
@@ -1240,6 +1305,7 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
       community.addMember(new Types.ObjectId(userId));
       await community.save();
       await this.userModel.findByIdAndUpdate(userId, { $addToSet: { joinedCommunities: community._id } });
+      await this.notifyCreatorMemberJoined(community, userId);
       return { message: 'Adhésion gratuite réussie' };
     }
 
@@ -1280,6 +1346,7 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
     community.addMember(new Types.ObjectId(userId));
     await community.save();
     await this.userModel.findByIdAndUpdate(userId, { $addToSet: { joinedCommunities: community._id } });
+    await this.notifyCreatorMemberJoined(community, userId);
 
     return { message: 'Adhésion achetée avec succès' };
   }
@@ -1294,7 +1361,7 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
     }
 
     const isCreator = community.createur.equals(new Types.ObjectId(requesterId));
-    const isAdmin = community.admins.includes(new Types.ObjectId(requesterId));
+    const isAdmin = this.hasObjectId(community.admins as any[], requesterId);
     if (!isCreator && !isAdmin) {
       throw new ForbiddenException('Seuls le créateur ou un administrateur peuvent ajouter un administrateur');
     }
@@ -1471,7 +1538,7 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
       }
 
       // Vérifier si l'utilisateur est déjà membre
-      if (community.members.includes(new Types.ObjectId(userId))) {
+      if (this.hasObjectId(community.members as any[], userId)) {
         const populatedCommunity = await this.communityModel
           .findById(community._id)
           .populate('createur', 'name email profile_picture photo_profil')
@@ -1506,15 +1573,7 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
       // Recalculer les rangs
       await this.updateCommunityRanks();
 
-      // Send notification to community creator
-      this.notificationService.createNotification({
-        recipient: community.createur.toString(),
-        sender: userId,
-        type: 'new_community_member',
-        title: 'New Member',
-        body: `${user.name} has joined your community ${community.name}`,
-        data: { communityId: community._id.toString(), userId },
-      });
+      await this.notifyCreatorMemberJoined(community, userId, this.resolveMemberDisplayName(user));
 
       // Retourner la communauté avec les relations peuplées
       const populatedCommunity = await this.communityModel
@@ -1576,7 +1635,7 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
       }
 
       // Vérifier si l'utilisateur est déjà membre
-      if (community.members.includes(new Types.ObjectId(userId))) {
+      if (this.hasObjectId(community.members as any[], userId)) {
         const populatedCommunity = await this.communityModel
           .findById(community._id)
           .populate('createur', 'name email profile_picture photo_profil')
@@ -1606,15 +1665,7 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
       // Recalculer les rangs
       await this.updateCommunityRanks();
 
-      // Send notification to community creator
-      this.notificationService.createNotification({
-        recipient: community.createur.toString(),
-        sender: userId,
-        type: 'new_community_member',
-        title: 'New Member',
-        body: `${user.name} has joined your community ${community.name}`,
-        data: { communityId: community._id.toString(), userId },
-      });
+      await this.notifyCreatorMemberJoined(community, userId, this.resolveMemberDisplayName(user));
 
       // Retourner la communauté avec les relations peuplées
       const populatedCommunity = await this.communityModel
@@ -1663,7 +1714,7 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
 
       // Vérifier si l'utilisateur est créateur ou administrateur
       const isCreator = community.createur.equals(new Types.ObjectId(userId));
-      const isAdmin = community.admins.includes(new Types.ObjectId(userId));
+      const isAdmin = this.hasObjectId(community.admins as any[], userId);
 
       if (!isCreator && !isAdmin) {
         throw new ForbiddenException('Seuls les créateurs et administrateurs peuvent générer des liens d\'invitation');
@@ -1766,7 +1817,7 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
     }
 
     // Check if already member
-    if (community.members.includes(new Types.ObjectId(userId))) {
+    if (this.hasObjectId(community.members as any[], userId)) {
       return { message: 'Déjà membre de cette communauté' };
     }
 
@@ -1794,8 +1845,18 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
         throw new NotFoundException('Utilisateur non trouvé');
       }
 
-      // Vérifier si la communauté existe
-      const community = await this.communityModel.findById(communityId);
+      // Vérifier si la communauté existe (ID ou slug)
+      const communityIdentifier = String(communityId || '').trim();
+      const communityQuery = Types.ObjectId.isValid(communityIdentifier)
+        ? {
+            $or: [
+              { _id: new Types.ObjectId(communityIdentifier) },
+              { slug: communityIdentifier },
+            ],
+          }
+        : { slug: communityIdentifier };
+
+      const community = await this.communityModel.findOne(communityQuery);
       if (!community) {
         throw new NotFoundException('Communauté non trouvée');
       }

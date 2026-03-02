@@ -1561,6 +1561,57 @@ export class PaymentController {
     return new Date(slot.startTime).toISOString();
   }
 
+  private resolveMemberDisplayName(user: any): string {
+    const explicitName = String(user?.name || '').trim();
+    if (explicitName) return explicitName;
+
+    const firstName = String(user?.firstName || '').trim();
+    const lastName = String(user?.lastName || '').trim();
+    const fullName = `${firstName} ${lastName}`.trim();
+    if (fullName) return fullName;
+
+    const username = String(user?.username || '').trim();
+    if (username) return username;
+
+    return 'A new member';
+  }
+
+  private async notifyCommunityCreatorMemberJoined(
+    community: CommunityDocument,
+    buyerId: Types.ObjectId | string,
+  ): Promise<void> {
+    const buyerIdString = String(buyerId || '');
+    const creatorIdString = String(community?.createur || '');
+    if (!buyerIdString || !creatorIdString || buyerIdString === creatorIdString) {
+      return;
+    }
+
+    try {
+      const buyer = await this.userModel
+        .findById(buyerIdString)
+        .select('name username firstName lastName')
+        .lean();
+      const buyerName = this.resolveMemberDisplayName(buyer);
+
+      await this.notificationService.createNotification({
+        recipient: creatorIdString,
+        sender: buyerIdString,
+        type: 'new_community_member',
+        title: 'New Member',
+        body: `${buyerName} has joined your community ${community.name}`,
+        data: {
+          communityId: community._id.toString(),
+          userId: buyerIdString,
+          memberName: buyerName,
+        },
+      });
+    } catch (error: any) {
+      this.logger.warn(
+        `Failed to create creator notification for community join (communityId=${community?._id?.toString?.()}, buyerId=${buyerIdString}): ${error?.message || error}`,
+      );
+    }
+  }
+
   private async grantAccess(order: any, session: any = null, stripeSessionMetadata?: Record<string, string>) {
     this.logger.log(`Granting access for order ${order._id} (Type: ${order.contentType})`);
 
@@ -1570,6 +1621,16 @@ export class PaymentController {
         if (community) {
           community.addMember(order.buyerId);
           await community.save({ session });
+
+          const userUpdateQuery = this.userModel.findByIdAndUpdate(order.buyerId, {
+            $addToSet: { joinedCommunities: community._id },
+          });
+          if (session) {
+            userUpdateQuery.session(session);
+          }
+          await userUpdateQuery.exec();
+
+          await this.notifyCommunityCreatorMemberJoined(community, order.buyerId);
         }
         break;
 
@@ -2701,6 +2762,7 @@ export class PaymentController {
             await this.userModel.findByIdAndUpdate(order.buyerId, {
               $addToSet: { joinedCommunities: community._id },
             });
+            await this.notifyCommunityCreatorMemberJoined(community, order.buyerId);
           }
         } else if (order.contentType === TrackableContentType.SUBSCRIPTION) {
           // contentId holds plan tier string

@@ -107,9 +107,5 @@ export function getMediaPrivateTokenSecret(): string {
 }
 
 export function isSwaggerEnabled(): boolean {
-  if (!isProductionEnvironment()) {
-    return true;
-  }
-  return process.env.ENABLE_SWAGGER === 'true';
+  return true;
 }
-

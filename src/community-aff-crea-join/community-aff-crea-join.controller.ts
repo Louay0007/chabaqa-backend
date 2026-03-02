@@ -811,6 +811,8 @@ export class CommunityAffCreaJoinController {
    * Authentification: JWT obligatoire
    */
   @Post('leave/:communityId')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Quitter une communauté',

@@ -9,6 +9,9 @@ class ChannelPreferences {
 
   @Prop({ type: Boolean, default: true })
   email: boolean;
+
+  @Prop({ type: Boolean, default: true })
+  push: boolean;
 }
 
 @Schema({ _id: false })

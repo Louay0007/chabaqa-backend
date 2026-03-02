@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
+import { createHmac, timingSafeEqual } from 'crypto';
 import { Model, Types } from 'mongoose';
 import {
   CampaignStatsDto,
@@ -35,6 +36,24 @@ import { EmailCampaignQueueService } from './email-campaign.queue';
 import { EmailCampaignSendJobPayload } from './email-campaign.jobs';
 
 type RecipientsQuery = { page?: number; limit?: number; status?: string; opened?: boolean };
+type SendRecipientResult = { authenticationFailure: boolean };
+type TrackingEventType = 'open' | 'click';
+type TrackingTokenPayload = {
+  v: 1;
+  type: TrackingEventType;
+  campaignId: string;
+  recipientUserId: string;
+  recipientEmail: string;
+  exp: number;
+  url?: string;
+};
+
+const TRACKING_TOKEN_TTL_MS = 1000 * 60 * 60 * 24 * 365; // 1 year
+const DEFAULT_TRACKING_SECRET = 'local-dev-email-tracking-secret-change-me';
+const TRANSPARENT_GIF_BUFFER = Buffer.from(
+  'R0lGODlhAQABAPAAAAAAAAAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==',
+  'base64',
+);
 
 @Injectable()
 export class EmailCampaignService {
@@ -196,15 +215,54 @@ export class EmailCampaignService {
     if (!campaign.creatorId.equals(creatorId)) {
       throw new ForbiddenException('You can only send campaigns you created');
     }
+    const hasFailedRecipients = campaign.recipients.some((recipient) => recipient.status === 'failed');
+    const canRetryFailedCampaign =
+      campaign.status === EmailCampaignStatus.FAILED ||
+      (campaign.status === EmailCampaignStatus.SENT && hasFailedRecipients);
+
+    if (campaign.status === EmailCampaignStatus.SENDING) {
+      return {
+        queued: true,
+        campaignId,
+        message: 'Campaign is already being sent',
+      };
+    }
+
+    if (campaign.status === EmailCampaignStatus.SENT && !hasFailedRecipients) {
+      return {
+        queued: true,
+        campaignId,
+        message: 'Campaign has already been sent successfully',
+      };
+    }
+
     if (
       campaign.status !== EmailCampaignStatus.DRAFT &&
-      campaign.status !== EmailCampaignStatus.SCHEDULED
+      campaign.status !== EmailCampaignStatus.SCHEDULED &&
+      !canRetryFailedCampaign
     ) {
       throw new BadRequestException('Campaign cannot be sent in current status');
     }
 
+    if (canRetryFailedCampaign) {
+      campaign.recipients.forEach((recipient) => {
+        if (recipient.status === 'failed') {
+          recipient.status = 'pending';
+          recipient.errorMessage = undefined;
+          recipient.sentAt = undefined;
+        }
+      });
+      campaign.failedCount = 0;
+    }
+
+    campaign.metadata = {
+      ...(campaign.metadata || {}),
+      queueError: undefined,
+      queueFailedAt: undefined,
+    };
     campaign.status = EmailCampaignStatus.DRAFT;
     campaign.scheduledAt = undefined;
+    campaign.sentAt = undefined;
     await campaign.save();
 
     await this.emailCampaignQueueService.queueCampaignSend({
@@ -233,13 +291,10 @@ export class EmailCampaignService {
       this.logger.log(`Skipping campaign ${campaignId} with status ${campaign.status}`);
       return;
     }
-    if (campaign.status === EmailCampaignStatus.SENDING) {
-      this.logger.warn(`Skipping campaign ${campaignId} because it is already sending`);
-      return;
-    }
     if (
       campaign.status !== EmailCampaignStatus.DRAFT &&
-      campaign.status !== EmailCampaignStatus.SCHEDULED
+      campaign.status !== EmailCampaignStatus.SCHEDULED &&
+      campaign.status !== EmailCampaignStatus.SENDING
     ) {
       this.logger.warn(`Campaign ${campaignId} has unsupported status ${campaign.status}`);
       return;
@@ -248,8 +303,14 @@ export class EmailCampaignService {
     const community = await this.communityModel.findById(campaign.communityId).select('name').lean().exec();
     const communityName = community?.name || '';
 
-    campaign.status = EmailCampaignStatus.SENDING;
-    await campaign.save();
+    if (campaign.status !== EmailCampaignStatus.SENDING) {
+      campaign.status = EmailCampaignStatus.SENDING;
+      await this.emailCampaignModel
+        .updateOne({ _id: campaign._id }, { $set: { status: EmailCampaignStatus.SENDING } })
+        .exec();
+    } else {
+      this.logger.warn(`Resuming campaign ${campaignId} that was already in sending state`);
+    }
 
     const recipientsToProcess = campaign.recipients.filter((recipient) => recipient.status !== 'sent');
     if (recipientsToProcess.length === 0) {
@@ -257,22 +318,43 @@ export class EmailCampaignService {
       campaign.failedCount = campaign.recipients.filter((recipient) => recipient.status === 'failed').length;
       campaign.status = campaign.failedCount > 0 ? EmailCampaignStatus.FAILED : EmailCampaignStatus.SENT;
       campaign.sentAt = new Date();
-      await campaign.save();
+      await this.persistCampaignSendState(campaign);
       return;
     }
 
     const batchSize = 10;
     const batches = this.chunkArray(recipientsToProcess, batchSize);
+    let authenticationFailureMessage: string | null = null;
 
     for (let index = 0; index < batches.length; index += 1) {
       const batch = batches[index];
-      await Promise.allSettled(
+      const results = await Promise.all(
         batch.map((recipient) => this.sendEmailToRecipient(campaign, recipient, communityName)),
       );
+      const authFailureInBatch = results.some((result) => result.authenticationFailure);
+      if (authFailureInBatch) {
+        authenticationFailureMessage =
+          campaign.recipients.find((recipient) => recipient.status === 'failed')?.errorMessage ||
+          'SMTP authentication failed';
+        break;
+      }
 
       if (index < batches.length - 1) {
         await new Promise((resolve) => setTimeout(resolve, 1000));
       }
+    }
+
+    if (authenticationFailureMessage) {
+      const failureMessage = authenticationFailureMessage;
+      campaign.recipients
+        .filter((recipient) => recipient.status === 'pending')
+        .forEach((recipient) => {
+          recipient.status = 'failed';
+          recipient.errorMessage = failureMessage;
+        });
+      this.logger.error(
+        `Campaign ${campaign._id.toString()} aborted due to SMTP auth failure: ${authenticationFailureMessage}`,
+      );
     }
 
     campaign.sentCount = campaign.recipients.filter((recipient) => recipient.status === 'sent').length;
@@ -280,7 +362,7 @@ export class EmailCampaignService {
     campaign.sentAt = new Date();
     campaign.status =
       campaign.sentCount > 0 ? EmailCampaignStatus.SENT : EmailCampaignStatus.FAILED;
-    await campaign.save();
+    await this.persistCampaignSendState(campaign);
 
     if (campaign.isInactiveUserCampaign) {
       await this.updateReactivationEmailTracking(campaign);
@@ -288,25 +370,22 @@ export class EmailCampaignService {
   }
 
   async markCampaignSendFailed(campaignId: string, errorMessage: string): Promise<void> {
-    const campaign = await this.emailCampaignModel.findById(campaignId).exec();
-    if (!campaign) return;
-    if (
-      campaign.status === EmailCampaignStatus.SENT ||
-      campaign.status === EmailCampaignStatus.CANCELLED
-    ) {
-      return;
-    }
-
-    campaign.status = EmailCampaignStatus.FAILED;
-    campaign.metadata = {
-      ...(campaign.metadata || {}),
-      queueError: errorMessage,
-      queueFailedAt: new Date().toISOString(),
-    };
-    if (!campaign.sentAt) {
-      campaign.sentAt = new Date();
-    }
-    await campaign.save();
+    await this.emailCampaignModel
+      .updateOne(
+        {
+          _id: campaignId,
+          status: { $nin: [EmailCampaignStatus.SENT, EmailCampaignStatus.CANCELLED] },
+        },
+        {
+          $set: {
+            status: EmailCampaignStatus.FAILED,
+            'metadata.queueError': errorMessage,
+            'metadata.queueFailedAt': new Date().toISOString(),
+            sentAt: new Date(),
+          },
+        },
+      )
+      .exec();
   }
 
   async getCommunityCampaigns(
@@ -363,6 +442,11 @@ export class EmailCampaignService {
     const totalEmailsFailed = campaigns.reduce((sum, campaign) => sum + (campaign.failedCount || 0), 0);
     const totalOpens = campaigns.reduce((sum, campaign) => sum + (campaign.openCount || 0), 0);
     const totalClicks = campaigns.reduce((sum, campaign) => sum + (campaign.clickCount || 0), 0);
+    const totalUniqueClicks = campaigns.reduce(
+      (sum, campaign) =>
+        sum + (Array.isArray(campaign.recipients) ? campaign.recipients.filter((recipient) => (recipient?.clickCount || 0) > 0).length : 0),
+      0,
+    );
 
     const reactivationCampaigns = campaigns.filter((campaign) => campaign.isInactiveUserCampaign).length;
     const reactivationSent = campaigns
@@ -379,7 +463,7 @@ export class EmailCampaignService {
       totalOpens,
       totalClicks,
       averageOpenRate: totalEmailsSent > 0 ? (totalOpens / totalEmailsSent) * 100 : 0,
-      averageClickRate: totalEmailsSent > 0 ? (totalClicks / totalEmailsSent) * 100 : 0,
+      averageClickRate: totalEmailsSent > 0 ? (totalUniqueClicks / totalEmailsSent) * 100 : 0,
       reactivationCampaigns,
       reactivationSuccessRate: reactivationSent > 0 ? (reactivationOpens / reactivationSent) * 100 : 0,
     };
@@ -614,6 +698,121 @@ export class EmailCampaignService {
     });
   }
 
+  async recordOpenByToken(token?: string): Promise<boolean> {
+    const payload = this.parseTrackingToken(token, 'open');
+    if (!payload) return false;
+
+    const recipientObjectId = this.parseRecipientObjectId(payload.recipientUserId);
+    if (!recipientObjectId) return false;
+
+    const now = new Date();
+    await this.emailCampaignModel
+      .updateOne(
+        {
+          _id: payload.campaignId,
+          trackOpens: { $ne: false },
+          recipients: {
+            $elemMatch: {
+              userId: recipientObjectId,
+              email: payload.recipientEmail,
+              opened: false,
+            },
+          },
+        },
+        {
+          $set: {
+            'recipients.$.opened': true,
+            'recipients.$.openedAt': now,
+          },
+          $inc: {
+            openCount: 1,
+          },
+        },
+      )
+      .exec();
+
+    const recipientExists = await this.emailCampaignModel
+      .exists({
+        _id: payload.campaignId,
+        trackOpens: { $ne: false },
+        recipients: {
+          $elemMatch: {
+            userId: recipientObjectId,
+            email: payload.recipientEmail,
+          },
+        },
+      })
+      .exec();
+
+    return Boolean(recipientExists);
+  }
+
+  async recordClickByToken(token?: string): Promise<string> {
+    const fallbackUrl = this.getInvalidClickRedirectUrl();
+    const payload = this.parseTrackingToken(token, 'click');
+    if (!payload || !payload.url) return fallbackUrl;
+
+    const recipientObjectId = this.parseRecipientObjectId(payload.recipientUserId);
+    if (!recipientObjectId) return fallbackUrl;
+
+    const now = new Date();
+    await this.emailCampaignModel
+      .updateOne(
+        {
+          _id: payload.campaignId,
+          trackClicks: { $ne: false },
+          recipients: {
+            $elemMatch: {
+              userId: recipientObjectId,
+              email: payload.recipientEmail,
+            },
+          },
+        },
+        {
+          $inc: {
+            'recipients.$.clickCount': 1,
+            clickCount: 1,
+          },
+          $push: {
+            'recipients.$.clickedAt': now,
+          },
+        },
+      )
+      .exec();
+
+    // A click implies an open if open tracking is enabled.
+    await this.emailCampaignModel
+      .updateOne(
+        {
+          _id: payload.campaignId,
+          trackOpens: { $ne: false },
+          recipients: {
+            $elemMatch: {
+              userId: recipientObjectId,
+              email: payload.recipientEmail,
+              opened: false,
+            },
+          },
+        },
+        {
+          $set: {
+            'recipients.$.opened': true,
+            'recipients.$.openedAt': now,
+          },
+          $inc: {
+            openCount: 1,
+          },
+        },
+      )
+      .exec();
+
+    return payload.url;
+  }
+
+  getOpenTrackingPixel(): Buffer {
+    return TRANSPARENT_GIF_BUFFER;
+  }
+
   private async verifyCommunityAccess(creatorId: string, communityId: string): Promise<CommunityDocument> {
     const community = await this.communityModel
       .findOne({
@@ -695,7 +894,7 @@ export class EmailCampaignService {
     campaign: EmailCampaignDocument,
     recipient: EmailRecipient,
     communityName: string,
-  ): Promise<void> {
+  ): Promise<SendRecipientResult> {
     const variables = this.buildBaseVariables({
       recipientName: recipient.name,
       communityName,
@@ -706,13 +905,14 @@ export class EmailCampaignService {
 
     const subject = renderTemplate(campaign.subject, variables);
     const content = renderTemplate(campaign.content, variables);
+    const trackedContent = this.buildTrackedRecipientContent(campaign, recipient, content);
 
     try {
       await this.emailService.sendGenericEmail({
         to: recipient.email,
         subject,
-        text: campaign.isHtml ? '' : content,
-        html: campaign.isHtml ? content : undefined,
+        text: trackedContent.text,
+        html: trackedContent.html,
       });
 
       recipient.status = 'sent';
@@ -720,6 +920,7 @@ export class EmailCampaignService {
       recipient.errorMessage = undefined;
       recipient.personalizedSubject = subject;
       recipient.personalizedContent = content;
+      return { authenticationFailure: false };
     } catch (error) {
       recipient.status = 'failed';
       recipient.errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -728,7 +929,261 @@ export class EmailCampaignService {
       this.logger.error(
         `Failed sending campaign ${campaign._id.toString()} to ${recipient.email}: ${recipient.errorMessage}`,
       );
+      return {
+        authenticationFailure: this.emailService.isAuthenticationFailureError(error),
+      };
     }
+  }
+
+  private buildTrackedRecipientContent(
+    campaign: EmailCampaignDocument,
+    recipient: EmailRecipient,
+    content: string,
+  ): { text: string; html?: string } {
+    const trackClicks = campaign.trackClicks !== false;
+    const trackOpens = campaign.trackOpens !== false;
+
+    if (campaign.isHtml) {
+      let trackedHtml = content;
+      if (trackClicks) {
+        trackedHtml = this.rewriteHtmlLinksWithTracking(trackedHtml, campaign, recipient);
+      }
+      if (trackOpens) {
+        const openTrackingUrl = this.buildOpenTrackingUrl(campaign, recipient);
+        trackedHtml = this.injectOpenTrackingPixel(trackedHtml, openTrackingUrl);
+      }
+      return { text: '', html: trackedHtml };
+    }
+
+    const trackedText = trackClicks
+      ? this.rewritePlainTextLinksWithTracking(content, campaign, recipient)
+      : content;
+
+    let trackedHtml = this.renderPlainTextAsHtml(trackedText);
+    if (trackOpens) {
+      const openTrackingUrl = this.buildOpenTrackingUrl(campaign, recipient);
+      trackedHtml = this.injectOpenTrackingPixel(trackedHtml, openTrackingUrl);
+    }
+
+    return { text: trackedText, html: trackedHtml };
+  }
+
+  private rewriteHtmlLinksWithTracking(
+    html: string,
+    campaign: EmailCampaignDocument,
+    recipient: EmailRecipient,
+  ): string {
+    return html.replace(/href=(["'])(https?:\/\/[^"'<>\s]+)\1/gi, (match, quote, rawUrl) => {
+      const destination = this.normalizeTrackingDestination(rawUrl);
+      if (!destination) return match;
+      const trackedUrl = this.buildClickTrackingUrl(campaign, recipient, destination);
+      return `href=${quote}${trackedUrl}${quote}`;
+    });
+  }
+
+  private rewritePlainTextLinksWithTracking(
+    text: string,
+    campaign: EmailCampaignDocument,
+    recipient: EmailRecipient,
+  ): string {
+    return text.replace(/https?:\/\/[^\s<>"')\]]+/gi, (rawUrl) => {
+      const trimmedUrl = rawUrl.replace(/[.,!?;:]+$/, '');
+      const suffix = rawUrl.slice(trimmedUrl.length);
+      const destination = this.normalizeTrackingDestination(trimmedUrl);
+      if (!destination) return rawUrl;
+      const trackedUrl = this.buildClickTrackingUrl(campaign, recipient, destination);
+      return `${trackedUrl}${suffix}`;
+    });
+  }
+
+  private injectOpenTrackingPixel(html: string, openTrackingUrl: string): string {
+    const pixelTag =
+      `<img src="${openTrackingUrl}" alt="" width="1" height="1" ` +
+      `style="display:none;max-width:0;max-height:0;opacity:0;overflow:hidden;" />`;
+    if (/<\/body>/i.test(html)) {
+      return html.replace(/<\/body>/i, `${pixelTag}</body>`);
+    }
+    return `${html}${pixelTag}`;
+  }
+
+  private renderPlainTextAsHtml(content: string): string {
+    return `<p style="margin:0;">${this.escapeHtml(content).replace(/\n/g, '<br/>')}</p>`;
+  }
+
+  private escapeHtml(value: string): string {
+    return value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  private buildOpenTrackingUrl(campaign: EmailCampaignDocument, recipient: EmailRecipient): string {
+    const token = this.signTrackingPayload({
+      v: 1,
+      type: 'open',
+      campaignId: campaign._id.toString(),
+      recipientUserId: recipient.userId.toString(),
+      recipientEmail: recipient.email,
+      exp: Date.now() + TRACKING_TOKEN_TTL_MS,
+    });
+    return `${this.getTrackingBaseUrl()}/open?t=${encodeURIComponent(token)}`;
+  }
+
+  private buildClickTrackingUrl(
+    campaign: EmailCampaignDocument,
+    recipient: EmailRecipient,
+    destinationUrl: string,
+  ): string {
+    const token = this.signTrackingPayload({
+      v: 1,
+      type: 'click',
+      campaignId: campaign._id.toString(),
+      recipientUserId: recipient.userId.toString(),
+      recipientEmail: recipient.email,
+      exp: Date.now() + TRACKING_TOKEN_TTL_MS,
+      url: destinationUrl,
+    });
+    return `${this.getTrackingBaseUrl()}/click?t=${encodeURIComponent(token)}`;
+  }
+
+  private getTrackingBaseUrl(): string {
+    const serverBase = (process.env.SERVER_URL || 'https://api.chabaqa.io').trim().replace(/\/+$/, '');
+    return `${serverBase}/api/email-campaigns/track`;
+  }
+
+  private signTrackingPayload(payload: TrackingTokenPayload): string {
+    const payloadPart = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+    const signature = this.signTrackingPayloadPart(payloadPart);
+    return `${payloadPart}.${signature}`;
+  }
+
+  private parseTrackingToken(token: string | undefined, expectedType: TrackingEventType): TrackingTokenPayload | null {
+    if (!token) return null;
+
+    const [payloadPart, signature] = token.split('.');
+    if (!payloadPart || !signature) return null;
+
+    const expectedSignature = this.signTrackingPayloadPart(payloadPart);
+    if (!this.safeTokenCompare(signature, expectedSignature)) return null;
+
+    let payload: TrackingTokenPayload;
+    try {
+      payload = JSON.parse(Buffer.from(payloadPart, 'base64url').toString('utf8')) as TrackingTokenPayload;
+    } catch {
+      return null;
+    }
+
+    if (
+      payload.v !== 1 ||
+      payload.type !== expectedType ||
+      !payload.campaignId ||
+      !payload.recipientUserId ||
+      !payload.recipientEmail ||
+      typeof payload.exp !== 'number'
+    ) {
+      return null;
+    }
+
+    if (payload.exp <= Date.now()) return null;
+
+    if (payload.type === 'click') {
+      const normalizedDestination = this.normalizeTrackingDestination(payload.url || '');
+      if (!normalizedDestination) return null;
+      payload.url = normalizedDestination;
+    }
+
+    return payload;
+  }
+
+  private signTrackingPayloadPart(payloadPart: string): string {
+    return createHmac('sha256', this.getTrackingSecret())
+      .update(payloadPart)
+      .digest('base64url');
+  }
+
+  private getTrackingSecret(): string {
+    const secret =
+      process.env.EMAIL_TRACKING_SECRET?.trim() ||
+      process.env.JWT_SECRET?.trim() ||
+      DEFAULT_TRACKING_SECRET;
+    return secret;
+  }
+
+  private safeTokenCompare(tokenA: string, tokenB: string): boolean {
+    const first = Buffer.from(tokenA);
+    const second = Buffer.from(tokenB);
+    if (first.length !== second.length) return false;
+    return timingSafeEqual(first, second);
+  }
+
+  private normalizeTrackingDestination(rawUrl: string): string | null {
+    if (!rawUrl) return null;
+    const decoded = rawUrl.replace(/&amp;/gi, '&');
+    try {
+      const parsed = new URL(decoded);
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        return null;
+      }
+      return parsed.toString();
+    } catch {
+      return null;
+    }
+  }
+
+  private parseRecipientObjectId(value: string): Types.ObjectId | null {
+    if (!Types.ObjectId.isValid(value)) return null;
+    return new Types.ObjectId(value);
+  }
+
+  private async persistCampaignSendState(campaign: EmailCampaignDocument): Promise<void> {
+    const setOps: Record<string, any> = {
+      status: campaign.status,
+      sentAt: campaign.sentAt || new Date(),
+      sentCount: campaign.sentCount,
+      failedCount: campaign.failedCount,
+    };
+    const unsetOps: Record<string, 1> = {};
+
+    campaign.recipients.forEach((recipient, index) => {
+      setOps[`recipients.${index}.status`] = recipient.status;
+
+      if (recipient.sentAt) {
+        setOps[`recipients.${index}.sentAt`] = recipient.sentAt;
+      } else {
+        unsetOps[`recipients.${index}.sentAt`] = 1;
+      }
+
+      if (recipient.errorMessage) {
+        setOps[`recipients.${index}.errorMessage`] = recipient.errorMessage;
+      } else {
+        unsetOps[`recipients.${index}.errorMessage`] = 1;
+      }
+
+      if (recipient.personalizedSubject) {
+        setOps[`recipients.${index}.personalizedSubject`] = recipient.personalizedSubject;
+      } else {
+        unsetOps[`recipients.${index}.personalizedSubject`] = 1;
+      }
+
+      if (recipient.personalizedContent) {
+        setOps[`recipients.${index}.personalizedContent`] = recipient.personalizedContent;
+      } else {
+        unsetOps[`recipients.${index}.personalizedContent`] = 1;
+      }
+    });
+
+    const updateOps: Record<string, any> = { $set: setOps };
+    if (Object.keys(unsetOps).length > 0) {
+      updateOps.$unset = unsetOps;
+    }
+
+    await this.emailCampaignModel.updateOne({ _id: campaign._id }, updateOps).exec();
+  }
+
+  private getInvalidClickRedirectUrl(): string {
+    return (process.env.FRONTEND_URL || 'https://chabaqa.io').trim().replace(/\/+$/, '');
   }
 
   private buildBaseVariables(input: {

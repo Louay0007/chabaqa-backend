@@ -6,6 +6,9 @@ import { AuthService } from './auth.service';
 import { LoginDto } from '../dto-user/login.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { RegisterDto } from '../dto-user/register.dto';
+import { ResetPasswordDto } from '../dto-user/reset-password.dto';
+import { VerifyEmailOtpDto } from '../dto-user/verify-email-otp.dto';
+import { ResendEmailOtpDto } from '../dto-user/resend-email-otp.dto';
 import { GoogleAuthGuard } from './guards/google-auth.guard';
 import { CookieUtil } from '../common/utils/cookie.util';
 
@@ -180,8 +183,8 @@ export class AuthController {
   @Post('reset-password')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Reset Password', description: 'Reset password using code sent to email.' })
-  @ApiBody({ type: require('../dto-user/reset-password.dto').ResetPasswordDto })
-  async resetPassword(@Body() body: import('../dto-user/reset-password.dto').ResetPasswordDto) {
+  @ApiBody({ type: ResetPasswordDto })
+  async resetPassword(@Body() body: ResetPasswordDto) {
     return this.authService.resetPassword(body.email, body.verificationCode, body.newPassword);
   }
 
@@ -229,18 +232,34 @@ export class AuthController {
   }
 
   @Post('register')
-  @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: 'User Registration' })
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'User Registration (Send OTP)' })
   @ApiBody({ type: RegisterDto })
   async register(@Body() registerDto: RegisterDto) {
     return this.authService.register(registerDto);
   }
 
   @Post('register-creator')
-  @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: 'Creator Registration' })
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Creator Registration (Send OTP)' })
   @ApiBody({ type: RegisterDto })
   async registerCreator(@Body() registerDto: RegisterDto) {
     return this.authService.registerCreator(registerDto);
+  }
+
+  @Post('register/verify-otp')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Verify Registration OTP and Create Account' })
+  @ApiBody({ type: VerifyEmailOtpDto })
+  async verifyRegistrationOtp(@Body() body: VerifyEmailOtpDto) {
+    return this.authService.verifyRegistrationOtp(body.email, body.verificationCode);
+  }
+
+  @Post('register/resend-otp')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Resend Registration OTP' })
+  @ApiBody({ type: ResendEmailOtpDto })
+  async resendRegistrationOtp(@Body() body: ResendEmailOtpDto) {
+    return this.authService.resendRegistrationOtp(body.email);
   }
 }

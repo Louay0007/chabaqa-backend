@@ -8,7 +8,7 @@ import { User, UserDocument } from '../schema/user.schema';
 import { LoginDto } from '../dto-user/login.dto';
 import { LoginResponseDto } from '../dto-user/login-response.dto';
 import { EmailService } from '../common/services/email.service';
-import { VerificationCodeSchema } from '../schema/verification-code.schema';
+import { VerificationCode, VerificationCodeDocument } from '../schema/verification-code.schema';
 import { UserLoginActivityService } from '../user-login-activity/user-login-activity.service';
 import { RegisterDto } from '../dto-user/register.dto';
 import { UploadService } from '../upload/upload.service';
@@ -16,18 +16,64 @@ import { generateUniqueUsername } from '../common/utils/username.util';
 import { TokenBlacklistService } from '../common/services/token-blacklist.service';
 import { getJwtSecret } from '../common/utils/security-config.util';
 
+type RegistrationRole = 'user' | 'creator';
+
+interface PendingRegistrationMetadata {
+  name: string;
+  email: string;
+  passwordHash: string;
+  numtel?: string;
+  date_naissance?: string;
+  role: RegistrationRole;
+}
+
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
 
   constructor(
     @InjectModel(User.name) private userModel: Model<UserDocument>,
+    @InjectModel(VerificationCode.name)
+    private verificationCodeModel: Model<VerificationCodeDocument>,
     private jwtService: JwtService,
     private emailService: EmailService,
     private userLoginActivityService: UserLoginActivityService,
     private uploadService: UploadService,
     private tokenBlacklistService: TokenBlacklistService,
   ) { }
+
+  private normalizeEmail(email: string): string {
+    return String(email || '').trim().toLowerCase();
+  }
+
+  private normalizeName(name: string): string {
+    return String(name || '').trim() || 'User';
+  }
+
+  private generateOtpCode(): string {
+    return Math.floor(100000 + Math.random() * 900000).toString();
+  }
+
+  private getOtpExpiryMinutes(): number {
+    const configured = Number(process.env.AUTH_OTP_EXPIRY_MINUTES || 10);
+    return Number.isFinite(configured) && configured > 0 ? configured : 10;
+  }
+
+  private getOtpExpiryDate(): Date {
+    return new Date(Date.now() + this.getOtpExpiryMinutes() * 60 * 1000);
+  }
+
+  private buildUserDto(user: UserDocument): any {
+    return {
+      _id: user._id.toString(),
+      name: user.name,
+      username: (user as any).username,
+      email: user.email,
+      role: user.role,
+      avatar: this.uploadService.ensureAbsoluteUrl(user.profile_picture || user.photo_profil || ''),
+      createdAt: user.createdAt,
+    };
+  }
 
   async loginWithGoogle(oauthUser: {
     provider: 'google';
@@ -40,16 +86,17 @@ export class AuthService {
       throw new BadRequestException('Adresse e-mail Google introuvable');
     }
 
-    let user = await this.userModel.findOne({ email: oauthUser.email.toLowerCase() });
+    const normalizedEmail = this.normalizeEmail(oauthUser.email);
+    let user = await this.userModel.findOne({ email: normalizedEmail });
 
     if (!user) {
-      const candidateName = String(oauthUser.name || 'Google User').trim() || 'Google User';
+      const candidateName = this.normalizeName(String(oauthUser.name || 'Google User'));
       const passwordHash = await this.hashPassword(`google:${oauthUser.providerId}:${Date.now()}`);
       const username = await generateUniqueUsername(this.userModel, candidateName);
       user = await this.userModel.create({
         name: candidateName,
         username,
-        email: oauthUser.email.toLowerCase(),
+        email: normalizedEmail,
         role: 'user',
         password: passwordHash,
       });
@@ -59,19 +106,10 @@ export class AuthService {
 
     await this.userLoginActivityService.trackUserLoginForAllCommunities(user._id.toString());
 
-    const userDto = {
-      _id: user._id.toString(),
-      name: user.name,
-      username: (user as any).username,
-      email: user.email,
-      role: user.role,
-      avatar: this.uploadService.ensureAbsoluteUrl(user.profile_picture || user.photo_profil || ''),
-      createdAt: user.createdAt,
-    };
     return {
       access_token: accessToken,
-      refresh_token: '', // Deprecated
-      user: userDto,
+      refresh_token: '',
+      user: this.buildUserDto(user),
       rememberMe: true,
       message: 'Connexion réussie avec Google',
     };
@@ -81,7 +119,7 @@ export class AuthService {
     const googleAuthClientId = process.env.GOOGLE_AUTH_CLIENT_ID || process.env.GOOGLE_CLIENT_ID;
     const client = new OAuth2Client(googleAuthClientId);
     const ticket = await client.verifyIdToken({
-      idToken: idToken,
+      idToken,
       audience: googleAuthClientId,
     });
     const payload = ticket.getPayload();
@@ -99,8 +137,9 @@ export class AuthService {
   }
 
   async validateUser(email: string, password: string): Promise<UserDocument> {
-    const normalizedEmail = String(email || '').trim().toLowerCase();
+    const normalizedEmail = this.normalizeEmail(email);
     const escapedEmail = normalizedEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
     let user = await this.userModel.findOne({ email: normalizedEmail }).select('+password').exec();
     if (!user) {
       user = await this.userModel
@@ -108,13 +147,16 @@ export class AuthService {
         .select('+password')
         .exec();
     }
+
     if (!user) {
       throw new UnauthorizedException('Email ou mot de passe incorrect');
     }
+
     const isPasswordValid = await bcrypt.compare(password, user.password);
     if (!isPasswordValid) {
       throw new UnauthorizedException('Email ou mot de passe incorrect');
     }
+
     return user as UserDocument;
   }
 
@@ -127,7 +169,7 @@ export class AuthService {
     };
 
     return this.jwtService.sign(payload, {
-      expiresIn: '7d', // Longer expiration for simple auth
+      expiresIn: '7d',
       secret: getJwtSecret(),
     });
   }
@@ -164,43 +206,30 @@ export class AuthService {
     const accessToken = this.generateToken(user);
     await this.userLoginActivityService.trackUserLoginForAllCommunities(user._id.toString());
 
-    const userDto = {
-      _id: user._id.toString(),
-      name: user.name,
-      username: (user as any).username,
-      email: user.email,
-      role: user.role,
-      avatar: this.uploadService.ensureAbsoluteUrl(user.profile_picture || user.photo_profil || ''),
-      createdAt: user.createdAt,
-    };
-
     return {
       accessToken,
-      user: userDto
+      user: this.buildUserDto(user),
     };
   }
 
   async getUserById(userId: string): Promise<UserDocument | null> {
     const user = await this.userModel.findById(userId).select('-password').exec();
     if (!user) return null;
-    
-    // Transform the user data to match frontend expectations
+
     const userObject = user.toObject();
 
-    // Normalize upload URLs to HTTPS production domain to prevent mixed-content issues
     const normalizedPhotoProfil = this.uploadService.ensureAbsoluteUrl(userObject.photo_profil || '');
     const normalizedProfilePicture = this.uploadService.ensureAbsoluteUrl(userObject.profile_picture || '');
     const normalizedAvatar = this.uploadService.ensureAbsoluteUrl(
-      userObject.profile_picture || userObject.photo_profil || ''
+      userObject.profile_picture || userObject.photo_profil || '',
     );
-    
-    // Map backend photo fields to frontend avatar field
+
     return {
       ...userObject,
       photo_profil: normalizedPhotoProfil,
       profile_picture: normalizedProfilePicture,
       avatar: normalizedAvatar,
-      firstName: userObject.name, // Map name to firstName for frontend compatibility
+      firstName: userObject.name,
     } as any;
   }
 
@@ -209,112 +238,277 @@ export class AuthService {
     return bcrypt.hash(password, saltRounds);
   }
 
-  async forgotPassword(email: string): Promise<{ success: boolean; message?: string; error?: string }> {
-    const user = await this.userModel.findOne({ email: email.toLowerCase() });
-    if (!user) {
-      return { success: false, error: "Aucun utilisateur trouvé avec cet email." };
+  private async savePendingRegistration(
+    registerDto: RegisterDto,
+    role: RegistrationRole,
+  ): Promise<{ email: string; code: string; name: string; expiresInMinutes: number }> {
+    const normalizedEmail = this.normalizeEmail(registerDto.email);
+    const normalizedName = this.normalizeName(registerDto.name);
+
+    const existingUser = await this.userModel.findOne({ email: normalizedEmail }).lean();
+    if (existingUser) {
+      throw new BadRequestException('Un utilisateur avec cet email existe déjà.');
     }
-    const resetCode = Math.floor(100000 + Math.random() * 900000).toString();
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
-    const verificationCodeModel = this.userModel.db.model('VerificationCode', VerificationCodeSchema);
-    await verificationCodeModel.deleteMany({ userId: user._id, type: 'password_reset' });
-    await verificationCodeModel.create({
+
+    const verificationCode = this.generateOtpCode();
+    const expiresAt = this.getOtpExpiryDate();
+    const passwordHash = await this.hashPassword(registerDto.password);
+
+    const metadata: PendingRegistrationMetadata = {
+      name: normalizedName,
+      email: normalizedEmail,
+      passwordHash,
+      numtel: registerDto.numtel,
+      date_naissance: registerDto.date_naissance,
+      role,
+    };
+
+    await this.verificationCodeModel.deleteMany({
+      email: normalizedEmail,
+      type: 'email_verification',
+      isUsed: false,
+    });
+
+    await this.verificationCodeModel.create({
+      email: normalizedEmail,
+      code: verificationCode,
+      type: 'email_verification',
+      expiresAt,
+      isUsed: false,
+      metadata,
+    });
+
+    return {
+      email: normalizedEmail,
+      code: verificationCode,
+      name: normalizedName,
+      expiresInMinutes: this.getOtpExpiryMinutes(),
+    };
+  }
+
+  async requestRegistrationOtp(
+    registerDto: RegisterDto,
+    role: RegistrationRole = 'user',
+  ): Promise<{ success: boolean; message: string; email: string; expiresInMinutes: number }> {
+    const { email, code, name, expiresInMinutes } = await this.savePendingRegistration(registerDto, role);
+    this.logger.log(`OTP d'inscription généré pour ${email} (${role})`);
+
+    await this.emailService.sendRegistrationOtpEmail(email, code, name, expiresInMinutes);
+
+    return {
+      success: true,
+      message: 'Un code de vérification a été envoyé à votre email.',
+      email,
+      expiresInMinutes,
+    };
+  }
+
+  async resendRegistrationOtp(email: string): Promise<{ success: boolean; message: string; email: string; expiresInMinutes: number }> {
+    const normalizedEmail = this.normalizeEmail(email);
+    this.logger.log(`Demande de renvoi OTP d'inscription pour ${normalizedEmail}`);
+
+    const existingUser = await this.userModel.findOne({ email: normalizedEmail }).lean();
+    if (existingUser) {
+      throw new BadRequestException('Ce compte est déjà vérifié. Veuillez vous connecter.');
+    }
+
+    const pendingRecord = await this.verificationCodeModel
+      .findOne({
+        email: normalizedEmail,
+        type: 'email_verification',
+        isUsed: false,
+      })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    if (!pendingRecord?.metadata) {
+      throw new BadRequestException('Aucune demande d\'inscription en attente pour cet email.');
+    }
+
+    const metadata = pendingRecord.metadata as PendingRegistrationMetadata;
+    const otpCode = this.generateOtpCode();
+    const expiresAt = this.getOtpExpiryDate();
+    const expiresInMinutes = this.getOtpExpiryMinutes();
+
+    await this.verificationCodeModel.deleteMany({
+      email: normalizedEmail,
+      type: 'email_verification',
+      isUsed: false,
+    });
+
+    await this.verificationCodeModel.create({
+      email: normalizedEmail,
+      code: otpCode,
+      type: 'email_verification',
+      expiresAt,
+      isUsed: false,
+      metadata,
+    });
+
+    await this.emailService.sendRegistrationOtpEmail(
+      normalizedEmail,
+      otpCode,
+      this.normalizeName(metadata.name),
+      expiresInMinutes,
+    );
+    this.logger.log(`OTP d'inscription renvoyé pour ${normalizedEmail}`);
+
+    return {
+      success: true,
+      message: 'Un nouveau code de vérification a été envoyé.',
+      email: normalizedEmail,
+      expiresInMinutes,
+    };
+  }
+
+  async verifyRegistrationOtp(
+    email: string,
+    verificationCode: string,
+  ): Promise<{ success: boolean; message: string; user?: any; error?: string }> {
+    const normalizedEmail = this.normalizeEmail(email);
+    const normalizedCode = String(verificationCode || '').trim();
+
+    const verificationRecord = await this.verificationCodeModel.findOne({
+      email: normalizedEmail,
+      code: normalizedCode,
+      type: 'email_verification',
+      isUsed: false,
+      expiresAt: { $gt: new Date() },
+    });
+
+    if (!verificationRecord || !verificationRecord.metadata) {
+      return { success: false, error: 'Code de vérification invalide ou expiré.', message: '' };
+    }
+
+    const metadata = verificationRecord.metadata as PendingRegistrationMetadata;
+
+    if (!metadata.passwordHash || !metadata.name || !metadata.email) {
+      return {
+        success: false,
+        error: 'Données d\'inscription invalides. Veuillez recommencer le processus.',
+        message: '',
+      };
+    }
+
+    const existingUser = await this.userModel.findOne({ email: normalizedEmail }).lean();
+    if (existingUser) {
+      await this.verificationCodeModel.deleteMany({
+        email: normalizedEmail,
+        type: 'email_verification',
+      });
+      return {
+        success: false,
+        error: 'Un utilisateur avec cet email existe déjà. Veuillez vous connecter.',
+        message: '',
+      };
+    }
+
+    const username = await generateUniqueUsername(this.userModel, this.normalizeName(metadata.name));
+
+    const newUser = await this.userModel.create({
+      name: this.normalizeName(metadata.name),
+      username,
+      email: normalizedEmail,
+      password: metadata.passwordHash,
+      numtel: metadata.numtel,
+      date_naissance: metadata.date_naissance,
+      role: metadata.role === 'creator' ? 'creator' : 'user',
+    });
+
+    await this.verificationCodeModel.deleteMany({
+      email: normalizedEmail,
+      type: 'email_verification',
+    });
+    this.logger.log(`Email vérifié et compte créé pour ${normalizedEmail}`);
+
+    return {
+      success: true,
+      message: 'Email vérifié avec succès. Votre compte a été créé.',
+      user: {
+        _id: newUser._id.toString(),
+        name: newUser.name,
+        username: (newUser as any).username,
+        email: newUser.email,
+        role: newUser.role,
+        createdAt: newUser.createdAt,
+      },
+    };
+  }
+
+  async forgotPassword(email: string): Promise<{ success: boolean; message?: string; error?: string }> {
+    const normalizedEmail = this.normalizeEmail(email);
+    const user = await this.userModel.findOne({ email: normalizedEmail });
+
+    if (!user) {
+      return { success: false, error: 'Aucun utilisateur trouvé avec cet email.' };
+    }
+
+    const resetCode = this.generateOtpCode();
+    const expiresAt = this.getOtpExpiryDate();
+    const expiresInMinutes = this.getOtpExpiryMinutes();
+
+    await this.verificationCodeModel.deleteMany({
+      $or: [{ userId: user._id }, { email: normalizedEmail }],
+      type: 'password_reset',
+      isUsed: false,
+    });
+
+    await this.verificationCodeModel.create({
+      email: normalizedEmail,
       userId: user._id,
       code: resetCode,
       type: 'password_reset',
       expiresAt,
+      isUsed: false,
     });
-    await this.emailService.send2FACode(user.email, resetCode, user.name);
-    return { success: true, message: "Code de réinitialisation envoyé par email." };
+
+    await this.emailService.sendPasswordResetEmail(user.email, resetCode, user.name, expiresInMinutes);
+
+    return { success: true, message: 'Code de réinitialisation envoyé par email.' };
   }
 
-  async resetPassword(email: string, code: string, newPassword: string): Promise<{ success: boolean; message?: string; error?: string }> {
-    const user = await this.userModel.findOne({ email: email.toLowerCase() });
+  async resetPassword(
+    email: string,
+    code: string,
+    newPassword: string,
+  ): Promise<{ success: boolean; message?: string; error?: string }> {
+    const normalizedEmail = this.normalizeEmail(email);
+    const user = await this.userModel.findOne({ email: normalizedEmail });
     if (!user) {
-      return { success: false, error: "Aucun utilisateur trouvé avec cet email." };
+      return { success: false, error: 'Aucun utilisateur trouvé avec cet email.' };
     }
-    const verificationCodeModel = this.userModel.db.model('VerificationCode', VerificationCodeSchema);
-    const verificationRecord = await verificationCodeModel.findOne({
-      userId: user._id,
-      code,
+
+    const verificationRecord = await this.verificationCodeModel.findOne({
+      $or: [{ userId: user._id }, { email: normalizedEmail }],
+      code: String(code || '').trim(),
       type: 'password_reset',
+      isUsed: false,
       expiresAt: { $gt: new Date() },
     });
+
     if (!verificationRecord) {
-      return { success: false, error: "Code de réinitialisation invalide ou expiré." };
+      return { success: false, error: 'Code de réinitialisation invalide ou expiré.' };
     }
+
     user.password = await this.hashPassword(newPassword);
     if (user.role) {
       user.role = user.role.toLowerCase() as any;
     }
     await user.save();
-    await verificationCodeModel.deleteOne({ _id: verificationRecord._id });
-    return { success: true, message: "Mot de passe réinitialisé avec succès." };
+
+    await this.verificationCodeModel.deleteMany({
+      $or: [{ userId: user._id }, { email: normalizedEmail }],
+      type: 'password_reset',
+    });
+
+    return { success: true, message: 'Mot de passe réinitialisé avec succès.' };
   }
 
-  async register(registerDto: RegisterDto): Promise<{ success: boolean; message: string; user?: any; error?: string }> {
-    const { name, email, password, numtel, date_naissance } = registerDto;
-    const existingUser = await this.userModel.findOne({ email: email.toLowerCase() });
-    if (existingUser) {
-      throw new BadRequestException('Un utilisateur avec cet email existe déjà.');
-    }
-    const normalizedName = String(name || '').trim() || 'User';
-    const username = await generateUniqueUsername(this.userModel, normalizedName);
-    const hashedPassword = await this.hashPassword(password);
-    const newUser = await this.userModel.create({
-      name: normalizedName,
-      username,
-      email: email.toLowerCase(),
-      password: hashedPassword,
-      numtel,
-      date_naissance,
-      role: 'user',
-    });
-    const userDto = {
-      _id: newUser._id.toString(),
-      name: newUser.name,
-      username: (newUser as any).username,
-      email: newUser.email,
-      role: newUser.role,
-      createdAt: newUser.createdAt,
-    };
-    return {
-      success: true,
-      message: 'Utilisateur créé avec succès.',
-      user: userDto,
-    };
+  async register(registerDto: RegisterDto): Promise<{ success: boolean; message: string; email?: string; expiresInMinutes?: number }> {
+    return this.requestRegistrationOtp(registerDto, 'user');
   }
 
-  async registerCreator(registerDto: RegisterDto): Promise<{ success: boolean; message: string; user?: any; error?: string }> {
-    const { name, email, password, numtel, date_naissance } = registerDto;
-    const existingUser = await this.userModel.findOne({ email: email.toLowerCase() });
-    if (existingUser) {
-      throw new BadRequestException('Un utilisateur avec cet email existe déjà.');
-    }
-    const normalizedName = String(name || '').trim() || 'User';
-    const username = await generateUniqueUsername(this.userModel, normalizedName);
-    const hashedPassword = await this.hashPassword(password);
-    const newUser = await this.userModel.create({
-      name: normalizedName,
-      username,
-      email: email.toLowerCase(),
-      password: hashedPassword,
-      numtel,
-      date_naissance,
-      role: 'creator',
-    });
-    const userDto = {
-      _id: newUser._id.toString(),
-      name: newUser.name,
-      username: (newUser as any).username,
-      email: newUser.email,
-      role: newUser.role,
-      createdAt: newUser.createdAt,
-    };
-    return {
-      success: true,
-      message: 'Créateur créé avec succès.',
-      user: userDto,
-    };
+  async registerCreator(registerDto: RegisterDto): Promise<{ success: boolean; message: string; email?: string; expiresInMinutes?: number }> {
+    return this.requestRegistrationOtp(registerDto, 'creator');
   }
 }
