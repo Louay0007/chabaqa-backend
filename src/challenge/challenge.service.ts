@@ -3,6 +3,8 @@ import {
   NotFoundException,
   BadRequestException,
   ForbiddenException,
+  HttpException,
+  HttpStatus,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -68,6 +70,31 @@ export class ChallengeService {
 
     await Promise.allSettled(
       patterns.map((pattern) => this.cacheService.deletePattern(pattern)),
+    );
+  }
+
+  private isPaidOrderRequired(): boolean {
+    return String(process.env.PAYMENTS_REQUIRE_PAID_ORDER || '').toLowerCase() === 'true';
+  }
+
+  private buildPaymentRequiredException(params: {
+    contentId: string;
+    amount: number;
+    message: string;
+    initEndpoint: string;
+    currency?: string;
+  }): HttpException {
+    return new HttpException(
+      {
+        code: 'PAYMENT_REQUIRED',
+        contentType: TrackableContentType.CHALLENGE,
+        contentId: params.contentId,
+        amount: params.amount,
+        currency: params.currency || 'TND',
+        initEndpoint: params.initEndpoint,
+        message: params.message,
+      },
+      HttpStatus.PAYMENT_REQUIRED,
     );
   }
 
@@ -1514,6 +1541,15 @@ export class ChallengeService {
       }).session(session);
 
       if (!existingOrder) {
+        if (this.isPaidOrderRequired()) {
+          throw this.buildPaymentRequiredException({
+            contentId: challenge._id.toString(),
+            amount: price,
+            initEndpoint: '/payment/stripe-link/init/challenge',
+            message: 'Paiement requis pour rejoindre ce défi',
+          });
+        }
+
         const breakdown = await this.feeService.calculateForAmount(
           price,
           challenge.creatorId.toString(),

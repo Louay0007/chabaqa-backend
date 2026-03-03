@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, BadRequestException, HttpException, HttpStatus } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Cours, CoursDocument, CourseEnrollment, CourseEnrollmentDocument, CourseProgress, CourseProgressDocument } from '../schema/course.schema';
@@ -57,6 +57,32 @@ export class CoursService {
 
     await Promise.allSettled(
       patterns.map((pattern) => this.cacheService.deletePattern(pattern)),
+    );
+  }
+
+  private isPaidOrderRequired(): boolean {
+    return String(process.env.PAYMENTS_REQUIRE_PAID_ORDER || '').toLowerCase() === 'true';
+  }
+
+  private buildPaymentRequiredException(params: {
+    contentType: TrackableContentType;
+    contentId: string;
+    amount: number;
+    message: string;
+    initEndpoint: string;
+    currency?: string;
+  }): HttpException {
+    return new HttpException(
+      {
+        code: 'PAYMENT_REQUIRED',
+        contentType: params.contentType,
+        contentId: params.contentId,
+        amount: params.amount,
+        currency: params.currency || 'TND',
+        initEndpoint: params.initEndpoint,
+        message: params.message,
+      },
+      HttpStatus.PAYMENT_REQUIRED,
     );
   }
 
@@ -2665,6 +2691,15 @@ export class CoursService {
           .exec();
 
         if (!paidOrder) {
+          if (this.isPaidOrderRequired()) {
+            throw this.buildPaymentRequiredException({
+              contentType: TrackableContentType.COURSE,
+              contentId: courseObjectId.toString(),
+              amount: Number(cours.prix || 0),
+              initEndpoint: '/payment/stripe-link/init/course',
+              message: 'Paiement requis pour s\'inscrire à ce cours',
+            });
+          }
           throw new BadRequestException('Paiement requis pour s\'inscrire à ce cours');
         }
       }

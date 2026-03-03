@@ -9,6 +9,7 @@ import { Model, Types } from 'mongoose';
 import { FlouciPaymentService } from '../services/flouci-payment.service';
 import { StripePaymentService } from '../services/stripe-payment.service';
 import { ManualPaymentService } from '../services/manual-payment.service';
+import { PaymentFulfillmentService } from '../services/payment-fulfillment.service';
 import { UploadService } from '../../upload/upload.service';
 import { Community, CommunityDocument } from '../../schema/community.schema';
 import { User, UserDocument } from '../../schema/user.schema';
@@ -67,6 +68,7 @@ export class PaymentController {
     private readonly feeService: FeeService,
     private readonly manualPaymentService: ManualPaymentService,
     private readonly uploadService: UploadService,
+    private readonly paymentFulfillmentService: PaymentFulfillmentService,
     private readonly notificationService: NotificationService,
     private readonly emailService: EmailService,
     @InjectModel(Community.name) private communityModel: Model<CommunityDocument>,
@@ -84,6 +86,100 @@ export class PaymentController {
     private readonly subscriptionService: SubscriptionService,
     @InjectModel(Plan.name) private planModel: Model<PlanDocument>,
   ) { }
+
+  private isEnvFlagEnabled(name: string, defaultValue = false): boolean {
+    const raw = process.env[name];
+    if (raw === undefined || raw === null || raw === '') return defaultValue;
+    return ['1', 'true', 'yes', 'on'].includes(String(raw).trim().toLowerCase());
+  }
+
+  private normalizePaymentChannel(raw?: string): 'web' | 'mobile' {
+    return String(raw || '').toLowerCase() === 'mobile' ? 'mobile' : 'web';
+  }
+
+  private getRedirectAllowlistPrefixes(): string[] {
+    const envValue = String(process.env.PAYMENTS_REDIRECT_ALLOWLIST || '').trim();
+    const parsed = envValue
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean);
+
+    if (parsed.length > 0) {
+      return parsed;
+    }
+
+    const fallback = String(process.env.FRONTEND_URL || 'https://chabaqa.io').trim();
+    return [fallback];
+  }
+
+  private resolveCheckoutRedirectUrl(defaultUrl: string, overrideUrl?: string): string {
+    const normalizedOverride = typeof overrideUrl === 'string' ? overrideUrl.trim() : '';
+    if (!normalizedOverride) {
+      return defaultUrl;
+    }
+
+    try {
+      const parsed = new URL(normalizedOverride);
+      const absolute = parsed.toString();
+      const allowedPrefixes = this.getRedirectAllowlistPrefixes();
+      const isAllowed = allowedPrefixes.some((prefix) => absolute.startsWith(prefix));
+      if (!isAllowed) {
+        throw new BadRequestException(
+          `Redirect URL is not allowed. Allowed prefixes: ${allowedPrefixes.join(', ')}`,
+        );
+      }
+      return absolute;
+    } catch (error: any) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      throw new BadRequestException('Invalid redirect URL');
+    }
+  }
+
+  private isStripeSessionPlaceholder(value: string): boolean {
+    return value.toUpperCase().includes('CHECKOUT_SESSION_ID');
+  }
+
+  private normalizeClientContext(raw: any): Record<string, string> {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      return {};
+    }
+
+    const entries = Object.entries(raw as Record<string, any>)
+      .filter(([key]) => typeof key === 'string' && key.trim().length > 0)
+      .slice(0, 20)
+      .map(([key, value]) => [key, String(value ?? '')]);
+
+    return Object.fromEntries(entries);
+  }
+
+  private buildStripeInitResponse(params: {
+    scope: string;
+    targetId: string;
+    orderId: string;
+    sessionId?: string;
+    checkoutUrl?: string;
+    extra?: Record<string, any>;
+  }) {
+    return {
+      checkoutUrl: params.checkoutUrl,
+      sessionId: params.sessionId,
+      orderId: params.orderId,
+      provider: 'stripe',
+      scope: params.scope,
+      targetId: params.targetId,
+      ...(params.extra || {}),
+    };
+  }
+
+  private buildPendingFulfillmentMetadata(base?: Record<string, any>): Record<string, any> {
+    return {
+      ...(base || {}),
+      fulfillmentStatus: 'pending',
+      fulfillmentUpdatedAt: new Date().toISOString(),
+    };
+  }
 
   private async enrichOrderDetails(order: any) {
     const contentType = order.contentType;
@@ -407,7 +503,7 @@ export class PaymentController {
   @ApiBearerAuth()
   async verify(@Query('paymentId') paymentId: string) {
     // Support offline: if paymentId equals an Order _id, use it directly
-    let order = await this.orderModel.findOne({ paymentId });
+    let order: any = await this.orderModel.findOne({ paymentId });
     if (!order) {
       const byId = await this.orderModel.findById(paymentId as any);
       order = byId || null;
@@ -417,14 +513,54 @@ export class PaymentController {
     if (!verify.success) throw new BadRequestException((verify as any).error);
 
     if (verify.status === 'SUCCESS') {
-      if (order.status !== 'paid') {
-        await this.runWithOptionalTransaction(async (session) => {
+      let didCompleteFulfillment = false;
+      await this.runWithOptionalTransaction(async (session) => {
+        const claim = await this.paymentFulfillmentService.claimForProcessing(
+          order._id.toString(),
+          (verify as any).paymentMethod || order.paymentMethod,
+          session,
+        );
+        if (!claim.order) {
+          throw new BadRequestException('Commande non trouvée');
+        }
+        order = claim.order;
+
+        if (claim.state === 'requires_booking' || claim.state === 'completed') {
+          return;
+        }
+        if (claim.state !== 'claimed') {
+          return;
+        }
+
+        try {
           await this.grantAccess(order, session);
-          order.status = 'paid';
-          order.paymentMethod = (verify as any).paymentMethod || order.paymentMethod;
-          await order.save({ session });
-        });
+          order = await this.paymentFulfillmentService.markCompleted(order, session);
+          didCompleteFulfillment = true;
+        } catch (error: any) {
+          if (order.contentType === TrackableContentType.SESSION && this.isMissingScheduledAtError(error)) {
+            order = await this.paymentFulfillmentService.markRequiresBooking(order, session, {
+              contentId: order.metadata?.contentId || order.contentId,
+            });
+            return;
+          }
+          await this.paymentFulfillmentService.markFailed(order, error, session);
+          throw error;
+        }
+      });
+
+      if (didCompleteFulfillment) {
         await this.incrementProductSalesFromOrder(order);
+      }
+
+      if (order.contentType === TrackableContentType.SESSION && order.metadata?.fulfillmentStatus === 'requires_booking') {
+        return {
+          status: 'paid_action_required',
+          action: 'choose_session_slot',
+          message: 'Payment received. Please choose a session slot to finalize your booking.',
+          orderId: order._id,
+          sessionContentId: order.metadata?.contentId || order.contentId,
+          ...(await this.enrichOrderDetails(order)),
+        };
       }
       const enriched = await this.enrichOrderDetails(order);
       return { status: 'paid', orderId: order._id, ...enriched };
@@ -433,6 +569,44 @@ export class PaymentController {
     order.status = 'pending';
     await order.save();
     return { status: verify.status };
+  }
+
+  @Get('order/:orderId')
+  @ApiOperation({ summary: 'Get order state (including fulfillment status)' })
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  async getOrderState(@Param('orderId') orderId: string, @Req() req: any) {
+    const userId = (req.user?._id || req.user?.sub || '').toString();
+    if (!Types.ObjectId.isValid(orderId)) {
+      throw new BadRequestException('Invalid orderId');
+    }
+
+    const order = await this.orderModel.findById(orderId).lean();
+    if (!order) {
+      throw new BadRequestException('Order not found');
+    }
+
+    const isBuyer = String((order as any)?.buyerId || '') === userId;
+    const isCreator = String((order as any)?.creatorId || '') === userId;
+    if (!isBuyer && !isCreator) {
+      throw new ForbiddenException('You are not allowed to view this order');
+    }
+
+    const enriched = await this.enrichOrderDetails(order);
+    return {
+      success: true,
+      data: {
+        orderId: String((order as any)._id),
+        status: (order as any).status,
+        paymentMethod: (order as any).paymentMethod,
+        paymentId: (order as any).paymentId,
+        contentType: (order as any).contentType,
+        contentId: (order as any).contentId,
+        amountDT: (order as any).amountDT,
+        metadata: (order as any).metadata || {},
+        ...enriched,
+      },
+    };
   }
 
   @Post('init/subscription')
@@ -755,9 +929,15 @@ export class PaymentController {
     @Body('communityId') communityId: string,
     @Body('inviteCode') inviteCode: string | undefined,
     @Req() req: any,
+    @Body('channel') channelRaw?: string,
+    @Body('successRedirectUrl') successRedirectUrl?: string,
+    @Body('cancelRedirectUrl') cancelRedirectUrl?: string,
+    @Body('clientContext') clientContextRaw?: Record<string, any>,
     @Query('promoCode') promoCode?: string,
   ) {
     const userId = (req.user?._id || req.user?.sub || '').toString();
+    const channel = this.normalizePaymentChannel(channelRaw);
+    const clientContext = this.normalizeClientContext(clientContextRaw);
     const community = await this.communityModel.findById(communityId);
     if (!community) throw new BadRequestException('Community not found');
     const validatedInviteCode = await this.assertPrivateInviteAccess(community, inviteCode);
@@ -779,7 +959,10 @@ export class PaymentController {
     }
 
     const breakdown = await this.feeService.calculateForAmount(amount, community.createur.toString());
-    const metadata: Record<string, any> = {};
+    const metadata: Record<string, any> = {
+      channel,
+      ...(Object.keys(clientContext).length > 0 ? { clientContext } : {}),
+    };
     if (validatedInviteCode) {
       metadata.inviteCode = validatedInviteCode;
     }
@@ -797,11 +980,13 @@ export class PaymentController {
       promoCode: appliedCode,
       discountDT,
       status: 'pending',
-      metadata,
+      metadata: this.buildPendingFulfillmentMetadata(metadata),
     });
 
-    const successUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-success?scope=community&id=${communityId}&provider=stripe&sessionId={CHECKOUT_SESSION_ID}`;
-    const failUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-failed?scope=community&id=${communityId}&provider=stripe`;
+    const defaultSuccessUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-success?scope=community&id=${communityId}&provider=stripe&sessionId={CHECKOUT_SESSION_ID}`;
+    const defaultFailUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-failed?scope=community&id=${communityId}&provider=stripe`;
+    const successUrl = this.resolveCheckoutRedirectUrl(defaultSuccessUrl, successRedirectUrl);
+    const failUrl = this.resolveCheckoutRedirectUrl(defaultFailUrl, cancelRedirectUrl);
 
     console.log('[Stripe Init] Generated Success URL:', successUrl);
 
@@ -816,6 +1001,8 @@ export class PaymentController {
         contentType: 'community',
         contentId: communityId,
         orderId: pendingOrder._id.toString(),
+        channel,
+        ...(Object.keys(clientContext).length > 0 ? { clientContext: JSON.stringify(clientContext) } : {}),
         ...(validatedInviteCode ? { inviteCode: validatedInviteCode } : {}),
       },
       lineItems: [{
@@ -831,11 +1018,16 @@ export class PaymentController {
     pendingOrder.paymentId = session.sessionId;
     await pendingOrder.save();
 
-    return {
-      checkoutUrl: session.url,
+    return this.buildStripeInitResponse({
+      scope: 'community',
+      targetId: communityId,
+      orderId: pendingOrder._id.toString(),
       sessionId: session.sessionId,
-      provider: 'stripe-link'
-    };
+      checkoutUrl: session.url,
+      extra: {
+        channel,
+      },
+    });
   }
 
   @Post('stripe-link/init/course')
@@ -846,9 +1038,15 @@ export class PaymentController {
   async initStripeLinkCoursePayment(
     @Body('courseId') courseId: string,
     @Req() req: any,
+    @Body('channel') channelRaw?: string,
+    @Body('successRedirectUrl') successRedirectUrl?: string,
+    @Body('cancelRedirectUrl') cancelRedirectUrl?: string,
+    @Body('clientContext') clientContextRaw?: Record<string, any>,
     @Query('promoCode') promoCode?: string,
   ) {
     const userId = (req.user?._id || req.user?.sub || '').toString();
+    const channel = this.normalizePaymentChannel(channelRaw);
+    const clientContext = this.normalizeClientContext(clientContextRaw);
     let cours: CoursDocument | null = null;
     if (Types.ObjectId.isValid(courseId)) {
       cours = await this.coursModel.findById(courseId);
@@ -892,10 +1090,16 @@ export class PaymentController {
       promoCode: appliedCode,
       discountDT,
       status: 'pending',
+      metadata: this.buildPendingFulfillmentMetadata({
+        channel,
+        ...(Object.keys(clientContext).length > 0 ? { clientContext } : {}),
+      }),
     });
 
-    const successUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-success?scope=course&id=${coursePublicId}&provider=stripe&sessionId={CHECKOUT_SESSION_ID}`;
-    const failUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-failed?scope=course&id=${courseId}&provider=stripe`;
+    const defaultSuccessUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-success?scope=course&id=${coursePublicId}&provider=stripe&sessionId={CHECKOUT_SESSION_ID}`;
+    const defaultFailUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-failed?scope=course&id=${courseId}&provider=stripe`;
+    const successUrl = this.resolveCheckoutRedirectUrl(defaultSuccessUrl, successRedirectUrl);
+    const failUrl = this.resolveCheckoutRedirectUrl(defaultFailUrl, cancelRedirectUrl);
 
     const user = await this.userModel.findById(userId).select('email name');
     const session = await this.stripe.createLinkCheckoutSession({
@@ -908,7 +1112,9 @@ export class PaymentController {
         userId,
         contentType: 'course',
         contentId: courseId,
-        orderId: pendingOrder._id.toString()
+        orderId: pendingOrder._id.toString(),
+        channel,
+        ...(Object.keys(clientContext).length > 0 ? { clientContext: JSON.stringify(clientContext) } : {}),
       },
       lineItems: [{
         name: cours.titre,
@@ -923,11 +1129,16 @@ export class PaymentController {
     pendingOrder.paymentId = session.sessionId;
     await pendingOrder.save();
 
-    return {
-      checkoutUrl: session.url,
+    return this.buildStripeInitResponse({
+      scope: 'course',
+      targetId: coursePublicId,
+      orderId: pendingOrder._id.toString(),
       sessionId: session.sessionId,
-      provider: 'stripe-link'
-    };
+      checkoutUrl: session.url,
+      extra: {
+        channel,
+      },
+    });
   }
 
   @Post('stripe-link/init/challenge')
@@ -938,9 +1149,15 @@ export class PaymentController {
   async initStripeLinkChallengePayment(
     @Body('challengeId') challengeId: string,
     @Req() req: any,
+    @Body('channel') channelRaw?: string,
+    @Body('successRedirectUrl') successRedirectUrl?: string,
+    @Body('cancelRedirectUrl') cancelRedirectUrl?: string,
+    @Body('clientContext') clientContextRaw?: Record<string, any>,
     @Query('promoCode') promoCode?: string,
   ) {
     const userId = (req.user?._id || req.user?.sub || '').toString();
+    const channel = this.normalizePaymentChannel(channelRaw);
+    const clientContext = this.normalizeClientContext(clientContextRaw);
     const challenge = await this.challengeModel.findOne({ id: challengeId }) || await this.challengeModel.findById(challengeId);
     if (!challenge) throw new BadRequestException('Challenge not found');
 
@@ -979,10 +1196,16 @@ export class PaymentController {
       promoCode: appliedCode,
       discountDT,
       status: 'pending',
+      metadata: this.buildPendingFulfillmentMetadata({
+        channel,
+        ...(Object.keys(clientContext).length > 0 ? { clientContext } : {}),
+      }),
     });
 
-    const successUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-success?scope=challenge&id=${challengeId}&provider=stripe&sessionId={CHECKOUT_SESSION_ID}`;
-    const failUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-failed?scope=challenge&id=${challengeId}&provider=stripe`;
+    const defaultSuccessUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-success?scope=challenge&id=${challengeId}&provider=stripe&sessionId={CHECKOUT_SESSION_ID}`;
+    const defaultFailUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-failed?scope=challenge&id=${challengeId}&provider=stripe`;
+    const successUrl = this.resolveCheckoutRedirectUrl(defaultSuccessUrl, successRedirectUrl);
+    const failUrl = this.resolveCheckoutRedirectUrl(defaultFailUrl, cancelRedirectUrl);
 
     const user = await this.userModel.findById(userId).select('email name');
     const session = await this.stripe.createLinkCheckoutSession({
@@ -995,7 +1218,9 @@ export class PaymentController {
         userId,
         contentType: 'challenge',
         contentId: challengeId,
-        orderId: pendingOrder._id.toString()
+        orderId: pendingOrder._id.toString(),
+        channel,
+        ...(Object.keys(clientContext).length > 0 ? { clientContext: JSON.stringify(clientContext) } : {}),
       },
       lineItems: [{
         name: challenge.title || 'Challenge',
@@ -1010,11 +1235,16 @@ export class PaymentController {
     pendingOrder.paymentId = session.sessionId;
     await pendingOrder.save();
 
-    return {
-      checkoutUrl: session.url,
+    return this.buildStripeInitResponse({
+      scope: 'challenge',
+      targetId: challengeId,
+      orderId: pendingOrder._id.toString(),
       sessionId: session.sessionId,
-      provider: 'stripe-link'
-    };
+      checkoutUrl: session.url,
+      extra: {
+        channel,
+      },
+    });
   }
 
   @Post('stripe-link/init/event')
@@ -1026,9 +1256,15 @@ export class PaymentController {
     @Body('eventId') eventId: string,
     @Body('ticketType') ticketType: string,
     @Req() req: any,
+    @Body('channel') channelRaw?: string,
+    @Body('successRedirectUrl') successRedirectUrl?: string,
+    @Body('cancelRedirectUrl') cancelRedirectUrl?: string,
+    @Body('clientContext') clientContextRaw?: Record<string, any>,
     @Query('promoCode') promoCode?: string,
   ) {
     const userId = (req.user?._id || req.user?.sub || '').toString();
+    const channel = this.normalizePaymentChannel(channelRaw);
+    const clientContext = this.normalizeClientContext(clientContextRaw);
     const event = await this.eventModel.findOne({ id: eventId }) || await this.eventModel.findById(eventId);
     if (!event) throw new BadRequestException('Event not found');
     const alreadyRegistered = (event.attendees || []).some((attendee: any) => attendee?.userId?.toString() === userId);
@@ -1070,11 +1306,17 @@ export class PaymentController {
       promoCode: appliedCode,
       discountDT,
       status: 'pending',
-      metadata: { ticketType }
+      metadata: this.buildPendingFulfillmentMetadata({
+        ticketType,
+        channel,
+        ...(Object.keys(clientContext).length > 0 ? { clientContext } : {}),
+      })
     });
 
-    const successUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-success?scope=event&id=${eventId}&provider=stripe&sessionId={CHECKOUT_SESSION_ID}`;
-    const failUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-failed?scope=event&id=${eventId}&provider=stripe`;
+    const defaultSuccessUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-success?scope=event&id=${eventId}&provider=stripe&sessionId={CHECKOUT_SESSION_ID}`;
+    const defaultFailUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-failed?scope=event&id=${eventId}&provider=stripe`;
+    const successUrl = this.resolveCheckoutRedirectUrl(defaultSuccessUrl, successRedirectUrl);
+    const failUrl = this.resolveCheckoutRedirectUrl(defaultFailUrl, cancelRedirectUrl);
 
     const user = await this.userModel.findById(userId).select('email name');
     const session = await this.stripe.createLinkCheckoutSession({
@@ -1088,7 +1330,9 @@ export class PaymentController {
         contentType: 'event',
         contentId: eventId,
         orderId: pendingOrder._id.toString(),
-        ticketType
+        ticketType,
+        channel,
+        ...(Object.keys(clientContext).length > 0 ? { clientContext: JSON.stringify(clientContext) } : {}),
       },
       lineItems: [{
         name: event.title || 'Event Ticket',
@@ -1103,11 +1347,16 @@ export class PaymentController {
     pendingOrder.paymentId = session.sessionId;
     await pendingOrder.save();
 
-    return {
-      checkoutUrl: session.url,
+    return this.buildStripeInitResponse({
+      scope: 'event',
+      targetId: eventId,
+      orderId: pendingOrder._id.toString(),
       sessionId: session.sessionId,
-      provider: 'stripe-link'
-    };
+      checkoutUrl: session.url,
+      extra: {
+        channel,
+      },
+    });
   }
 
   @Post('stripe-link/init/product')
@@ -1118,9 +1367,15 @@ export class PaymentController {
   async initStripeLinkProductPayment(
     @Body('productId') productId: string,
     @Req() req: any,
+    @Body('channel') channelRaw?: string,
+    @Body('successRedirectUrl') successRedirectUrl?: string,
+    @Body('cancelRedirectUrl') cancelRedirectUrl?: string,
+    @Body('clientContext') clientContextRaw?: Record<string, any>,
     @Query('promoCode') promoCode?: string,
   ) {
     const userId = (req.user?._id || req.user?.sub || '').toString();
+    const channel = this.normalizePaymentChannel(channelRaw);
+    const clientContext = this.normalizeClientContext(clientContextRaw);
     const product = await this.productModel.findOne({ id: productId }) || await this.productModel.findById(productId);
     if (!product) throw new BadRequestException('Product not found');
     const existingPaidOrder = await this.findExistingPaidProductOrder(userId, product);
@@ -1158,10 +1413,16 @@ export class PaymentController {
       promoCode: appliedCode,
       discountDT,
       status: 'pending',
+      metadata: this.buildPendingFulfillmentMetadata({
+        channel,
+        ...(Object.keys(clientContext).length > 0 ? { clientContext } : {}),
+      }),
     });
 
-    const successUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-success?scope=product&id=${productId}&provider=stripe&sessionId={CHECKOUT_SESSION_ID}`;
-    const failUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-failed?scope=product&id=${productId}&provider=stripe`;
+    const defaultSuccessUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-success?scope=product&id=${productId}&provider=stripe&sessionId={CHECKOUT_SESSION_ID}`;
+    const defaultFailUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-failed?scope=product&id=${productId}&provider=stripe`;
+    const successUrl = this.resolveCheckoutRedirectUrl(defaultSuccessUrl, successRedirectUrl);
+    const failUrl = this.resolveCheckoutRedirectUrl(defaultFailUrl, cancelRedirectUrl);
 
     const user = await this.userModel.findById(userId).select('email name');
     const session = await this.stripe.createLinkCheckoutSession({
@@ -1173,7 +1434,9 @@ export class PaymentController {
         userId,
         contentType: 'product',
         contentId: productId,
-        orderId: pendingOrder._id.toString()
+        orderId: pendingOrder._id.toString(),
+        channel,
+        ...(Object.keys(clientContext).length > 0 ? { clientContext: JSON.stringify(clientContext) } : {}),
       },
       lineItems: [{
         name: product.title || 'Product',
@@ -1188,11 +1451,16 @@ export class PaymentController {
     pendingOrder.paymentId = session.sessionId;
     await pendingOrder.save();
 
-    return {
-      checkoutUrl: session.url,
+    return this.buildStripeInitResponse({
+      scope: 'product',
+      targetId: productId,
+      orderId: pendingOrder._id.toString(),
       sessionId: session.sessionId,
-      provider: 'stripe-link'
-    };
+      checkoutUrl: session.url,
+      extra: {
+        channel,
+      },
+    });
   }
 
   @Post('stripe-link/init/session')
@@ -1204,9 +1472,15 @@ export class PaymentController {
     @Body('sessionId') sessionId: string,
     @Body('bookingDto') bookingDto: any,
     @Req() req: any,
+    @Body('channel') channelRaw?: string,
+    @Body('successRedirectUrl') successRedirectUrl?: string,
+    @Body('cancelRedirectUrl') cancelRedirectUrl?: string,
+    @Body('clientContext') clientContextRaw?: Record<string, any>,
     @Query('promoCode') promoCode?: string,
   ) {
     const userId = (req.user?._id || req.user?.sub || '').toString();
+    const channel = this.normalizePaymentChannel(channelRaw);
+    const clientContext = this.normalizeClientContext(clientContextRaw);
     const sessionDoc = await this.sessionModel.findOne({ id: sessionId }) || await this.sessionModel.findById(sessionId);
     if (!sessionDoc) throw new BadRequestException('Session not found');
     if (sessionDoc.creatorId?.toString() === userId) {
@@ -1243,15 +1517,19 @@ export class PaymentController {
       promoCode: appliedCode,
       discountDT,
       status: 'pending',
-      metadata: {
+      metadata: this.buildPendingFulfillmentMetadata({
         bookingDto,
         contentId: sessionId,
         slotId: bookingDto?.slotId,
-      }
+        channel,
+        ...(Object.keys(clientContext).length > 0 ? { clientContext } : {}),
+      })
     });
 
-    const successUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-success?scope=session&id=${sessionId}&provider=stripe&sessionId={CHECKOUT_SESSION_ID}`;
-    const failUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-failed?scope=session&id=${sessionId}&provider=stripe`;
+    const defaultSuccessUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-success?scope=session&id=${sessionId}&provider=stripe&sessionId={CHECKOUT_SESSION_ID}`;
+    const defaultFailUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-failed?scope=session&id=${sessionId}&provider=stripe`;
+    const successUrl = this.resolveCheckoutRedirectUrl(defaultSuccessUrl, successRedirectUrl);
+    const failUrl = this.resolveCheckoutRedirectUrl(defaultFailUrl, cancelRedirectUrl);
 
     const user = await this.userModel.findById(userId).select('email name');
     const session = await this.stripe.createLinkCheckoutSession({
@@ -1264,7 +1542,9 @@ export class PaymentController {
         contentType: 'session',
         contentId: sessionId,
         orderId: pendingOrder._id.toString(),
-        bookingDto: JSON.stringify(bookingDto) // Serialize object to string
+        bookingDto: JSON.stringify(bookingDto), // Serialize object to string
+        channel,
+        ...(Object.keys(clientContext).length > 0 ? { clientContext: JSON.stringify(clientContext) } : {}),
       },
       lineItems: [{
         name: sessionDoc.title || 'Session',
@@ -1279,11 +1559,16 @@ export class PaymentController {
     pendingOrder.paymentId = session.sessionId;
     await pendingOrder.save();
 
-    return {
-      checkoutUrl: session.url,
+    return this.buildStripeInitResponse({
+      scope: 'session',
+      targetId: sessionId,
+      orderId: pendingOrder._id.toString(),
       sessionId: session.sessionId,
-      provider: 'stripe-link'
-    };
+      checkoutUrl: session.url,
+      extra: {
+        channel,
+      },
+    });
   }
 
   @Post('stripe-link/init/subscription')
@@ -1293,9 +1578,15 @@ export class PaymentController {
   async initStripeLinkSubscription(
     @Req() req: any,
     @Body('tier') tier: PlanTier,
-    @Body('interval') interval: 'month' | 'year' = 'month'
+    @Body('interval') interval: 'month' | 'year' = 'month',
+    @Body('channel') channelRaw?: string,
+    @Body('successRedirectUrl') successRedirectUrl?: string,
+    @Body('cancelRedirectUrl') cancelRedirectUrl?: string,
+    @Body('clientContext') clientContextRaw?: Record<string, any>,
   ) {
     const userId = (req.user?._id || req.user?.sub || '').toString();
+    const channel = this.normalizePaymentChannel(channelRaw);
+    const clientContext = this.normalizeClientContext(clientContextRaw);
     const plan = await this.planModel.findOne({ tier, isActive: true });
     if (!plan) throw new BadRequestException('Plan not found');
 
@@ -1317,6 +1608,10 @@ export class PaymentController {
       platformFeeDT: breakdown.platformFeeDT,
       creatorNetDT: breakdown.creatorNetDT,
       status: 'pending',
+      metadata: this.buildPendingFulfillmentMetadata({
+        channel,
+        ...(Object.keys(clientContext).length > 0 ? { clientContext } : {}),
+      }),
     });
 
     // Create Stripe price for the subscription
@@ -1329,8 +1624,10 @@ export class PaymentController {
 
     if (!priceResult.success) throw new BadRequestException(priceResult.error);
 
-    const successUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-success?scope=subscription&tier=${tier}&provider=stripe&sessionId={CHECKOUT_SESSION_ID}`;
-    const failUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-failed?scope=subscription&tier=${tier}&provider=stripe`;
+    const defaultSuccessUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-success?scope=subscription&tier=${tier}&provider=stripe&sessionId={CHECKOUT_SESSION_ID}`;
+    const defaultFailUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-failed?scope=subscription&tier=${tier}&provider=stripe`;
+    const successUrl = this.resolveCheckoutRedirectUrl(defaultSuccessUrl, successRedirectUrl);
+    const failUrl = this.resolveCheckoutRedirectUrl(defaultFailUrl, cancelRedirectUrl);
 
     const user = await this.userModel.findById(userId).select('email name');
     const session = await this.stripe.createLinkSubscriptionSession({
@@ -1342,7 +1639,9 @@ export class PaymentController {
         userId,
         contentType: 'subscription',
         tier,
-        orderId: pendingOrder._id.toString()
+        orderId: pendingOrder._id.toString(),
+        channel,
+        ...(Object.keys(clientContext).length > 0 ? { clientContext: JSON.stringify(clientContext) } : {}),
       },
       trialPeriodDays: plan.trialDays
     });
@@ -1352,11 +1651,17 @@ export class PaymentController {
     pendingOrder.paymentId = session.sessionId;
     await pendingOrder.save();
 
-    return {
-      checkoutUrl: session.url,
+    return this.buildStripeInitResponse({
+      scope: 'subscription',
+      targetId: tier,
+      orderId: pendingOrder._id.toString(),
       sessionId: session.sessionId,
-      provider: 'stripe-link'
-    };
+      checkoutUrl: session.url,
+      extra: {
+        channel,
+        interval,
+      },
+    });
   }
 
 
@@ -1737,15 +2042,24 @@ export class PaymentController {
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   async verifyStripeLink(@Query('sessionId') sessionId: string) {
-    const verify = await this.stripe.verifyLinkPayment(sessionId);
+    const normalizedSessionId = String(sessionId || '').trim();
+    if (!normalizedSessionId) {
+      throw new BadRequestException('Missing Stripe session id');
+    }
+    if (this.isStripeSessionPlaceholder(normalizedSessionId)) {
+      throw new BadRequestException('Invalid Stripe session id placeholder');
+    }
+
+    const verify = await this.stripe.verifyLinkPayment(normalizedSessionId);
     if (!verify.success) throw new BadRequestException(verify.error);
 
     // Find the order by session ID
-    const order = await this.orderModel.findOne({ paymentId: sessionId });
+    let order: any = await this.orderModel.findOne({ paymentId: normalizedSessionId });
     if (!order) throw new BadRequestException('Order not found');
 
     if (verify.status === 'paid' || verify.status === 'succeeded' || verify.status === 'complete') {
       let requiresBookingAction = false;
+      let didCompleteFulfillment = false;
       let sessionContentId = order.metadata?.contentId || verify.sessionMetadata?.contentId || order.contentId;
       const isChapterOrder =
         order.contentType === TrackableContentType.CHAPTER ||
@@ -1755,32 +2069,53 @@ export class PaymentController {
         ? String(order.metadata?.courseId || verify.sessionMetadata?.courseId || '')
         : undefined;
 
-      if (order.status !== 'paid') {
-        await this.runWithOptionalTransaction(async (session) => {
-          const nextMetadata: Record<string, any> = { ...(order.metadata || {}) };
-          order.status = 'paid';
-          order.paymentMethod = verify.paymentMethod?.type || 'stripe-link';
+      await this.runWithOptionalTransaction(async (session) => {
+        const claim = await this.paymentFulfillmentService.claimForProcessing(
+          order._id.toString(),
+          verify.paymentMethod?.type || 'stripe-link',
+          session,
+        );
+        if (!claim.order) {
+          throw new BadRequestException('Order not found');
+        }
 
-          try {
-            await this.grantAccess(order, session, verify.sessionMetadata);
-            delete nextMetadata.fulfillmentStatus;
-            delete nextMetadata.fulfillmentReason;
-          } catch (error: any) {
-            if (order.contentType === TrackableContentType.SESSION && this.isMissingScheduledAtError(error)) {
-              requiresBookingAction = true;
-              nextMetadata.fulfillmentStatus = 'requires_booking';
-              nextMetadata.fulfillmentReason = 'missing_scheduledAt';
-              nextMetadata.contentId = sessionContentId;
-            } else {
-              throw error;
-            }
+        order = claim.order;
+        sessionContentId = order.metadata?.contentId || verify.sessionMetadata?.contentId || order.contentId;
+
+        if (claim.state === 'requires_booking') {
+          requiresBookingAction = true;
+          return;
+        }
+
+        if (claim.state !== 'claimed') {
+          return;
+        }
+
+        try {
+          await this.grantAccess(order, session, verify.sessionMetadata);
+          order = await this.paymentFulfillmentService.markCompleted(order, session);
+          didCompleteFulfillment = true;
+        } catch (error: any) {
+          if (order.contentType === TrackableContentType.SESSION && this.isMissingScheduledAtError(error)) {
+            requiresBookingAction = true;
+            order = await this.paymentFulfillmentService.markRequiresBooking(order, session, {
+              contentId: sessionContentId,
+            });
+            return;
           }
 
-          order.metadata = nextMetadata;
-          await order.save({ session });
-        });
+          await this.paymentFulfillmentService.markFailed(order, error, session);
+          throw error;
+        }
+      });
 
+      if (didCompleteFulfillment) {
         await this.incrementProductSalesFromOrder(order);
+      }
+
+      const refreshedOrder = await this.orderModel.findById(order._id);
+      if (refreshedOrder) {
+        order = refreshedOrder;
       }
 
       // Repair entitlement drift on verify path (idempotent).
@@ -1822,13 +2157,9 @@ export class PaymentController {
 
         if (hasPendingFlag || (!hasExistingBooking && !hasBookingDate)) {
           requiresBookingAction = true;
-          order.metadata = {
-            ...(order.metadata || {}),
-            fulfillmentStatus: 'requires_booking',
-            fulfillmentReason: 'missing_scheduledAt',
+          order = await this.paymentFulfillmentService.markRequiresBooking(order, null, {
             contentId: sessionContentId,
-          };
-          await order.save();
+          });
         }
       }
 
@@ -1875,7 +2206,7 @@ export class PaymentController {
     const userId = (req.user?._id || req.user?.sub || '').toString();
     if (!orderId) throw new BadRequestException('orderId is required');
 
-    const order = await this.orderModel.findById(orderId);
+    let order: any = await this.orderModel.findById(orderId);
     if (!order) throw new BadRequestException('Order not found');
     if (order.buyerId?.toString() !== userId) {
       throw new ForbiddenException('You are not allowed to finalize this booking');
@@ -1927,8 +2258,6 @@ export class PaymentController {
     }
 
     const nextMetadata: Record<string, any> = { ...(order.metadata || {}) };
-    delete nextMetadata.fulfillmentStatus;
-    delete nextMetadata.fulfillmentReason;
     nextMetadata.contentId = bookingSessionId;
     nextMetadata.slotId = slotId || nextMetadata.slotId;
     nextMetadata.bookingDto = {
@@ -1938,8 +2267,7 @@ export class PaymentController {
       slotId: slotId || this.parseBookingDto(nextMetadata.bookingDto)?.slotId,
     };
     nextMetadata.finalizedAt = new Date().toISOString();
-    order.metadata = nextMetadata;
-    await order.save();
+    order = await this.paymentFulfillmentService.markCompleted(order, null, nextMetadata);
 
     return {
       status: 'paid',
@@ -1970,16 +2298,44 @@ export class PaymentController {
         const stripeSession = stripeEvent.data.object as any;
         if (stripeSession.payment_status === 'paid') {
           // Process successful payment
-          const order = await this.orderModel.findOne({ paymentId: stripeSession.id });
-          if (order && order.status !== 'paid') {
+          let order: any = await this.orderModel.findOne({ paymentId: stripeSession.id });
+          if (order) {
+            let didCompleteFulfillment = false;
             await this.runWithOptionalTransaction(async (dbSession) => {
-              order.status = 'paid';
-              order.paymentMethod = 'stripe';
-              await this.grantAccess(order, dbSession, stripeSession.metadata);
-              await order.save({ session: dbSession });
+              const claim = await this.paymentFulfillmentService.claimForProcessing(
+                order._id.toString(),
+                'stripe',
+                dbSession,
+              );
+              if (!claim.order) {
+                return;
+              }
+
+              order = claim.order;
+              if (claim.state !== 'claimed') {
+                return;
+              }
+
+              try {
+                await this.grantAccess(order, dbSession, stripeSession.metadata);
+                order = await this.paymentFulfillmentService.markCompleted(order, dbSession);
+                didCompleteFulfillment = true;
+              } catch (error: any) {
+                if (order.contentType === TrackableContentType.SESSION && this.isMissingScheduledAtError(error)) {
+                  order = await this.paymentFulfillmentService.markRequiresBooking(order, dbSession, {
+                    contentId: order.metadata?.contentId || stripeSession?.metadata?.contentId || order.contentId,
+                  });
+                  return;
+                }
+
+                await this.paymentFulfillmentService.markFailed(order, error, dbSession);
+                throw error;
+              }
             });
 
-            await this.incrementProductSalesFromOrder(order);
+            if (didCompleteFulfillment) {
+              await this.incrementProductSalesFromOrder(order);
+            }
           }
         }
         break;
@@ -2026,9 +2382,15 @@ export class PaymentController {
     @Body('courseId') courseId: string,
     @Body('chapterId') chapterId: string,
     @Req() req: any,
+    @Body('channel') channelRaw?: string,
+    @Body('successRedirectUrl') successRedirectUrl?: string,
+    @Body('cancelRedirectUrl') cancelRedirectUrl?: string,
+    @Body('clientContext') clientContextRaw?: Record<string, any>,
     @Query('promoCode') promoCode?: string,
   ) {
     const userId = (req.user?._id || req.user?.sub || '').toString();
+    const channel = this.normalizePaymentChannel(channelRaw);
+    const clientContext = this.normalizeClientContext(clientContextRaw);
     
     // 1. Find Course
     let cours: CoursDocument | null = null;
@@ -2099,16 +2461,20 @@ export class PaymentController {
       promoCode: appliedCode,
       discountDT,
       status: 'pending',
-      metadata: {
+      metadata: this.buildPendingFulfillmentMetadata({
         courseId: cours.id || cours._id.toString(), // Store course ID in metadata for access granting
-        chapterTitle: targetChapter.titre
-      }
+        chapterTitle: targetChapter.titre,
+        channel,
+        ...(Object.keys(clientContext).length > 0 ? { clientContext } : {}),
+      })
     });
 
     // 5. Create Stripe Session
     const coursePublicId = cours.id || cours._id.toString();
-    const successUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-success?scope=chapter&id=${chapterId}&courseId=${coursePublicId}&provider=stripe&sessionId={CHECKOUT_SESSION_ID}`;
-    const failUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-failed?scope=chapter&id=${chapterId}&courseId=${coursePublicId}&provider=stripe`;
+    const defaultSuccessUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-success?scope=chapter&id=${chapterId}&courseId=${coursePublicId}&provider=stripe&sessionId={CHECKOUT_SESSION_ID}`;
+    const defaultFailUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-failed?scope=chapter&id=${chapterId}&courseId=${coursePublicId}&provider=stripe`;
+    const successUrl = this.resolveCheckoutRedirectUrl(defaultSuccessUrl, successRedirectUrl);
+    const failUrl = this.resolveCheckoutRedirectUrl(defaultFailUrl, cancelRedirectUrl);
 
     const user = await this.userModel.findById(userId).select('email name');
     const session = await this.stripe.createLinkCheckoutSession({
@@ -2122,7 +2488,9 @@ export class PaymentController {
         contentType: TrackableContentType.CHAPTER,
         contentId: chapterId,
         courseId: coursePublicId,
-        orderId: pendingOrder._id.toString()
+        orderId: pendingOrder._id.toString(),
+        channel,
+        ...(Object.keys(clientContext).length > 0 ? { clientContext: JSON.stringify(clientContext) } : {}),
       },
       lineItems: [{
         name: `${targetChapter.titre} (Chapter)`,
@@ -2137,15 +2505,20 @@ export class PaymentController {
     pendingOrder.paymentId = session.sessionId;
     await pendingOrder.save();
 
-    return {
-      checkoutUrl: session.url,
+    return this.buildStripeInitResponse({
+      scope: 'chapter',
+      targetId: chapterId,
+      orderId: pendingOrder._id.toString(),
       sessionId: session.sessionId,
-      provider: 'stripe-link',
-      amount,
-      currency,
-      chapterId,
-      courseId: coursePublicId,
-    };
+      checkoutUrl: session.url,
+      extra: {
+        amount,
+        currency,
+        chapterId,
+        courseId: coursePublicId,
+        channel,
+      },
+    });
   }
 
   // ==================== MANUAL PAYMENT ENDPOINTS ====================
@@ -2754,79 +3127,54 @@ export class PaymentController {
 
       // If approved, trigger content access granting logic if needed
       if (action === 'approve') {
-        if (order.contentType === TrackableContentType.COMMUNITY) {
-          const community = await this.communityModel.findById(order.contentId);
-          if (community) {
-            community.addMember(order.buyerId);
-            await community.save();
-            await this.userModel.findByIdAndUpdate(order.buyerId, {
-              $addToSet: { joinedCommunities: community._id },
-            });
-            await this.notifyCommunityCreatorMemberJoined(community, order.buyerId);
+        let didCompleteFulfillment = false;
+        let fulfilledOrder: any = order;
+        await this.runWithOptionalTransaction(async (dbSession) => {
+          const claim = await this.paymentFulfillmentService.claimForProcessing(
+            order._id.toString(),
+            'manual',
+            dbSession,
+          );
+          if (!claim.order) {
+            throw new BadRequestException('Order not found');
           }
-        } else if (order.contentType === TrackableContentType.SUBSCRIPTION) {
-          // contentId holds plan tier string
-          const tier = (order.contentId || 'STARTER') as PlanTier;
-          await this.subscriptionService.upgradePlan(order.buyerId.toString(), tier);
-        } else if (order.contentType === TrackableContentType.COURSE) {
-          await this.coursService.inscrireAuCours(order.contentId, order.buyerId.toString());
-        } else if (order.contentType === TrackableContentType.CHALLENGE) {
-          await this.challengeService.joinChallenge({ challengeId: order.contentId } as any, order.buyerId.toString());
-        } else if (order.contentType === TrackableContentType.SESSION) {
-          // Create a booking for the session when payment is approved
-          console.log(`[verifyManualPayment] Processing session payment for order ${order._id}, contentId: ${order.contentId}`);
 
-          // Try finding by _id first (contentId is stored as session._id.toString())
-          let session = await this.sessionModel.findById(order.contentId);
-          if (!session) {
-            // Try finding by custom id field as fallback
-            session = await this.sessionModel.findOne({ id: order.contentId });
+          fulfilledOrder = claim.order;
+          if (claim.state === 'requires_booking' || claim.state === 'completed') {
+            return;
           }
-          console.log(`[verifyManualPayment] Session lookup result: ${session ? `found (id: ${session.id}, _id: ${session._id})` : 'not found'}`);
+          if (claim.state !== 'claimed') {
+            return;
+          }
 
-          if (session) {
-            // Check if booking already exists for this user
-            const existingBooking = session.bookings.find(b =>
-              b.userId.toString() === order.buyerId.toString()
-            );
-
-            if (!existingBooking) {
-              // Get slot info from order metadata if available
-              const metadata = (order as any).metadata || {};
-              const slotId = metadata.slotId;
-              const slotStartTime = metadata.slotStartTime;
-              const slotEndTime = metadata.slotEndTime;
-              const notes = metadata.notes;
-
-              // Create booking record
-              const bookingId = new Types.ObjectId().toString();
-              session.bookings.push({
-                id: bookingId,
-                userId: order.buyerId,
-                scheduledAt: slotStartTime ? new Date(slotStartTime) : new Date(),
-                status: 'confirmed',
-                notes: notes || undefined,
-                createdAt: new Date(),
-                updatedAt: new Date(),
-              } as any);
-
-              // Mark bookings as modified to ensure Mongoose saves it
-              session.markModified('bookings');
-              await session.save();
-
-              console.log(`[verifyManualPayment] Created booking ${bookingId} for session ${session.id}, user ${order.buyerId}`);
-              console.log(`[verifyManualPayment] Session now has ${session.bookings.length} bookings`);
-            } else {
-              console.log(`[verifyManualPayment] Booking already exists for user ${order.buyerId} in session ${session.id}`);
+          try {
+            await this.grantAccess(fulfilledOrder, dbSession);
+            fulfilledOrder = await this.paymentFulfillmentService.markCompleted(fulfilledOrder, dbSession);
+            didCompleteFulfillment = true;
+          } catch (error: any) {
+            if (
+              fulfilledOrder.contentType === TrackableContentType.SESSION &&
+              this.isMissingScheduledAtError(error)
+            ) {
+              fulfilledOrder = await this.paymentFulfillmentService.markRequiresBooking(
+                fulfilledOrder,
+                dbSession,
+                {
+                  contentId: fulfilledOrder.metadata?.contentId || fulfilledOrder.contentId,
+                },
+              );
+              return;
             }
-          } else {
-            console.error(`[verifyManualPayment] Session not found for order ${order._id}, contentId: ${order.contentId}`);
+            await this.paymentFulfillmentService.markFailed(fulfilledOrder, error, dbSession);
+            throw error;
           }
-        } else if (order.contentType === TrackableContentType.PRODUCT) {
-          // Product access is granted by paid order checks in downstream APIs.
-          await this.incrementProductSalesFromOrder(order);
-        } else if (order.contentType === TrackableContentType.EVENT) {
-          // Event ticket type isn't stored on the order; access is granted by paid order checks.
+        });
+
+        order.metadata = fulfilledOrder.metadata;
+        order.status = fulfilledOrder.status;
+
+        if (didCompleteFulfillment) {
+          await this.incrementProductSalesFromOrder(fulfilledOrder);
         }
 
         await this.notificationService.createNotification({

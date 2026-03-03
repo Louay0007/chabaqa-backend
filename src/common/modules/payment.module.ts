@@ -19,6 +19,7 @@ import { PromoService } from '../services/promo.service';
 import { FeeService } from '../services/fee.service';
 import { ManualPaymentService } from '../services/manual-payment.service';
 import { EmailService } from '../services/email.service';
+import { PaymentFulfillmentService } from '../services/payment-fulfillment.service';
 import { UploadModule } from '../../upload/upload.module';
 import { NotificationModule } from '../../notification/notification.module';
 import { CoursModule } from '../../cours/cours.module';
@@ -62,6 +63,7 @@ import { ProductModule } from '../../product/product.module';
     FeeService,
     ManualPaymentService,
     EmailService,
+    PaymentFulfillmentService,
   ],
   exports: [
     FlouciPaymentService,
@@ -69,6 +71,7 @@ import { ProductModule } from '../../product/product.module';
     ManualPaymentService,
     PromoService,
     FeeService,
+    PaymentFulfillmentService,
   ],
 })
 export class PaymentModule { }

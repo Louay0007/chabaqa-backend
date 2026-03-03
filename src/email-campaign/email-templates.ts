@@ -13,175 +13,171 @@ export enum ContentType {
   ALL = 'all'
 }
 
+type InactivityTemplateOptions = {
+  badge: string;
+  title: string;
+  intro: string;
+  highlights: string[];
+  ctaLabel: string;
+  accentColor: string;
+  softBackground: string;
+  closing: string;
+};
+
+const buildInactivityTemplate = (options: InactivityTemplateOptions): string => {
+  const highlightsHtml = options.highlights
+    .map(
+      (item) => `
+        <tr>
+          <td style="padding:10px 0;border-bottom:1px solid #e5e7eb;color:#334155;font-size:14px;line-height:1.6;">
+            ${item}
+          </td>
+        </tr>
+      `,
+    )
+    .join('');
+
+  return `
+    <div style="font-family:Arial,Helvetica,sans-serif;max-width:620px;margin:0 auto;border:1px solid #e5e7eb;border-radius:14px;overflow:hidden;background:#ffffff;">
+      <div style="padding:18px 22px;background:${options.softBackground};border-bottom:1px solid #e5e7eb;">
+        <p style="margin:0;font-size:11px;letter-spacing:1.4px;text-transform:uppercase;color:${options.accentColor};font-weight:700;">
+          ${options.badge}
+        </p>
+        <h2 style="margin:8px 0 0 0;font-size:24px;line-height:1.3;color:#0f172a;">
+          ${options.title}
+        </h2>
+      </div>
+
+      <div style="padding:22px;color:#334155;font-size:15px;line-height:1.75;">
+        <p style="margin:0 0 14px 0;">${options.intro}</p>
+
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:0 0 18px 0;">
+          ${highlightsHtml}
+        </table>
+
+        <div style="margin:18px 0 10px 0;">
+          <a href="{{communityUrl}}" style="display:inline-block;background:${options.accentColor};color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:700;">
+            ${options.ctaLabel}
+          </a>
+        </div>
+
+        <p style="margin:0;color:#64748b;font-size:13px;">
+          ${options.closing}
+        </p>
+      </div>
+    </div>
+  `;
+};
+
 export class EmailTemplates {
   /**
    * Template for users inactive for 7 days
    */
   static readonly INACTIVE_7_DAYS = {
-    subject: "We miss you! Come back to {{communityName}}",
-    content: `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2 style="color: #333;">We miss you! 👋</h2>
-        
-        <p>Hi there!</p>
-        
-        <p>We noticed you haven't logged in for 7 days, and we wanted to check in!</p>
-        
-        <p>We've been busy adding new content and features that we think you'll love:</p>
-        <ul>
-          <li>New courses and challenges</li>
-          <li>Exciting community events</li>
-          <li>Exclusive member benefits</li>
-        </ul>
-        
-        <p>Come back and see what's new in <strong>{{communityName}}</strong>!</p>
-        
-        <div style="text-align: center; margin: 30px 0;">
-          <a href="{{communityUrl}}" style="background-color: #007bff; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block;">
-            Visit Community
-          </a>
-        </div>
-        
-        <p>Best regards,<br>
-        The {{communityName}} Team</p>
-      </div>
-    `
+    subject: "A quick update from {{communityName}}",
+    content: buildInactivityTemplate({
+      badge: '7-Day Check-In',
+      title: 'Your community is active and waiting for you.',
+      intro:
+        'It has been about 7 days since your last visit. Here is what changed inside {{communityName}}.',
+      highlights: [
+        'New learning resources and practical updates',
+        'Fresh conversations from members in your network',
+        'Upcoming sessions and collaborative activities',
+      ],
+      ctaLabel: 'Open Community',
+      accentColor: '#2563eb',
+      softBackground: 'linear-gradient(120deg,#eff6ff 0%,#f8fafc 100%)',
+      closing: 'Thanks for being part of {{communityName}}.',
+    }),
   };
 
   /**
    * Template for users inactive for 15 days
    */
   static readonly INACTIVE_15_DAYS = {
-    subject: "Don't miss out! Important updates in {{communityName}}",
-    content: `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2 style="color: #333;">Important Updates! 📢</h2>
-        
-        <p>Hi there!</p>
-        
-        <p>It's been 15 days since your last login, and we have some exciting updates to share!</p>
-        
-        <p>We've added:</p>
-        <ul>
-          <li>New courses and challenges</li>
-          <li>Exclusive member benefits</li>
-          <li>Community events</li>
-          <li>Premium content</li>
-        </ul>
-        
-        <p>Don't miss out on what's happening in <strong>{{communityName}}</strong>!</p>
-        
-        <div style="text-align: center; margin: 30px 0;">
-          <a href="{{communityUrl}}" style="background-color: #28a745; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block;">
-            Check Updates
-          </a>
-        </div>
-        
-        <p>Best regards,<br>
-        The {{communityName}} Team</p>
-      </div>
-    `
+    subject: "Important updates are waiting in {{communityName}}",
+    content: buildInactivityTemplate({
+      badge: '15-Day Follow-Up',
+      title: 'Do not miss your latest updates.',
+      intro:
+        'It has been around 15 days since your last login. We prepared new highlights for you in {{communityName}}.',
+      highlights: [
+        'New content releases and community resources',
+        'Announcements from creators and moderators',
+        'Member-only opportunities and featured discussions',
+      ],
+      ctaLabel: 'See What Is New',
+      accentColor: '#059669',
+      softBackground: 'linear-gradient(120deg,#ecfdf5 0%,#f0fdf4 100%)',
+      closing: 'Your next step is one click away.',
+    }),
   };
 
   /**
    * Template for users inactive for 30 days
    */
   static readonly INACTIVE_30_DAYS = {
-    subject: "We're worried about you! Come back to {{communityName}}",
-    content: `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2 style="color: #333;">We're worried about you! 😟</h2>
-        
-        <p>Hi there!</p>
-        
-        <p>It's been 30 days since your last login, and we're starting to worry!</p>
-        
-        <p>We've been working hard to make {{communityName}} even better:</p>
-        <ul>
-          <li>New premium courses</li>
-          <li>Exclusive challenges</li>
-          <li>Member-only events</li>
-          <li>Special discounts</li>
-        </ul>
-        
-        <p>We'd love to welcome you back and show you everything that's new!</p>
-        
-        <div style="text-align: center; margin: 30px 0;">
-          <a href="{{communityUrl}}" style="background-color: #ffc107; color: #333; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block;">
-            Come Back Now
-          </a>
-        </div>
-        
-        <p>See you soon!<br>
-        The {{communityName}} Team</p>
-      </div>
-    `
+    subject: "Your progress in {{communityName}} is waiting",
+    content: buildInactivityTemplate({
+      badge: '30-Day Re-Engagement',
+      title: 'We have saved your place in the community.',
+      intro:
+        'It has been around 30 days since your last activity. Here is what you can jump back into right now.',
+      highlights: [
+        'Updated learning tracks and practical guides',
+        'High-value posts and curated recommendations',
+        'New events and participation opportunities',
+      ],
+      ctaLabel: 'Return To Community',
+      accentColor: '#ea580c',
+      softBackground: 'linear-gradient(120deg,#fff7ed 0%,#fef2f2 100%)',
+      closing: 'You are always welcome in {{communityName}}.',
+    }),
   };
 
   /**
    * Template for users inactive for 60+ days
    */
   static readonly INACTIVE_60_PLUS_DAYS = {
-    subject: "Exclusive offer for returning members of {{communityName}}",
-    content: `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2 style="color: #333;">Exclusive Offer! 🎁</h2>
-        
-        <p>Hi there!</p>
-        
-        <p>As a valued member who's been away for more than 60 days, we have something special for you!</p>
-        
-        <div style="background-color: #f8f9fa; padding: 20px; border-radius: 5px; margin: 20px 0;">
-          <h3 style="color: #dc3545; margin-top: 0;">Special Welcome Back Offer:</h3>
-          <ul>
-            <li>50% off all premium courses</li>
-            <li>Free access to exclusive content</li>
-            <li>Priority support</li>
-            <li>Member-only events</li>
-          </ul>
-        </div>
-        
-        <p>This offer is exclusively for returning members like you. Don't miss out!</p>
-        
-        <div style="text-align: center; margin: 30px 0;">
-          <a href="{{communityUrl}}" style="background-color: #dc3545; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block;">
-            Claim Your Offer
-          </a>
-        </div>
-        
-        <p>Welcome back to <strong>{{communityName}}</strong>!<br>
-        The {{communityName}} Team</p>
-      </div>
-    `
+    subject: "A welcome-back invitation from {{communityName}}",
+    content: buildInactivityTemplate({
+      badge: '60+ Day Comeback',
+      title: 'A lot has changed since your last visit.',
+      intro:
+        'You have been away for over 60 days, so we prepared a focused way to rejoin the momentum in {{communityName}}.',
+      highlights: [
+        'Newest resources selected for fast onboarding',
+        'Priority updates to help you catch up quickly',
+        'Featured activities where you can restart today',
+      ],
+      ctaLabel: 'Rejoin Now',
+      accentColor: '#dc2626',
+      softBackground: 'linear-gradient(120deg,#fff1f2 0%,#fee2e2 100%)',
+      closing: 'We would be happy to see you back.',
+    }),
   };
 
   /**
    * Generic template for any inactivity period
    */
   static readonly GENERIC_INACTIVE = {
-    subject: "We miss you! Come back to {{communityName}}",
-    content: `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2 style="color: #333;">We miss you! 👋</h2>
-        
-        <p>Hi there!</p>
-        
-        <p>We noticed you haven't logged in for {{daysThreshold}} days, and we wanted to check in!</p>
-        
-        <p>We've been busy adding new content and features that we think you'll love.</p>
-        
-        <p>Come back and see what's new in <strong>{{communityName}}</strong>!</p>
-        
-        <div style="text-align: center; margin: 30px 0;">
-          <a href="{{communityUrl}}" style="background-color: #007bff; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block;">
-            Visit Community
-          </a>
-        </div>
-        
-        <p>Best regards,<br>
-        The {{communityName}} Team</p>
-      </div>
-    `
+    subject: "We miss you in {{communityName}}",
+    content: buildInactivityTemplate({
+      badge: 'Community Update',
+      title: 'Your next session is ready when you are.',
+      intro:
+        'It has been around {{daysThreshold}} days since your last login. Here is a quick snapshot of what is new.',
+      highlights: [
+        'New content and useful resources',
+        'Fresh conversations and member activity',
+        'Upcoming opportunities to reconnect',
+      ],
+      ctaLabel: 'Visit Community',
+      accentColor: '#2563eb',
+      softBackground: 'linear-gradient(120deg,#eff6ff 0%,#f8fafc 100%)',
+      closing: 'See you again in {{communityName}}.',
+    }),
   };
 
   /**

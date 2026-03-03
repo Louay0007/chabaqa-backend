@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException, HttpException, HttpStatus } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Session, SessionDocument } from '../schema/session.schema';
@@ -97,6 +97,31 @@ export class SessionService {
 
     await Promise.allSettled(
       patterns.map((pattern) => this.cacheService.deletePattern(pattern)),
+    );
+  }
+
+  private isPaidOrderRequired(): boolean {
+    return String(process.env.PAYMENTS_REQUIRE_PAID_ORDER || '').toLowerCase() === 'true';
+  }
+
+  private buildPaymentRequiredException(params: {
+    contentId: string;
+    amount: number;
+    message: string;
+    initEndpoint: string;
+    currency?: string;
+  }): HttpException {
+    return new HttpException(
+      {
+        code: 'PAYMENT_REQUIRED',
+        contentType: TrackableContentType.SESSION,
+        contentId: params.contentId,
+        amount: params.amount,
+        currency: params.currency || 'TND',
+        initEndpoint: params.initEndpoint,
+        message: params.message,
+      },
+      HttpStatus.PAYMENT_REQUIRED,
     );
   }
 
@@ -680,27 +705,9 @@ export class SessionService {
       throw new BadRequestException('Limite de réservations hebdomadaires atteinte');
     }
 
-    // Créer la réservation
-    const booking = {
-      id: new Types.ObjectId().toString(),
-      userId: new Types.ObjectId(userId),
-      scheduledAt: scheduledAt,
-      status: initialStatus,
-      notes: bookSessionDto.notes,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-      meetingUrl: undefined as string | undefined,
-      googleEventId: undefined as string | undefined,
-      meetStatus: (initialStatus === 'confirmed' ? 'pending' : 'not_required') as MeetStatus,
-      meetFailureReason: undefined as string | undefined,
-      meetLastAttemptAt: undefined as Date | undefined,
-      meetRetryCount: 0,
-      meetProvisioningSource: (initialStatus === 'confirmed' ? 'book_session' : undefined) as MeetProvisioningSource | undefined,
-    };
-
-    sessionDoc.addBooking(booking as any);
-    // Si la session est payante, appliquer promo puis créer une commande avec calcul des frais
+    // Si la session est payante, vérifier le paiement avant de réserver
     const FREE_MODE = process.env.FREE_MODE === 'true';
+    let hasPaidOrder = false;
     if (sessionDoc.price && sessionDoc.price > 0 && !FREE_MODE) {
       // Check for existing paid order first
       const existingOrder = await this.orderModel.findOne({
@@ -710,7 +717,17 @@ export class SessionService {
         status: 'paid'
       }).session(session);
 
-      if (!existingOrder) {
+      hasPaidOrder = Boolean(existingOrder);
+      if (!hasPaidOrder && this.isPaidOrderRequired()) {
+        throw this.buildPaymentRequiredException({
+          contentId: sessionDoc._id.toString(),
+          amount: Number(sessionDoc.price || 0),
+          initEndpoint: '/payment/stripe-link/init/session',
+          message: 'Paiement requis pour réserver cette session',
+        });
+      }
+
+      if (!hasPaidOrder) {
         let effective = sessionDoc.price;
         let discountDT = 0;
         let appliedCode: string | undefined;
@@ -740,6 +757,26 @@ export class SessionService {
         }], { session });
       }
     }
+
+    // Créer la réservation
+    const booking = {
+      id: new Types.ObjectId().toString(),
+      userId: new Types.ObjectId(userId),
+      scheduledAt: scheduledAt,
+      status: initialStatus,
+      notes: bookSessionDto.notes,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      meetingUrl: undefined as string | undefined,
+      googleEventId: undefined as string | undefined,
+      meetStatus: (initialStatus === 'confirmed' ? 'pending' : 'not_required') as MeetStatus,
+      meetFailureReason: undefined as string | undefined,
+      meetLastAttemptAt: undefined as Date | undefined,
+      meetRetryCount: 0,
+      meetProvisioningSource: (initialStatus === 'confirmed' ? 'book_session' : undefined) as MeetProvisioningSource | undefined,
+    };
+
+    sessionDoc.addBooking(booking as any);
     await sessionDoc.save({ session });
     await this.invalidateSessionCaches(sessionDoc.creatorId.toString());
 

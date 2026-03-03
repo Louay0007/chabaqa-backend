@@ -1,4 +1,4 @@
-import { Injectable, ConflictException, NotFoundException, InternalServerErrorException, ForbiddenException, BadRequestException, OnModuleInit } from '@nestjs/common';
+import { Injectable, ConflictException, NotFoundException, InternalServerErrorException, ForbiddenException, BadRequestException, OnModuleInit, HttpException, HttpStatus } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Connection, Model, Types } from 'mongoose';
 import { Community, CommunityDocument } from '../schema/community.schema';
@@ -99,6 +99,32 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
 
   private buildInviteLink(inviteCode: string): string {
     return `${this.getFrontendBaseUrl()}/invite/${encodeURIComponent(inviteCode)}`;
+  }
+
+  private isPaidOrderRequired(): boolean {
+    return String(process.env.PAYMENTS_REQUIRE_PAID_ORDER || '').toLowerCase() === 'true';
+  }
+
+  private buildPaymentRequiredException(params: {
+    contentType: string;
+    contentId: string;
+    amount: number;
+    currency?: string;
+    message: string;
+    initEndpoint: string;
+  }): HttpException {
+    return new HttpException(
+      {
+        code: 'PAYMENT_REQUIRED',
+        contentType: params.contentType,
+        contentId: params.contentId,
+        amount: params.amount,
+        currency: params.currency || 'TND',
+        initEndpoint: params.initEndpoint,
+        message: params.message,
+      },
+      HttpStatus.PAYMENT_REQUIRED,
+    );
   }
 
   private async generateUniqueInviteCode(): Promise<string> {
@@ -1320,6 +1346,32 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
         discountDT = promo.discountDT;
         appliedCode = promo.appliedCode;
       }
+    }
+
+    if (this.isPaidOrderRequired()) {
+      const existingPaidOrder = await this.orderModel.findOne({
+        buyerId: new Types.ObjectId(userId),
+        contentType: TrackableContentType.COMMUNITY,
+        contentId: community._id.toString(),
+        status: 'paid',
+      });
+
+      if (!existingPaidOrder) {
+        throw this.buildPaymentRequiredException({
+          contentType: TrackableContentType.COMMUNITY,
+          contentId: community._id.toString(),
+          amount: effective,
+          currency: 'TND',
+          initEndpoint: '/payment/stripe-link/init/community',
+          message: 'Paiement requis pour rejoindre cette communauté',
+        });
+      }
+
+      community.addMember(new Types.ObjectId(userId));
+      await community.save();
+      await this.userModel.findByIdAndUpdate(userId, { $addToSet: { joinedCommunities: community._id } });
+      await this.notifyCreatorMemberJoined(community, userId);
+      return { message: 'Adhésion confirmée avec succès' };
     }
 
     const breakdown = await this.feeService.calculateForAmount(effective, community.createur.toString());

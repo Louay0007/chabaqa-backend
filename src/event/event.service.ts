@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, BadRequestException, HttpException, HttpStatus } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Event, EventDocument } from '../schema/event.schema';
@@ -98,6 +98,31 @@ export class EventService {
     }
 
     return parsed;
+  }
+
+  private isPaidOrderRequired(): boolean {
+    return String(process.env.PAYMENTS_REQUIRE_PAID_ORDER || '').toLowerCase() === 'true';
+  }
+
+  private buildPaymentRequiredException(params: {
+    contentId: string;
+    amount: number;
+    message: string;
+    initEndpoint: string;
+    currency?: string;
+  }): HttpException {
+    return new HttpException(
+      {
+        code: 'PAYMENT_REQUIRED',
+        contentType: TrackableContentType.EVENT,
+        contentId: params.contentId,
+        amount: params.amount,
+        currency: params.currency || 'TND',
+        initEndpoint: params.initEndpoint,
+        message: params.message,
+      },
+      HttpStatus.PAYMENT_REQUIRED,
+    );
   }
 
   private throwReadableValidationError(error: any): never {
@@ -726,6 +751,28 @@ export class EventService {
     //   throw new BadRequestException('Impossible de s\'inscrire à un événement passé');
     // }
 
+    // Si billet payant, vérifier le paiement avant d'inscrire
+    const FREE_MODE = process.env.FREE_MODE === 'true';
+    let hasPaidOrder = false;
+    if (ticket.price && ticket.price > 0 && !FREE_MODE) {
+      const existingPaidOrder = await this.orderModel.findOne({
+        buyerId: new Types.ObjectId(userId),
+        contentType: TrackableContentType.EVENT,
+        contentId: (event as any)._id.toString(),
+        status: 'paid',
+      });
+
+      hasPaidOrder = Boolean(existingPaidOrder);
+      if (!hasPaidOrder && this.isPaidOrderRequired()) {
+        throw this.buildPaymentRequiredException({
+          contentId: (event as any)._id.toString(),
+          amount: Number(ticket.price || 0),
+          initEndpoint: '/payment/stripe-link/init/event',
+          message: 'Paiement requis pour s\'inscrire à cet événement',
+        });
+      }
+    }
+
     const attendee = {
       id: new Types.ObjectId().toString(),
       userId: new Types.ObjectId(userId),
@@ -737,9 +784,8 @@ export class EventService {
     event.attendees.push(attendee);
     ticket.sold += 1;
     
-    // Si billet payant, appliquer promo et créer une commande avec calcul des frais
-    const FREE_MODE = process.env.FREE_MODE === 'true';
-    if (ticket.price && ticket.price > 0 && !FREE_MODE) {
+    // Legacy path: créer une commande payée automatiquement si le garde PAYMENT_REQUIRED est désactivé
+    if (ticket.price && ticket.price > 0 && !FREE_MODE && !hasPaidOrder) {
       let effective = ticket.price;
       let discountDT = 0;
       let appliedCode: string | undefined;
