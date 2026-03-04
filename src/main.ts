@@ -7,6 +7,7 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import * as express from 'express';
 import { AbsoluteUploadsUrlInterceptor } from './common/interceptors/absolute-uploads-url.interceptor';
 import { UploadService } from './upload/upload.service';
+import { MonitoringService } from './common/services/monitoring.service';
 import os from 'os';
 import { webcrypto } from 'node:crypto';
 import {
@@ -38,6 +39,7 @@ const getLocalNetworkIp = (): string => {
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const expressApp = app.getHttpAdapter().getInstance();
+  const monitoringService = app.get(MonitoringService);
   expressApp.disable('x-powered-by');
 
   const trustProxy = process.env.TRUST_PROXY;
@@ -190,6 +192,24 @@ async function bootstrap() {
   if (!isProduction) {
     console.log(`✅ CORS enabled with allowlist: ${allowedOrigins.join(', ')}`);
   }
+
+  // Always record request/error counters for Prometheus metrics.
+  app.use((req, res, next) => {
+    const url = req.originalUrl || req.url;
+
+    res.on('finish', () => {
+      if (url.startsWith('/api/health')) {
+        return;
+      }
+
+      monitoringService.incrementRequestCount();
+      if (res.statusCode >= 500) {
+        monitoringService.incrementErrorCount();
+      }
+    });
+
+    next();
+  });
 
   // Access log middleware (production-friendly). This feeds Dozzle with request/response stats.
   const enableAccessLog = process.env.HTTP_ACCESS_LOG !== 'false';

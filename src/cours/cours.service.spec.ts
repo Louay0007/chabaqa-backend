@@ -102,6 +102,79 @@ describe('CoursService chapter entitlement persistence', () => {
   });
 });
 
+describe('CoursService enrollment independence from course payment', () => {
+  it('allows enrollment in a paid course without requiring a paid course order', async () => {
+    const userId = new Types.ObjectId().toString();
+    const courseObjectId = new Types.ObjectId();
+    const enrolledAt = new Date('2026-01-01T00:00:00.000Z');
+
+    const courseDoc: any = {
+      _id: courseObjectId,
+      id: 'course-public-id',
+      titre: 'Paid Course',
+      prix: 120,
+      isPublished: true,
+      communityId: new Types.ObjectId(),
+      creatorId: new Types.ObjectId(),
+      ajouterInscription: jest.fn(),
+      save: jest.fn().mockResolvedValue(undefined),
+    };
+
+    const courseEnrollmentModel: any = function (this: any, payload: any) {
+      Object.assign(this, payload);
+      this.save = jest.fn().mockResolvedValue({
+        _id: new Types.ObjectId(),
+        id: 'enrollment-id',
+        userId: payload.userId,
+        enrolledAt,
+        isActive: true,
+      });
+    };
+    courseEnrollmentModel.findOne = jest.fn().mockReturnValue({
+      session: jest.fn().mockResolvedValue(null),
+    });
+
+    const coursModel: any = {
+      findById: jest.fn().mockReturnValue({
+        session: jest.fn().mockReturnValue(courseDoc),
+      }),
+      findOne: jest.fn().mockReturnValue({
+        session: jest.fn().mockReturnValue(courseDoc),
+      }),
+    };
+
+    const orderModel: any = {
+      findOne: jest.fn(),
+    };
+
+    const service = new CoursService(
+      coursModel,
+      courseEnrollmentModel,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      orderModel,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      { deletePattern: jest.fn().mockResolvedValue(undefined) } as any,
+    );
+
+    const result = await service.inscrireAuCours(courseObjectId.toString(), userId);
+
+    expect(result.message).toContain('Inscription au cours réussie');
+    expect(result.enrollment.courseId).toBe('course-public-id');
+    expect(courseDoc.ajouterInscription).toHaveBeenCalledTimes(1);
+    expect(orderModel.findOne).not.toHaveBeenCalled();
+  });
+});
+
 describe('CoursService profile by-user community enrichment', () => {
   it('adds community object and flat community fields to enrolled and created courses', async () => {
     const userId = new Types.ObjectId().toString();

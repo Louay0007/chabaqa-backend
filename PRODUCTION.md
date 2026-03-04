@@ -80,6 +80,16 @@ Dozzle is included in `docker-compose.yml` to inspect container logs and runtime
 - **Container stats**: CPU/memory in Dozzle container view
 - **App metrics endpoint**: `GET /api/metrics` and `GET /api/metrics/system`
 
+## Monitoring and Alerting (App VPS)
+
+The production repo now includes a monitoring overlay at `docker-compose.monitoring.yml`.
+
+- Full setup guide: `monitoring/README.md`
+- Enable with `.env.prod`: `MONITORING_ENABLED=true`
+- Deploy with existing script: `./scripts/deploy-prod.sh ./.env.prod`
+
+This adds Prometheus, Alertmanager, Grafana, node-exporter, cAdvisor, blackbox probes, and security-event alerts from `/api/metrics/prometheus`.
+
 ## Logs
 
 ```bash

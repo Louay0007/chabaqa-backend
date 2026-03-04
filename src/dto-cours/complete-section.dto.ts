@@ -3,7 +3,7 @@ import { IsString, IsNotEmpty, IsOptional, IsBoolean } from 'class-validator';
 export class CompleteSectionDto {
   @IsOptional()
   @IsBoolean()
-  forceComplete?: boolean; // Option pour forcer la completion même si tous les chapitres ne sont pas terminés
+  forceComplete?: boolean; // Deprecated: ignored/blocked for user endpoints.
 }
 
 export class CompleteSectionResponseDto {

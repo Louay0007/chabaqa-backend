@@ -34,9 +34,22 @@ export class ChapterAccessResponseDto {
   hasAccess: boolean;
 
   @ApiProperty({
+    description: 'Code de verrouillage stable pour la logique frontend',
+    example: 'allowed',
+    required: false,
+  })
+  lockCode?: string;
+
+  @ApiProperty({
     description: 'Raison de l\'accès ou du refus',
     example: 'previous_completed',
-    enum: ['sequential_disabled', 'first_chapter', 'previous_completed', 'previous_not_completed']
+    enum: [
+      'access_granted',
+      'first_chapter_preview',
+      'Only the first chapter is available in preview before enrollment.',
+      'Paiement requis pour ce chapitre',
+      'Vous devez terminer le chapitre précédent pour débloquer ce contenu.',
+    ]
   })
   reason: string;
 

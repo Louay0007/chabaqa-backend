@@ -26,6 +26,10 @@ import {
 } from '../dto-cours/complete-section.dto';
 import { NotificationService } from '../notification/notification.service';
 import { AchievementService } from '../achievement/achievement.service';
+import {
+  ChapterAccessContext,
+  ChapterAccessService,
+} from '../common/services/chapter-access.service';
 
 @Injectable()
 export class CourseEnrollmentService {
@@ -42,6 +46,7 @@ export class CourseEnrollmentService {
     private readonly notificationService: NotificationService,
     private readonly achievementService: AchievementService,
     private readonly trackingService: ContentTrackingService,
+    private readonly chapterAccessService: ChapterAccessService,
   ) {}
 
   private async resolveCourse(courseId: string): Promise<CoursDocument> {
@@ -108,6 +113,81 @@ export class CourseEnrollmentService {
     // Canonical storage is minutes in course chapter payloads.
     // For legacy data that stored seconds, keep values > 600 as seconds directly.
     return rawDuration > 600 ? Math.floor(rawDuration) : Math.floor(rawDuration * 60);
+  }
+
+  private findChapterInCourse(course: CoursDocument, chapterId: string): {
+    chapter: any;
+    section: any;
+    chapterIndex: number;
+  } | null {
+    const ordered = this.chapterAccessService.getOrderedChapterDescriptors(course);
+    const descriptor = ordered.find(
+      (entry) => String(entry.chapter?.id) === String(chapterId),
+    );
+    if (!descriptor) {
+      return null;
+    }
+
+    return {
+      chapter: descriptor.chapter,
+      section: descriptor.section,
+      chapterIndex: descriptor.index,
+    };
+  }
+
+  private async buildAccessContext(
+    userId: string,
+    course: CoursDocument,
+  ): Promise<ChapterAccessContext> {
+    return this.chapterAccessService.buildAccessContext(userId, course);
+  }
+
+  private assertChapterAccessForMutation(
+    context: ChapterAccessContext,
+    chapterId: string,
+  ): void {
+    const access = this.chapterAccessService.evaluateChapterAccess(
+      context,
+      chapterId,
+    );
+    if (!access.canAccess) {
+      throw new BadRequestException({
+        code: 'CHAPTER_LOCKED',
+        lockCode: access.lockCode,
+        message: access.reason,
+        reason: access.reason,
+        requiredChapter: access.requiredChapter,
+      });
+    }
+  }
+
+  private resolveChapterWatchMetrics(
+    course: CoursDocument,
+    chapterId: string,
+    progress?: any,
+  ): {
+    watchTimeSeconds: number;
+    durationSeconds: number;
+    watchPercentage: number;
+  } {
+    const chapterNode = this.findChapterInCourse(course, chapterId);
+    if (!chapterNode) {
+      throw new NotFoundException('Chapitre non trouvé');
+    }
+
+    const watchTimeSeconds = Math.max(0, Number(progress?.watchTime || 0));
+    const durationSeconds = this.normalizeChapterDurationSeconds(
+      chapterNode.chapter,
+      progress,
+    );
+    const watchPercentage =
+      durationSeconds > 0 ? (watchTimeSeconds / durationSeconds) * 100 : 0;
+
+    return {
+      watchTimeSeconds,
+      durationSeconds,
+      watchPercentage,
+    };
   }
 
   private async maybeTrackCourseCompletion(
@@ -212,16 +292,16 @@ export class CourseEnrollmentService {
     // Vérifier que le cours existe
     const course = await this.resolveCourse(courseId);
 
-    // Vérifier que la section existe dans le cours
-    const section = course.sections.find((s) => s.id === sectionId);
-    if (!section) {
-      throw new NotFoundException('Section non trouvée dans ce cours');
+    const chapterNode = this.findChapterInCourse(course, chapterId);
+    if (!chapterNode) {
+      throw new NotFoundException('Chapitre non trouvé dans ce cours');
     }
-
-    // Vérifier que le chapitre existe dans la section
-    const chapter = section.chapitres.find((c) => c.id === chapterId);
-    if (!chapter) {
-      throw new NotFoundException('Chapitre non trouvé dans cette section');
+    const chapter = chapterNode.chapter;
+    const section = chapterNode.section;
+    if (String(section.id) !== String(sectionId)) {
+      throw new BadRequestException(
+        'Le chapitre ne correspond pas à la section demandée',
+      );
     }
 
     // Vérifier si l'utilisateur est inscrit au cours
@@ -237,37 +317,8 @@ export class CourseEnrollmentService {
       );
     }
 
-    // Vérifier l'accès séquentiel si activé
-    if (course.sequentialProgression) {
-      console.log(
-        `🔒 [CourseEnrollmentService] Vérification de l'accès séquentiel pour le chapitre ${chapterId}`,
-      );
-
-      const accessCheck = course.verifierAccesChapitre(
-        chapterId,
-        enrollment.progression,
-      );
-
-      if (!accessCheck.hasAccess) {
-        console.log(
-          `❌ [CourseEnrollmentService] Accès refusé - ${accessCheck.reason}`,
-        );
-
-        let errorMessage = 'Vous ne pouvez pas accéder à ce chapitre.';
-
-        if (accessCheck.requiredChapter) {
-          errorMessage = `Vous devez compléter le chapitre "${accessCheck.requiredChapter.titre}" avant d'accéder à ce chapitre.`;
-        }
-
-        if (course.unlockMessage) {
-          errorMessage = course.unlockMessage;
-        }
-
-        throw new BadRequestException(errorMessage);
-      }
-
-      console.log(`✅ [CourseEnrollmentService] Accès séquentiel autorisé`);
-    }
+    const accessContext = await this.buildAccessContext(userId, course);
+    this.assertChapterAccessForMutation(accessContext, chapterId);
 
     // Vérifier si une progression existe déjà pour ce chapitre
     const existingProgress = enrollment.progression.find(
@@ -302,8 +353,11 @@ export class CourseEnrollmentService {
 
       // Mettre à jour la progression existante
       progress.lastAccessedAt = new Date();
-      if (startChapterDto.watchTime !== undefined) {
-        progress.watchTime = startChapterDto.watchTime;
+      if (
+        startChapterDto.watchTime !== undefined &&
+        Number(startChapterDto.watchTime) > Number(progress.watchTime || 0)
+      ) {
+        progress.watchTime = Math.floor(startChapterDto.watchTime);
       }
       progress.updatedAt = new Date();
     }
@@ -540,25 +594,14 @@ export class CourseEnrollmentService {
    * Marquer un chapitre comme terminé
    */
   async completeChapter(userId: string, courseId: string, chapterId: string) {
-    // Vérifier que le cours existe - support both custom id and MongoDB _id
-    let course = await this.coursModel.findOne({ id: courseId });
-    if (!course) {
-      try {
-        course = await this.coursModel.findById(courseId);
-      } catch (e) {
-        // Invalid ObjectId format, ignore
-      }
-    }
+    const course = await this.resolveCourse(courseId);
     if (!course) {
       throw new NotFoundException('Cours non trouvé');
     }
 
-    // Use the actual MongoDB _id for enrollment lookup
-    const courseMongoId = course._id;
-
     const enrollment = await this.courseEnrollmentModel.findOne({
       userId: new Types.ObjectId(userId),
-      courseId: courseMongoId,
+      courseId: course._id,
       isActive: true,
     });
 
@@ -566,80 +609,56 @@ export class CourseEnrollmentService {
       throw new NotFoundException('Inscription au cours non trouvée');
     }
 
-    const chapterProgressBefore = new Map(
-      (enrollment.progression || []).map((p) => [
-        p.chapterId,
-        {
-          isCompleted: Boolean(p?.isCompleted),
-          watchTime: Number(p?.watchTime || 0),
-        },
-      ]),
-    );
-
-    // Vérifier l'accès séquentiel si activé
-    if (course.sequentialProgression) {
-      console.log(
-        `🔒 [CourseEnrollmentService] Vérification de l'accès séquentiel pour compléter le chapitre ${chapterId}`,
-      );
-
-      const accessCheck = course.verifierAccesChapitre(
-        chapterId,
-        enrollment.progression,
-      );
-
-      if (!accessCheck.hasAccess) {
-        console.log(
-          `❌ [CourseEnrollmentService] Accès refusé pour compléter - ${accessCheck.reason}`,
-        );
-
-        let errorMessage = 'Vous ne pouvez pas compléter ce chapitre.';
-
-        if (accessCheck.requiredChapter) {
-          errorMessage = `Vous devez compléter le chapitre "${accessCheck.requiredChapter.titre}" avant de pouvoir compléter ce chapitre.`;
-        }
-
-        if (course.unlockMessage) {
-          errorMessage = course.unlockMessage;
-        }
-
-        throw new BadRequestException(errorMessage);
-      }
-
-      console.log(
-        `✅ [CourseEnrollmentService] Accès séquentiel autorisé pour compléter`,
-      );
+    const chapterNode = this.findChapterInCourse(course, chapterId);
+    if (!chapterNode) {
+      throw new NotFoundException('Chapitre non trouvé');
     }
+
+    const accessContext = await this.buildAccessContext(userId, course);
+    this.assertChapterAccessForMutation(accessContext, chapterId);
 
     const existingProgress = enrollment.progression.find(
       (p) => p.chapterId === chapterId,
     );
+    if (!existingProgress) {
+      throw new BadRequestException({
+        code: 'WATCH_THRESHOLD_NOT_MET',
+        message:
+          'Impossible de terminer ce chapitre sans progression de visionnage.',
+        chapterId,
+        watchPercentage: 0,
+        requiredPercentage: this.AUTO_COMPLETE_THRESHOLD,
+      });
+    }
+
+    const watchMetrics = this.resolveChapterWatchMetrics(
+      course,
+      chapterId,
+      existingProgress,
+    );
+    if (watchMetrics.watchPercentage < this.AUTO_COMPLETE_THRESHOLD) {
+      throw new BadRequestException({
+        code: 'WATCH_THRESHOLD_NOT_MET',
+        message:
+          `Vous devez regarder au moins ${this.AUTO_COMPLETE_THRESHOLD}% du chapitre avant de le terminer.`,
+        chapterId,
+        watchPercentage: Math.round(watchMetrics.watchPercentage * 100) / 100,
+        requiredPercentage: this.AUTO_COMPLETE_THRESHOLD,
+      });
+    }
+
     const hadWatchBefore = Number(existingProgress?.watchTime ?? 0) > 0;
     const wasCompletedBefore = Boolean(existingProgress?.isCompleted);
-    let progress = existingProgress;
-    if (!progress) {
-      progress = {
-        id: new Types.ObjectId().toString(),
-        enrollmentId: enrollment._id,
-        chapterId: chapterId,
-        isCompleted: true,
-        watchTime: 0,
-        lastAccessedAt: new Date(),
-        createdAt: new Date(),
-        updatedAt: new Date(),
-        completedAt: new Date(),
-      };
-
-      enrollment.progression.push(progress);
-    } else {
-      progress.isCompleted = true;
-      progress.completedAt = new Date();
-      progress.updatedAt = new Date();
-    }
+    existingProgress.isCompleted = true;
+    existingProgress.completedAt = new Date();
+    existingProgress.updatedAt = new Date();
+    existingProgress.lastAccessedAt = new Date();
 
     await enrollment.save();
 
     const trackingCourseId = this.getCourseTrackingId(course);
-    const chapterJustCompleted = !wasCompletedBefore && Boolean(progress?.isCompleted);
+    const chapterJustCompleted =
+      !wasCompletedBefore && Boolean(existingProgress?.isCompleted);
 
     if (!hadWatchBefore && chapterJustCompleted) {
       try {
@@ -705,7 +724,7 @@ export class CourseEnrollmentService {
       success: true,
       message: 'Chapitre marqué comme terminé',
       chapterId: chapterId,
-      completedAt: progress.completedAt,
+      completedAt: existingProgress.completedAt,
       courseJustCompleted,
     };
   }
@@ -731,55 +750,35 @@ export class CourseEnrollmentService {
       );
     }
 
-    // Verify course exists - support both custom id and MongoDB _id
-    let course = await this.coursModel.findOne({ id: courseId });
-    if (!course) {
-      // Try finding by MongoDB _id if not found by custom id
-      try {
-        course = await this.coursModel.findById(courseId);
-      } catch (e) {
-        // Invalid ObjectId format, ignore
-      }
-    }
+    const course = await this.resolveCourse(courseId);
     if (!course) {
       throw new NotFoundException('Cours non trouvé');
     }
 
-    // Use the actual MongoDB _id for enrollment lookup
-    const courseMongoId = course._id;
+    const chapterNode = this.findChapterInCourse(course, chapterId);
+    if (!chapterNode) {
+      throw new NotFoundException('Chapitre non trouvé');
+    }
 
-    let enrollment = await this.courseEnrollmentModel.findOne({
+    const enrollment = await this.courseEnrollmentModel.findOne({
       userId: new Types.ObjectId(userId),
-      courseId: courseMongoId,
+      courseId: course._id,
       isActive: true,
     });
 
-    // Auto-create enrollment if it doesn't exist (for free courses or already purchased)
     if (!enrollment) {
-      console.log(
-        `📝 [CourseEnrollmentService] Auto-creating enrollment for user ${userId} in course ${courseId}`,
-      );
-
-      enrollment = new this.courseEnrollmentModel({
-        id: new Types.ObjectId().toString(),
-        userId: new Types.ObjectId(userId),
-        courseId: courseMongoId,
-        isActive: true,
-        enrolledAt: new Date(),
-        progression: [],
-      });
-
-      await enrollment.save();
-      console.log(
-        `✅ [CourseEnrollmentService] Enrollment auto-created successfully`,
+      throw new BadRequestException(
+        'Vous devez être inscrit au cours avant de sauvegarder votre progression.',
       );
     }
+
+    const accessContext = await this.buildAccessContext(userId, course);
+    this.assertChapterAccessForMutation(accessContext, chapterId);
 
     let progress = enrollment.progression.find(
       (p) => p.chapterId === chapterId,
     );
 
-    // If progress doesn't exist, create it
     if (!progress) {
       console.log(
         `📊 [CourseEnrollmentService] Création d'une nouvelle progression pour le chapitre ${chapterId} lors de la mise à jour du temps`,
@@ -804,12 +803,8 @@ export class CourseEnrollmentService {
 
     const normalizedWatchTimeSeconds = Math.floor(watchTime);
     const currentProgression = Number(progress.watchTime ?? 0);
-    
-    // Only update if the new watch time is greater than what we already have saved
-    // CRITICAL FIX: If already completed, DO NOT overwrite/revert progress unless explicitly forced.
-    // However, if the user re-watches, we might want to track that, BUT NEVER unset isCompleted.
-    // The High-Water Mark logic handles the `watchTime` value itself (line 567), but we must ensure `isCompleted` sticks.
-    
+
+    // Store monotonically increasing watch time only.
     if (normalizedWatchTimeSeconds > currentProgression) {
       const deltaSeconds = normalizedWatchTimeSeconds - currentProgression;
       progress.watchTime = normalizedWatchTimeSeconds;
@@ -850,41 +845,29 @@ export class CourseEnrollmentService {
     // Get chapter duration for percentage calculation
     let chapterDurationSeconds: number | undefined = undefined;
 
-    if (course) {
-      // Find the chapter to get its stored duration or update it
-      for (let sIdx = 0; sIdx < course.sections.length; sIdx++) {
-        const section = course.sections[sIdx];
-        const cIdx = section.chapitres.findIndex((c) => c.id === chapterId);
-        if (cIdx !== -1) {
-          const chapter = section.chapitres[cIdx];
-
-          // If videoDuration is provided from client, keep a canonical minute value in chapter data
-          // and save exact seconds on enrollment progression entry.
-          if (videoDuration && videoDuration > 0) {
-            const normalizedMinutes = Math.max(1, Math.round(videoDuration / 60));
-            if (
-              !chapter.duree ||
-              chapter.duree <= 0 ||
-              Math.abs(Number(chapter.duree) - normalizedMinutes) >= 1
-            ) {
-              console.log(
-                `📝 [CourseEnrollmentService] Normalizing chapter ${chapterId} duration to ${normalizedMinutes} minutes (${videoDuration}s)`,
-              );
-              course.sections[sIdx].chapitres[cIdx].duree = normalizedMinutes;
-              course.markModified('sections');
-              await course.save();
-            }
-            (progress as any).videoDuration = Math.floor(videoDuration);
-          }
-          chapterDurationSeconds = this.normalizeChapterDurationSeconds(
-            chapter,
-            progress,
-            videoDuration,
-          );
-          break;
-        }
+    // If videoDuration is provided from client, keep a canonical minute value in chapter data
+    // and save exact seconds on enrollment progression entry.
+    if (videoDuration && videoDuration > 0) {
+      const normalizedMinutes = Math.max(1, Math.round(videoDuration / 60));
+      if (
+        !chapterNode.chapter.duree ||
+        chapterNode.chapter.duree <= 0 ||
+        Math.abs(Number(chapterNode.chapter.duree) - normalizedMinutes) >= 1
+      ) {
+        console.log(
+          `📝 [CourseEnrollmentService] Normalizing chapter ${chapterId} duration to ${normalizedMinutes} minutes (${videoDuration}s)`,
+        );
+        chapterNode.chapter.duree = normalizedMinutes;
+        course.markModified('sections');
+        await course.save();
       }
+      (progress as any).videoDuration = Math.floor(videoDuration);
     }
+    chapterDurationSeconds = this.normalizeChapterDurationSeconds(
+      chapterNode.chapter,
+      progress,
+      videoDuration,
+    );
 
     if (
       !progress.isCompleted &&
@@ -1049,15 +1032,37 @@ export class CourseEnrollmentService {
       });
     }
 
-    // Vérifier la progression de chaque chapitre
+    const accessContext = await this.buildAccessContext(userId, course);
+
+    // Vérifier la progression de chaque chapitre (completion réelle: >=90% + accès autorisé)
     const chaptersProgress = sectionChapters.map((chapter) => {
       const progress = enrollment.progression.find(
         (p) => p.chapterId === chapter.id,
       );
+
+      let isCompleted = Boolean(progress?.isCompleted);
+      if (isCompleted && progress) {
+        const access = this.chapterAccessService.evaluateChapterAccess(
+          accessContext,
+          chapter.id,
+        );
+        const watchMetrics = this.resolveChapterWatchMetrics(
+          course,
+          chapter.id,
+          progress,
+        );
+        if (
+          !access.canAccess ||
+          watchMetrics.watchPercentage < this.AUTO_COMPLETE_THRESHOLD
+        ) {
+          isCompleted = false;
+        }
+      }
+
       return {
         chapterId: chapter.id,
         chapterTitle: chapter.titre,
-        isCompleted: progress ? progress.isCompleted : false,
+        isCompleted,
         progress: progress,
       };
     });
@@ -1075,8 +1080,13 @@ export class CourseEnrollmentService {
     // Vérifier si tous les chapitres sont terminés
     const allChaptersCompleted = chaptersCompleted === totalChapters;
     const forceComplete = completeSectionDto.forceComplete || false;
+    if (forceComplete) {
+      throw new BadRequestException(
+        'forceComplete n’est plus autorisé pour les utilisateurs.',
+      );
+    }
 
-    if (!allChaptersCompleted && !forceComplete) {
+    if (!allChaptersCompleted) {
       console.log(
         `   ⚠️ Section non complète - tous les chapitres doivent être terminés`,
       );
@@ -1092,40 +1102,6 @@ export class CourseEnrollmentService {
         totalChapters: totalChapters,
         completionPercentage: Math.round(completionPercentage * 100) / 100,
       };
-    }
-
-    // Si on force la completion ou si tous les chapitres sont terminés
-    if (forceComplete && !allChaptersCompleted) {
-      console.log(`   🔧 Forçage de la completion de la section`);
-
-      // Marquer tous les chapitres non terminés comme terminés
-      for (const chapterProgress of chaptersProgress) {
-        if (!chapterProgress.isCompleted) {
-          let progress = enrollment.progression.find(
-            (p) => p.chapterId === chapterProgress.chapterId,
-          );
-
-          if (!progress) {
-            // Créer une nouvelle progression pour ce chapitre
-            progress = {
-              id: new Types.ObjectId().toString(),
-              enrollmentId: enrollment._id,
-              chapterId: chapterProgress.chapterId,
-              isCompleted: true,
-              watchTime: 0,
-              lastAccessedAt: new Date(),
-              createdAt: new Date(),
-              updatedAt: new Date(),
-            };
-            enrollment.progression.push(progress);
-          } else {
-            // Marquer la progression existante comme terminée
-            progress.isCompleted = true;
-            progress.completedAt = new Date();
-            progress.updatedAt = new Date();
-          }
-        }
-      }
     }
 
     // Sauvegarder l'inscription

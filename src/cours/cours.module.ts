@@ -17,6 +17,7 @@ import { TrackingModule } from '../common/modules/tracking.module';
 import { PolicyModule } from '../common/modules/policy.module';
 import { FeeModule } from '../common/modules/fee.module';
 import { PromoModule } from '../common/modules/promo.module';
+import { ChapterAccessModule } from '../common/modules/chapter-access.module';
 import { AchievementModule } from '../achievement/achievement.module';
 
 @Module({
@@ -64,6 +65,7 @@ import { AchievementModule } from '../achievement/achievement.module';
     PolicyModule,
     FeeModule,
     PromoModule,
+    ChapterAccessModule,
     AchievementModule
   ],
   controllers: [CoursController],

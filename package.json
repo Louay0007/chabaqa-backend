@@ -36,7 +36,8 @@
     "export:db": "node scripts/export-database.js",
     "audit:media": "node scripts/audit-media-integrity.js",
     "backfill:media": "node scripts/backfill-media-assets.js",
-    "backfill:chapter-entitlements": "ts-node src/common/scripts/backfill-chapter-entitlements.ts"
+    "backfill:chapter-entitlements": "ts-node src/common/scripts/backfill-chapter-entitlements.ts",
+    "repair:course-progression": "ts-node src/common/scripts/repair-course-progression.ts"
   },
   "dependencies": {
     "@nestjs/cache-manager": "^3.0.1",

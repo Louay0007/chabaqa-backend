@@ -1,11 +1,16 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, Res } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { MonitoringService } from '../services/monitoring.service';
+import { SecurityService } from '../services/security.service';
+import { Response } from 'express';
 
 @ApiTags('Health & Monitoring')
 @Controller('metrics')
 export class MetricsController {
-  constructor(private monitoringService: MonitoringService) {}
+  constructor(
+    private monitoringService: MonitoringService,
+    private securityService: SecurityService,
+  ) {}
 
   @Get()
   @ApiOperation({
@@ -153,8 +158,9 @@ export class MetricsController {
       }
     }
   })
-  getPrometheusMetrics(): string {
+  getPrometheusMetrics(@Res() res: Response): void {
     const metrics = this.monitoringService.getMetrics();
+    const securityMetrics = this.securityService.getSecurityMetrics();
 
     let output = `# Shabaka Application Metrics\n`;
 
@@ -190,6 +196,37 @@ export class MetricsController {
     const cpuMetrics = this.monitoringService.getCPUUsage();
     output += `shabaka_cpu_usage_percent ${cpuMetrics.usage}\n\n`;
 
-    return output;
+    // Security event metrics
+    output += `# HELP shabaka_security_events_total Total number of security events\n`;
+    output += `# TYPE shabaka_security_events_total counter\n`;
+    output += `shabaka_security_events_total ${securityMetrics.total}\n\n`;
+
+    output += `# HELP shabaka_security_attack_events_total Total number of attack-related security events\n`;
+    output += `# TYPE shabaka_security_attack_events_total counter\n`;
+    output += `shabaka_security_attack_events_total ${securityMetrics.attackTotal}\n\n`;
+
+    output += `# HELP shabaka_security_events_by_level_total Security events grouped by level\n`;
+    output += `# TYPE shabaka_security_events_by_level_total counter\n`;
+    for (const [level, count] of Object.entries(securityMetrics.byLevel)) {
+      output += `shabaka_security_events_by_level_total{level="${this.escapeLabelValue(level)}"} ${count}\n`;
+    }
+    output += `\n`;
+
+    output += `# HELP shabaka_security_event_total Security events grouped by event and level\n`;
+    output += `# TYPE shabaka_security_event_total counter\n`;
+    for (const eventMetric of securityMetrics.byEvent) {
+      output += `shabaka_security_event_total{event="${this.escapeLabelValue(eventMetric.event)}",level="${this.escapeLabelValue(eventMetric.level)}"} ${eventMetric.count}\n`;
+    }
+    output += `\n`;
+
+    res.setHeader('Content-Type', 'text/plain; version=0.0.4; charset=utf-8');
+    res.send(output);
+  }
+
+  private escapeLabelValue(value: string): string {
+    return value
+      .replace(/\\/g, '\\\\')
+      .replace(/\n/g, '\\n')
+      .replace(/"/g, '\\"');
   }
 }

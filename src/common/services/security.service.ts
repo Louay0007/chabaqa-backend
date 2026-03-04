@@ -5,6 +5,22 @@ import * as bcrypt from 'bcryptjs';
 @Injectable()
 export class SecurityService {
   private readonly logger = new Logger(SecurityService.name);
+  private readonly securityEventCounters = new Map<string, number>();
+  private readonly securityLevelCounters: Record<'info' | 'warn' | 'error', number> = {
+    info: 0,
+    warn: 0,
+    error: 0,
+  };
+  private securityAttackEventsTotal = 0;
+
+  private readonly attackEventPatterns: RegExp[] = [
+    /ATTACK/i,
+    /BLOCKED/i,
+    /^BOT_/i,
+    /^MALICIOUS_/i,
+    /^IP_TEMPORARILY_BLOCKED$/i,
+    /^SUSPICIOUS_ACTIVITY_DETECTED$/i,
+  ];
 
   constructor(private configService: ConfigService) {
     this.logger.log('Security service initialized');
@@ -70,6 +86,8 @@ export class SecurityService {
    * Log security event
    */
   logSecurityEvent(event: string, details: any, level: 'info' | 'warn' | 'error' = 'info') {
+    this.incrementSecurityMetrics(event, level);
+
     const logEntry = {
       timestamp: new Date().toISOString(),
       event,
@@ -95,6 +113,36 @@ export class SecurityService {
   private async sendToSecurityMonitor(logEntry: any) {
     // Implementation for external security monitoring
     // Could send to SIEM, Splunk, or custom security dashboard
+  }
+
+  getSecurityMetrics() {
+    const byEvent = Array.from(this.securityEventCounters.entries()).map(([key, count]) => {
+      const [event, level] = key.split('|');
+      return { event, level: level as 'info' | 'warn' | 'error', count };
+    });
+
+    return {
+      total: byEvent.reduce((sum, item) => sum + item.count, 0),
+      attackTotal: this.securityAttackEventsTotal,
+      byLevel: { ...this.securityLevelCounters },
+      byEvent,
+    };
+  }
+
+  private incrementSecurityMetrics(event: string, level: 'info' | 'warn' | 'error') {
+    const key = `${event}|${level}`;
+    const current = this.securityEventCounters.get(key) ?? 0;
+    this.securityEventCounters.set(key, current + 1);
+
+    this.securityLevelCounters[level] += 1;
+
+    if (this.isAttackEvent(event)) {
+      this.securityAttackEventsTotal += 1;
+    }
+  }
+
+  private isAttackEvent(event: string): boolean {
+    return this.attackEventPatterns.some((pattern) => pattern.test(event));
   }
 
   /**
