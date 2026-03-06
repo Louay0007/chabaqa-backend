@@ -31,6 +31,26 @@ export class AdminInfoDto {
     example: '2023-07-01T10:00:00.000Z'
   })
   createdAt: Date;
+
+  @ApiPropertyOptional({
+    description: 'Whether admin 2FA is enabled for this account',
+    example: false,
+    default: false,
+  })
+  twoFactorEnabled?: boolean;
+}
+
+export class AdminCapabilitiesDto {
+  @ApiProperty({ example: true }) dashboard: boolean;
+  @ApiProperty({ example: true }) users: boolean;
+  @ApiProperty({ example: true }) communities: boolean;
+  @ApiProperty({ example: true }) contentModeration: boolean;
+  @ApiProperty({ example: true }) financial: boolean;
+  @ApiProperty({ example: true }) analytics: boolean;
+  @ApiProperty({ example: true }) security: boolean;
+  @ApiProperty({ example: true }) communication: boolean;
+  @ApiProperty({ example: true }) liveSupport: boolean;
+  @ApiProperty({ example: true }) settings: boolean;
 }
 
 export class AdminLoginResponseDto {
@@ -51,6 +71,26 @@ export class AdminLoginResponseDto {
     type: AdminInfoDto
   })
   admin?: AdminInfoDto;
+
+  @ApiPropertyOptional({
+    description: 'Normalized admin roles for the admin console',
+    example: ['super_admin'],
+    type: [String],
+  })
+  roles?: string[];
+
+  @ApiPropertyOptional({
+    description: 'Normalized admin permissions for the admin console',
+    example: ['*'],
+    type: [String],
+  })
+  permissions?: string[];
+
+  @ApiPropertyOptional({
+    description: 'Admin capability flags for the frontend console',
+    type: AdminCapabilitiesDto,
+  })
+  capabilities?: AdminCapabilitiesDto;
 
   @ApiPropertyOptional({
     description: 'Indicates if 2FA verification is required',

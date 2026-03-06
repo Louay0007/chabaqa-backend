@@ -1,7 +1,12 @@
 import { IsOptional, IsEnum, IsArray, IsDateString, IsNumber, Min, IsString } from 'class-validator';
 import { ApiPropertyOptional, ApiProperty } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import { PayoutStatus, PayoutMethod } from '../../../schema/payout.schema';
+
+enum SortDirection {
+  ASC = 'asc',
+  DESC = 'desc',
+}
 
 export class PayoutFiltersDto {
   @ApiPropertyOptional({
@@ -33,6 +38,10 @@ export class PayoutFiltersDto {
     description: 'Filter by payout status',
   })
   @IsOptional()
+  @Transform(({ value }) => {
+    if (value === undefined || value === null || value === '') return undefined;
+    return Array.isArray(value) ? value : [value];
+  })
   @IsArray()
   @IsEnum(PayoutStatus, { each: true })
   status?: PayoutStatus[];
@@ -43,6 +52,10 @@ export class PayoutFiltersDto {
     description: 'Filter by payout method',
   })
   @IsOptional()
+  @Transform(({ value }) => {
+    if (value === undefined || value === null || value === '') return undefined;
+    return Array.isArray(value) ? value : [value];
+  })
   @IsArray()
   @IsEnum(PayoutMethod, { each: true })
   method?: PayoutMethod[];
@@ -88,6 +101,23 @@ export class PayoutFiltersDto {
   @Type(() => Number)
   @IsNumber()
   maxAmount?: number;
+
+  @ApiPropertyOptional({
+    description: 'Field to sort by',
+    enum: ['requestedAt', 'processedAt', 'scheduledFor', 'amount', 'status', 'method', 'createdAt', 'initiatedAt'],
+    default: 'requestedAt',
+  })
+  @IsOptional()
+  sortBy?: string;
+
+  @ApiPropertyOptional({
+    description: 'Sort direction',
+    enum: SortDirection,
+    default: 'desc',
+  })
+  @IsOptional()
+  @IsEnum(SortDirection)
+  sortOrder?: 'asc' | 'desc' = 'desc';
 }
 
 export class UpdatePayoutStatusDto {

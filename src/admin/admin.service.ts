@@ -22,6 +22,46 @@ import { getJwtRefreshSecret, getJwtSecret, isProductionEnvironment } from '../c
 import { AdminUser, AdminUserDocument, AdminRole, AdminPermission } from './schemas/admin-user.schema';
 import { AdminUserInfo } from './common/interfaces/admin-interfaces';
 
+export interface AdminCapabilities {
+  dashboard: boolean;
+  users: boolean;
+  communities: boolean;
+  contentModeration: boolean;
+  financial: boolean;
+  analytics: boolean;
+  security: boolean;
+  communication: boolean;
+  liveSupport: boolean;
+  settings: boolean;
+}
+
+export interface AdminSessionPayload {
+  admin: {
+    _id: string;
+    name: string;
+    email: string;
+    role: string;
+    createdAt: Date;
+    twoFactorEnabled: boolean;
+  };
+  roles: string[];
+  permissions: string[];
+  capabilities: AdminCapabilities;
+}
+
+const FULL_ADMIN_CAPABILITIES: AdminCapabilities = {
+  dashboard: true,
+  users: true,
+  communities: true,
+  contentModeration: true,
+  financial: true,
+  analytics: true,
+  security: true,
+  communication: true,
+  liveSupport: true,
+  settings: true,
+};
+
 @Injectable()
 export class AdminService {
   constructor(
@@ -122,6 +162,209 @@ export class AdminService {
     return { accessToken, refreshToken, rememberMe };
   }
 
+  private buildCapabilities(
+    roles: string[] = [],
+    permissions: string[] = [],
+  ): AdminCapabilities {
+    if (roles.includes(AdminRole.SUPER_ADMIN) || permissions.includes('*')) {
+      return { ...FULL_ADMIN_CAPABILITIES };
+    }
+
+    const capabilityRules: Record<keyof AdminCapabilities, { roles?: string[]; permissions?: string[] }> = {
+      dashboard: { roles: [AdminRole.SUPER_ADMIN], permissions: [] },
+      users: {
+        roles: [AdminRole.SUPER_ADMIN, AdminRole.USER_MANAGER],
+        permissions: [
+          AdminPermission.VIEW_USERS,
+          AdminPermission.USER_READ,
+          AdminPermission.USER_CREATE,
+          AdminPermission.USER_UPDATE,
+          AdminPermission.USER_DELETE,
+        ],
+      },
+      communities: {
+        roles: [AdminRole.SUPER_ADMIN, AdminRole.COMMUNITY_MANAGER],
+        permissions: [
+          AdminPermission.VIEW_COMMUNITIES,
+          AdminPermission.APPROVE_COMMUNITIES,
+          AdminPermission.REJECT_COMMUNITIES,
+          AdminPermission.MODERATE_COMMUNITIES,
+        ],
+      },
+      contentModeration: {
+        roles: [AdminRole.SUPER_ADMIN, AdminRole.CONTENT_MODERATOR, AdminRole.ANALYTICS_VIEWER],
+        permissions: [
+          AdminPermission.VIEW_CONTENT_QUEUE,
+          AdminPermission.APPROVE_CONTENT,
+          AdminPermission.REJECT_CONTENT,
+          AdminPermission.BULK_MODERATE_CONTENT,
+        ],
+      },
+      financial: {
+        roles: [AdminRole.SUPER_ADMIN, AdminRole.FINANCIAL_MANAGER],
+        permissions: [
+          AdminPermission.VIEW_FINANCIAL_DATA,
+          AdminPermission.PROCESS_PAYOUTS,
+          AdminPermission.HANDLE_DISPUTES,
+          AdminPermission.GENERATE_FINANCIAL_REPORTS,
+        ],
+      },
+      analytics: {
+        roles: [
+          AdminRole.SUPER_ADMIN,
+          AdminRole.ANALYTICS_VIEWER,
+          AdminRole.USER_MANAGER,
+          AdminRole.COMMUNITY_MANAGER,
+          AdminRole.FINANCIAL_MANAGER,
+        ],
+        permissions: [
+          AdminPermission.VIEW_ANALYTICS,
+          AdminPermission.ANALYTICS_READ,
+          AdminPermission.EXPORT_DATA,
+          AdminPermission.CONFIGURE_ALERTS,
+        ],
+      },
+      security: {
+        roles: [AdminRole.SUPER_ADMIN, AdminRole.SECURITY_AUDITOR],
+        permissions: [AdminPermission.VIEW_AUDIT_LOGS, AdminPermission.EXPORT_AUDIT_LOGS],
+      },
+      communication: {
+        roles: [AdminRole.SUPER_ADMIN],
+        permissions: [
+          AdminPermission.SEND_BULK_MESSAGES,
+          AdminPermission.MANAGE_EMAIL_CAMPAIGNS,
+          AdminPermission.MANAGE_NOTIFICATIONS,
+        ],
+      },
+      liveSupport: {
+        roles: [AdminRole.SUPER_ADMIN],
+        permissions: [AdminPermission.MANAGE_NOTIFICATIONS],
+      },
+      settings: { roles: [AdminRole.SUPER_ADMIN], permissions: [AdminPermission.MANAGE_ADMIN_USERS] },
+    };
+
+    const hasAny = (candidates: string[] = []) => candidates.some((candidate) => roles.includes(candidate) || permissions.includes(candidate));
+
+    return {
+      dashboard: true,
+      users: hasAny([...(capabilityRules.users.roles || []), ...(capabilityRules.users.permissions || [])]),
+      communities: hasAny([...(capabilityRules.communities.roles || []), ...(capabilityRules.communities.permissions || [])]),
+      contentModeration: hasAny([...(capabilityRules.contentModeration.roles || []), ...(capabilityRules.contentModeration.permissions || [])]),
+      financial: hasAny([...(capabilityRules.financial.roles || []), ...(capabilityRules.financial.permissions || [])]),
+      analytics: hasAny([...(capabilityRules.analytics.roles || []), ...(capabilityRules.analytics.permissions || [])]),
+      security: hasAny([...(capabilityRules.security.roles || []), ...(capabilityRules.security.permissions || [])]),
+      communication: hasAny([...(capabilityRules.communication.roles || []), ...(capabilityRules.communication.permissions || [])]),
+      liveSupport: hasAny([...(capabilityRules.liveSupport.roles || []), ...(capabilityRules.liveSupport.permissions || [])]),
+      settings: true,
+    };
+  }
+
+  private buildLegacyAdminInfo(admin: AdminDocument): AdminUserInfo {
+    return {
+      _id: admin._id,
+      userId: admin._id,
+      roles: [AdminRole.SUPER_ADMIN],
+      permissions: ['*'],
+      isActive: true,
+      email: admin.email,
+      name: admin.name,
+      role: admin.role,
+      authSource: 'legacy_admin',
+      capabilities: { ...FULL_ADMIN_CAPABILITIES },
+      user: {
+        _id: admin._id,
+        name: admin.name,
+        email: admin.email,
+        role: admin.role,
+        createdAt: admin.createdAt,
+      },
+    };
+  }
+
+  private buildSessionPayloadFromAdminInfo(adminInfo: AdminUserInfo): AdminSessionPayload {
+    const roles = [...new Set((adminInfo.roles || []).map((role) => String(role)))];
+    const permissions = [...new Set((adminInfo.permissions || []).map((permission) => String(permission)))];
+    const capabilities = adminInfo.capabilities || this.buildCapabilities(roles, permissions);
+    const adminProfile = adminInfo.user;
+
+    return {
+      admin: {
+        _id: String(adminProfile?._id || adminInfo._id),
+        name: adminProfile?.name || adminInfo.name || 'Admin',
+        email: adminProfile?.email || adminInfo.email || '',
+        role: adminInfo.role || adminProfile?.role || roles[0] || 'admin',
+        createdAt: adminProfile?.createdAt || adminInfo.lastLoginAt || adminInfo.lastActivityAt || new Date(),
+        twoFactorEnabled: process.env.ADMIN_ALLOW_PASSWORD_ONLY_LOGIN !== 'true',
+      },
+      roles,
+      permissions,
+      capabilities,
+    };
+  }
+
+  buildAdminSessionPayload(adminInfo: AdminUserInfo): AdminSessionPayload {
+    return this.buildSessionPayloadFromAdminInfo(adminInfo);
+  }
+
+  async getAdminSessionForLegacyAdmin(adminId: string): Promise<AdminSessionPayload> {
+    const admin = await this.adminModel.findById(adminId);
+
+    if (!admin) {
+      throw new UnauthorizedException('Administrateur non trouvé');
+    }
+
+    return this.buildSessionPayloadFromAdminInfo(this.buildLegacyAdminInfo(admin));
+  }
+
+  async getAdminSessionForRequestUser(user: any): Promise<AdminSessionPayload> {
+    const userId = String(user?.id || user?._id || user?.userId || user?.sub || '');
+
+    if (!user || !userId) {
+      throw new UnauthorizedException('Invalid user token');
+    }
+
+    if (user.isAdmin === true) {
+      return this.getAdminSessionForLegacyAdmin(userId);
+    }
+
+    const adminUser = await this.getAdminUser(userId);
+    if (!adminUser || !adminUser.isActive) {
+      throw new UnauthorizedException('Admin account is inactive');
+    }
+
+    return this.buildSessionPayloadFromAdminInfo(adminUser);
+  }
+
+  async getAdminContextForRequestUser(user: any): Promise<AdminUserInfo> {
+    const userId = String(user?.id || user?._id || user?.userId || user?.sub || '');
+
+    if (!user || !userId) {
+      throw new UnauthorizedException('Invalid user token');
+    }
+
+    if (user.isAdmin === true) {
+      const admin = await this.adminModel.findById(userId);
+      if (!admin) {
+        throw new UnauthorizedException('Administrateur non trouvé');
+      }
+      return this.buildLegacyAdminInfo(admin);
+    }
+
+    const adminUser = await this.getAdminUser(userId);
+    if (!adminUser || !adminUser.isActive) {
+      throw new UnauthorizedException('Admin account is inactive');
+    }
+
+    return {
+      ...adminUser,
+      authSource: 'admin_user',
+      capabilities: this.buildCapabilities(
+        (adminUser.roles || []).map((role) => String(role)),
+        (adminUser.permissions || []).map((permission) => String(permission)),
+      ),
+    };
+  }
+
   // login admin
   async loginAdmin(loginAdminDto: AdminLoginDto): Promise<AdminLoginResponseDto> {
     const admin = await this.validateAdmin(loginAdminDto.email, loginAdminDto.password);
@@ -152,18 +395,16 @@ export class AdminService {
     }
 
     const { accessToken, refreshToken, rememberMe } = this.generateTokens(admin, loginAdminDto.remember_me);
+    const session = await this.getAdminSessionForLegacyAdmin(admin._id.toString());
 
     return {
       access_token: accessToken,
       refresh_token: refreshToken,
       requires2FA: false,
-      admin: {
-        _id: admin._id.toString(),
-        name: admin.name,
-        email: admin.email,
-        role: admin.role,
-        createdAt: admin.createdAt,
-      },
+      admin: session.admin,
+      roles: session.roles,
+      permissions: session.permissions,
+      capabilities: session.capabilities,
       rememberMe,
       message: 'Connexion réussie',
     };
@@ -201,16 +442,14 @@ export class AdminService {
     await this.verificationCodeModel.deleteOne({ _id: verificationCodeData._id });
     // Générer les tokens
     const { accessToken, refreshToken } = this.generateTokens(admin, rememberMe);
+    const session = await this.getAdminSessionForLegacyAdmin(admin._id.toString());
     return {
       access_token: accessToken,
       refresh_token: refreshToken,
-      admin: {
-        _id: admin._id.toString(),
-        name: admin.name,
-        email: admin.email,
-        role: admin.role,
-        createdAt: admin.createdAt,
-      },
+      admin: session.admin,
+      roles: session.roles,
+      permissions: session.permissions,
+      capabilities: session.capabilities,
       rememberMe: rememberMe,
       message: rememberMe 
         ? 'Connexion réussie avec authentification à deux facteurs (session prolongée)'
@@ -218,7 +457,14 @@ export class AdminService {
     };
   }
   // refresh token
-  async refreshToken(refreshToken: string): Promise<{ access_token: string; expires_in: number }> {
+  async refreshToken(refreshToken: string): Promise<{
+    access_token: string;
+    expires_in: number;
+    admin: AdminSessionPayload['admin'];
+    roles: string[];
+    permissions: string[];
+    capabilities: AdminCapabilities;
+  }> {
     try {
       const payload = this.jwtService.verify(refreshToken, {
         secret: getJwtRefreshSecret(),
@@ -248,10 +494,15 @@ export class AdminService {
         expiresIn: '2h',
         secret: getJwtSecret(),
       });
+      const session = await this.getAdminSessionForLegacyAdmin(admin._id.toString());
 
       return {
         access_token: newAccessToken,
         expires_in: 2 * 60 * 60,
+        admin: session.admin,
+        roles: session.roles,
+        permissions: session.permissions,
+        capabilities: session.capabilities,
       };
     } catch (error) {
       throw new UnauthorizedException('Token de rafraîchissement invalide');
@@ -423,7 +674,7 @@ export class AdminService {
           userId: new Types.ObjectId(userId),
           isActive: true 
         })
-        .populate('userId', 'name email role')
+        .populate('userId', 'name email role createdAt')
         .exec();
 
       if (!adminUser) {
@@ -433,12 +684,16 @@ export class AdminService {
       return {
         _id: adminUser._id,
         userId: adminUser.userId,
-        roles: adminUser.roles,
+        roles: adminUser.roles.map((role) => String(role)),
         permissions: adminUser.permissions,
         isActive: adminUser.isActive,
         lastLoginAt: adminUser.lastLoginAt,
         lastActivityAt: adminUser.lastActivityAt,
-        user: adminUser.userId as any, // Populated user data
+        email: (adminUser.userId as any)?.email,
+        name: (adminUser.userId as any)?.name,
+        role: (adminUser.roles?.[0] as string) || (adminUser.userId as any)?.role,
+        authSource: 'admin_user',
+        user: adminUser.userId as any,
       };
     } catch (error) {
       console.error('Error getting admin user:', error);

@@ -1,6 +1,14 @@
 import { IsOptional, IsDateString, IsEnum, IsBoolean } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
+export class EngagementBreakdownItemDto {
+  @ApiProperty({ description: 'Metric label' })
+  metric: string;
+
+  @ApiProperty({ description: 'Metric value' })
+  value: number;
+}
+
 export class AnalyticsPeriodDto {
   @ApiPropertyOptional({
     description: 'Start date for analytics period (ISO string)',
@@ -75,6 +83,9 @@ export class EngagementMetricsDto {
 
   @ApiProperty({ description: 'Engagement rate percentage' })
   engagementRate: number;
+
+  @ApiProperty({ description: 'Backend-provided engagement chart breakdown', type: [EngagementBreakdownItemDto] })
+  breakdown: EngagementBreakdownItemDto[];
 }
 
 export class RetentionAnalysisDto {
@@ -126,6 +137,9 @@ export class DashboardResponseDto {
 
   @ApiProperty({ description: 'System health metrics' })
   healthMetrics: any;
+
+  @ApiProperty({ description: 'User growth details including breakdown' })
+  userGrowth: any;
 
   @ApiProperty({ description: 'Generated at timestamp' })
   generatedAt: Date;

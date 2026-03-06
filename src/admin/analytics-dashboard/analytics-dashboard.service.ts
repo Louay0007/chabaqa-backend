@@ -4,7 +4,6 @@ import { Model, Types } from 'mongoose';
 import { 
   AnalyticsService, 
   TimePeriod,
-  GrowthMetrics,
   EngagementMetrics,
   RevenueMetrics,
   HealthMetrics
@@ -17,7 +16,6 @@ import {
   EngagementMetricsDto,
   RetentionAnalysisDto,
   DashboardResponseDto,
-  CohortData
 } from './dto/analytics-dashboard.dto';
 import {
   CreateAlertDto,
@@ -60,7 +58,7 @@ export class AnalyticsDashboardService {
       this.analyticsService.getRevenueAnalytics(period),
       this.analyticsService.getPlatformHealth(),
       this.calculatePlatformStatistics(period),
-      this.calculateRetentionAnalysis(period)
+      this.analyticsService.getRetentionMetrics(period),
     ]);
 
     return {
@@ -69,6 +67,7 @@ export class AnalyticsDashboardService {
       retentionAnalysis,
       revenueMetrics: revenue,
       healthMetrics: health,
+      userGrowth,
       generatedAt: new Date()
     };
   }
@@ -78,19 +77,19 @@ export class AnalyticsDashboardService {
    * Requirements: 5.1
    */
   async calculatePlatformStatistics(period: TimePeriod): Promise<PlatformStatisticsDto> {
-    const [userGrowth, revenue, health] = await Promise.all([
+    const [userGrowth, revenue, health, contentMetrics] = await Promise.all([
       this.analyticsService.calculateUserGrowth(period),
       this.analyticsService.getRevenueAnalytics(period),
-      this.analyticsService.getPlatformHealth()
+      this.analyticsService.getPlatformHealth(),
+      this.analyticsService.getPlatformContentMetrics(),
     ]);
 
-    // Calculate health score based on multiple factors
     const healthScore = this.calculateHealthScore(health);
 
     return {
       totalUsers: userGrowth.totalUsers,
-      totalCommunities: Math.floor(100 + Math.random() * 500), // Mock data
-      totalContent: Math.floor(1000 + Math.random() * 5000), // Mock data
+      totalCommunities: userGrowth.totalCommunities,
+      totalContent: contentMetrics.totalContent,
       totalRevenue: revenue.totalRevenue,
       activeUsers: userGrowth.activeUsers,
       newUsers: userGrowth.newUsers,
@@ -113,26 +112,7 @@ export class AnalyticsDashboardService {
    * Requirements: 5.3
    */
   async calculateRetentionAnalysis(period: TimePeriod): Promise<RetentionAnalysisDto> {
-    // In a real implementation, this would query actual user activity data
-    // For now, we'll generate realistic mock data
-    
-    const day1Retention = 0.6 + Math.random() * 0.2; // 60-80%
-    const day7Retention = 0.4 + Math.random() * 0.2; // 40-60%
-    const day30Retention = 0.2 + Math.random() * 0.2; // 20-40%
-    const overallRetention = (day1Retention + day7Retention + day30Retention) / 3;
-    const churnRate = 1 - overallRetention;
-
-    // Generate cohort analysis data
-    const cohortAnalysis = this.generateCohortAnalysis(period);
-
-    return {
-      day1Retention: Math.round(day1Retention * 100) / 100,
-      day7Retention: Math.round(day7Retention * 100) / 100,
-      day30Retention: Math.round(day30Retention * 100) / 100,
-      overallRetention: Math.round(overallRetention * 100) / 100,
-      churnRate: Math.round(churnRate * 100) / 100,
-      cohortAnalysis
-    };
+    return this.analyticsService.getRetentionMetrics(period);
   }
 
   /**
@@ -340,7 +320,7 @@ export class AnalyticsDashboardService {
    */
   private mapEngagementMetrics(engagement: EngagementMetrics): EngagementMetricsDto {
     const engagementRate = engagement.totalSessions > 0
-      ? (engagement.contentInteractions / engagement.totalSessions) * 100
+      ? engagement.contentInteractions / engagement.totalSessions
       : 0;
 
     return {
@@ -350,7 +330,13 @@ export class AnalyticsDashboardService {
       bounceRate: engagement.bounceRate,
       contentInteractions: engagement.contentInteractions,
       communityParticipation: engagement.communityParticipation,
-      engagementRate: Math.round(engagementRate * 100) / 100
+      engagementRate: Number(engagementRate.toFixed(4)),
+      breakdown: [
+        { metric: 'Sessions', value: engagement.totalSessions },
+        { metric: 'Page Views', value: engagement.pageViews },
+        { metric: 'Interactions', value: engagement.contentInteractions },
+        { metric: 'Communities', value: engagement.communityParticipation },
+      ],
     };
   }
 
@@ -358,15 +344,17 @@ export class AnalyticsDashboardService {
    * Helper: Calculate health score from health metrics
    */
   private calculateHealthScore(health: HealthMetrics): number {
+    const normalizeRatio = (value: number) => (value > 1 ? value / 100 : value);
+
     // Weight different factors
     const uptimeScore = health.systemUptime;
     const responseTimeScore = Math.max(0, 100 - (health.averageResponseTime / 5));
     const errorRateScore = Math.max(0, 100 - (health.errorRate * 2000));
     const resourceScore = (
-      (1 - health.serverResources.cpuUsage) * 25 +
-      (1 - health.serverResources.memoryUsage) * 25 +
-      (1 - health.serverResources.diskUsage) * 25 +
-      health.databasePerformance.indexEfficiency * 25
+      (1 - normalizeRatio(health.serverResources.cpuUsage)) * 25 +
+      (1 - normalizeRatio(health.serverResources.memoryUsage)) * 25 +
+      (1 - normalizeRatio(health.serverResources.diskUsage)) * 25 +
+      normalizeRatio(health.databasePerformance.indexEfficiency) * 25
     );
 
     const totalScore = (
@@ -377,34 +365,6 @@ export class AnalyticsDashboardService {
     );
 
     return Math.round(Math.min(100, Math.max(0, totalScore)));
-  }
-
-  /**
-   * Helper: Generate cohort analysis data
-   */
-  private generateCohortAnalysis(period: TimePeriod): CohortData[] {
-    const cohorts: CohortData[] = [];
-    const monthsDiff = Math.ceil(
-      (period.endDate.getTime() - period.startDate.getTime()) / (1000 * 60 * 60 * 24 * 30)
-    );
-
-    for (let i = 0; i < Math.min(monthsDiff, 12); i++) {
-      const date = new Date(period.startDate);
-      date.setMonth(date.getMonth() + i);
-      
-      const size = Math.floor(100 + Math.random() * 500);
-      const retentionRate = 0.3 + Math.random() * 0.4;
-      const retained = Math.floor(size * retentionRate);
-
-      cohorts.push({
-        period: date.toISOString().substring(0, 7), // YYYY-MM format
-        size,
-        retained,
-        retentionRate: Math.round(retentionRate * 100) / 100
-      });
-    }
-
-    return cohorts;
   }
 
   /**

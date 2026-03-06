@@ -125,7 +125,13 @@ export class FinancialManagementService {
     limit: number;
     totalPages: number;
   }> {
-    const { page = 1, limit = 20, ...filterCriteria } = filters;
+    const {
+      page = 1,
+      limit = 20,
+      sortBy = 'createdAt',
+      sortOrder = 'desc',
+      ...filterCriteria
+    } = filters;
     const skip = (page - 1) * limit;
 
     // Build query
@@ -137,6 +143,10 @@ export class FinancialManagementService {
 
     if (filterCriteria.plan && filterCriteria.plan.length > 0) {
       query.plan = { $in: filterCriteria.plan };
+    }
+
+    if (!query.plan && filterCriteria.planTier) {
+      query.plan = filterCriteria.planTier;
     }
 
     if (filterCriteria.creatorId) {
@@ -161,13 +171,24 @@ export class FinancialManagementService {
       query.cancelAtPeriodEnd = filterCriteria.cancelAtPeriodEnd;
     }
 
+    const allowedSortFields = new Set([
+      'createdAt',
+      'currentPeriodStart',
+      'currentPeriodEnd',
+      'amount',
+      'status',
+      'plan',
+    ]);
+    const normalizedSortField = allowedSortFields.has(sortBy) ? sortBy : 'createdAt';
+    const normalizedSortOrder = sortOrder === 'asc' ? 1 : -1;
+
     // Execute query with pagination
     const [data, total] = await Promise.all([
       this.subscriptionModel
         .find(query)
-        .populate('creatorId', 'name email')
-        .populate('subscriberId', 'name email')
-        .sort({ createdAt: -1 })
+        .populate('creatorId', 'name email username')
+        .populate('subscriberId', 'name email username')
+        .sort({ [normalizedSortField]: normalizedSortOrder })
         .skip(skip)
         .limit(limit)
         .lean()
@@ -426,7 +447,13 @@ export class FinancialManagementService {
     limit: number;
     totalPages: number;
   }> {
-    const { page = 1, limit = 20, ...filterCriteria } = filters;
+    const {
+      page = 1,
+      limit = 20,
+      sortBy = 'requestedAt',
+      sortOrder = 'desc',
+      ...filterCriteria
+    } = filters;
     const skip = (page - 1) * limit;
 
     // Build query
@@ -468,13 +495,31 @@ export class FinancialManagementService {
       }
     }
 
+    const sortFieldAliases: Record<string, string> = {
+      initiatedAt: 'requestedAt',
+    };
+    const allowedSortFields = new Set([
+      'requestedAt',
+      'processedAt',
+      'scheduledFor',
+      'amount',
+      'status',
+      'method',
+      'createdAt',
+    ]);
+    const requestedSortField = sortFieldAliases[sortBy] || sortBy;
+    const normalizedSortField = allowedSortFields.has(requestedSortField)
+      ? requestedSortField
+      : 'requestedAt';
+    const normalizedSortOrder = sortOrder === 'asc' ? 1 : -1;
+
     // Execute query with pagination
     const [data, total] = await Promise.all([
       this.payoutModel
         .find(query)
-        .populate('creatorId', 'name email')
+        .populate('creatorId', 'name email username')
         .populate('communityId', 'name slug')
-        .sort({ requestedAt: -1 })
+        .sort({ [normalizedSortField]: normalizedSortOrder })
         .skip(skip)
         .limit(limit)
         .lean()

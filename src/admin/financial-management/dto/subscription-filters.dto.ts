@@ -1,8 +1,13 @@
-import { IsOptional, IsEnum, IsArray, IsDateString, IsNumber, Min } from 'class-validator';
+import { IsOptional, IsEnum, IsArray, IsDateString, IsNumber, Min, IsBoolean } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import { SubscriptionStatus } from '../../../schema/subscription.schema';
 import { PlanTier } from '../../../schema/plan.schema';
+
+enum SortDirection {
+  ASC = 'asc',
+  DESC = 'desc',
+}
 
 export class SubscriptionFiltersDto {
   @ApiPropertyOptional({
@@ -34,6 +39,10 @@ export class SubscriptionFiltersDto {
     description: 'Filter by subscription status',
   })
   @IsOptional()
+  @Transform(({ value }) => {
+    if (value === undefined || value === null || value === '') return undefined;
+    return Array.isArray(value) ? value : [value];
+  })
   @IsArray()
   @IsEnum(SubscriptionStatus, { each: true })
   status?: SubscriptionStatus[];
@@ -44,9 +53,21 @@ export class SubscriptionFiltersDto {
     description: 'Filter by plan tier',
   })
   @IsOptional()
+  @Transform(({ value }) => {
+    if (value === undefined || value === null || value === '') return undefined;
+    return Array.isArray(value) ? value : [value];
+  })
   @IsArray()
   @IsEnum(PlanTier, { each: true })
   plan?: PlanTier[];
+
+  @ApiPropertyOptional({
+    description: 'Legacy alias for plan filter',
+    enum: PlanTier,
+  })
+  @IsOptional()
+  @IsEnum(PlanTier)
+  planTier?: PlanTier;
 
   @ApiPropertyOptional({
     description: 'Filter by creator ID',
@@ -78,5 +99,28 @@ export class SubscriptionFiltersDto {
     description: 'Filter subscriptions that will cancel at period end',
   })
   @IsOptional()
+  @Transform(({ value }) => {
+    if (value === undefined || value === null || value === '') return undefined;
+    if (typeof value === 'boolean') return value;
+    return value === 'true';
+  })
+  @IsBoolean()
   cancelAtPeriodEnd?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'Field to sort by',
+    enum: ['createdAt', 'currentPeriodStart', 'currentPeriodEnd', 'amount', 'status', 'plan'],
+    default: 'createdAt',
+  })
+  @IsOptional()
+  sortBy?: string;
+
+  @ApiPropertyOptional({
+    description: 'Sort direction',
+    enum: SortDirection,
+    default: 'desc',
+  })
+  @IsOptional()
+  @IsEnum(SortDirection)
+  sortOrder?: 'asc' | 'desc' = 'desc';
 }

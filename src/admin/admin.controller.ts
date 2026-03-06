@@ -1,4 +1,4 @@
-import { Controller, Post, Body, HttpStatus, Res, ConflictException, HttpCode, Response as ExpressResponse, Req, UseGuards, Delete, ForbiddenException } from '@nestjs/common';
+import { Controller, Post, Body, HttpStatus, Res, ConflictException, HttpCode, Response as ExpressResponse, Req, UseGuards, Delete, ForbiddenException, Get } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBody, ApiExtraModels } from '@nestjs/swagger';
 import { AdminService } from './admin.service';
 import { CreateAdminDto } from '../dto-admin/create-admin.dto';
@@ -10,6 +10,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AdminForgotPasswordDto } from '../dto-admin/forgot-password.dto';
 import { AdminResetPasswordDto } from '../dto-admin/reset-password.dto';
 import { AdminGuard } from '../auth/guards/admin.guard';
+import { AdminAuthGuard } from './common/guards/admin-auth.guard';
 
 @ApiTags('Admin')
 @ApiExtraModels(AdminLoginDto, AdminVerify2FADto, AdminForgotPasswordDto, AdminResetPasswordDto, AdminLoginResponseDto)
@@ -231,7 +232,7 @@ export class AdminController {
   async loginAdmin(@Body() loginAdminDto: AdminLoginDto, @Res({ passthrough: true }) res: Response): Promise<AdminLoginResponseDto> {
     const result = await this.adminService.loginAdmin(loginAdminDto);
     if (!result.requires2FA && result.access_token && result.refresh_token) {
-      CookieUtil.setTokenCookies(res as any, result.access_token, result.refresh_token);
+      CookieUtil.setAdminTokenCookies(res as any, result.access_token, result.refresh_token, result.rememberMe);
     }
     return result;
   }
@@ -294,16 +295,32 @@ export class AdminController {
   async verify2FA(@Body() verify2FADto: AdminVerify2FADto, @Res({ passthrough: true }) res: Response): Promise<AdminLoginResponseDto> {
     const result = await this.adminService.verify2FA(verify2FADto);
     if (result.access_token && result.refresh_token) {
-      CookieUtil.setTokenCookies(res as any, result.access_token, result.refresh_token);
+      CookieUtil.setAdminTokenCookies(res as any, result.access_token, result.refresh_token, result.rememberMe);
     }
     return result;
   }
+
+  @Get('me')
+  @UseGuards(AdminAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Get current admin session',
+    description: 'Returns the normalized admin session used by the admin console.',
+    tags: ['Admin']
+  })
+  async getAdminSession(@Req() req) {
+    return req.adminSession || this.adminService.getAdminSessionForRequestUser(req.user);
+  }
+
   // refresh token
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
   async refreshToken(@Body() body: { refresh_token?: string }, @Req() req, @Res({ passthrough: true }) res: Response) {
-    // Récupérer le refresh token depuis le cookie ou le body
-    const refreshToken = body.refresh_token || req.cookies[CookieUtil.COOKIE_NAMES.REFRESH_TOKEN];
+    // Prefer the server-managed cookie to avoid stale localStorage/body tokens
+    const refreshToken =
+      req.cookies[CookieUtil.ADMIN_COOKIE_NAMES.REFRESH_TOKEN]
+      || req.cookies.admin_refresh_token
+      || body.refresh_token;
     
     if (!refreshToken) {
       return {
@@ -314,25 +331,27 @@ export class AdminController {
     const result = await this.adminService.refreshToken(refreshToken);
 
     if (result.access_token) {
-      CookieUtil.setAccessTokenCookie(res as any, result.access_token, false);
+      CookieUtil.setAdminAccessTokenCookie(res as any, result.access_token, false);
     }
     return result;
   }
   // logout admin
-  @UseGuards(JwtAuthGuard)
   @Post('logout')
   @HttpCode(HttpStatus.OK)
   async logout(@Req() req, @Res({ passthrough: true }) res: Response) {
     // Récupérer les tokens depuis les headers ou cookies
     const accessToken = req.headers.authorization?.replace('Bearer ', '') || 
-                       req.cookies[CookieUtil.COOKIE_NAMES.ACCESS_TOKEN];
-    const refreshToken = req.cookies[CookieUtil.COOKIE_NAMES.REFRESH_TOKEN];
+                       req.cookies[CookieUtil.ADMIN_COOKIE_NAMES.ACCESS_TOKEN] ||
+                       req.cookies.admin_access_token;
+    const refreshToken =
+      req.cookies[CookieUtil.ADMIN_COOKIE_NAMES.REFRESH_TOKEN] ||
+      req.cookies.admin_refresh_token;
 
     // Révoquer les tokens côté serveur
     const logoutResult = await this.adminService.logout(accessToken, refreshToken);
     
     // Supprimer les cookies côté client
-    CookieUtil.clearTokenCookies(res as any);
+    CookieUtil.clearAdminTokenCookies(res as any);
     
     return {
       message: logoutResult.message,

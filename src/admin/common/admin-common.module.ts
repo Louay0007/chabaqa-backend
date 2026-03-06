@@ -10,6 +10,13 @@ import { Community, CommunitySchema } from '../../schema/community.schema';
 import { Order, OrderSchema } from '../../schema/order.schema';
 import { Subscription, SubscriptionSchema } from '../../schema/subscription.schema';
 import { Cours, CoursSchema } from '../../schema/course.schema';
+import { Post, PostSchema } from '../../schema/post.schema';
+import { Event, EventSchema } from '../../schema/event.schema';
+import { Product, ProductSchema } from '../../schema/product.schema';
+import {
+  UserLoginActivity,
+  UserLoginActivitySchema,
+} from '../../schema/user-login-activity.schema';
 
 // Import common services (only those without external dependencies)
 import { AuditLogService } from './services/audit-log.service';
@@ -40,6 +47,10 @@ import { AdminRolesGuard } from './guards/admin-roles.guard';
       { name: Order.name, schema: OrderSchema },
       { name: Subscription.name, schema: SubscriptionSchema },
       { name: Cours.name, schema: CoursSchema },
+      { name: Post.name, schema: PostSchema },
+      { name: Event.name, schema: EventSchema },
+      { name: Product.name, schema: ProductSchema },
+      { name: UserLoginActivity.name, schema: UserLoginActivitySchema },
     ]),
   ],
   providers: [

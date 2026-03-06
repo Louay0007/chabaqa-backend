@@ -11,8 +11,9 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { AdminGuard } from '../auth/guards/admin.guard';
 import { LiveSupportService, LiveSupportView } from './live-support.service';
+import { AdminAuthGuard } from '../admin/common/guards/admin-auth.guard';
+import { AdminRolesGuard } from '../admin/common/guards/admin-roles.guard';
 
 @ApiTags('Live Support')
 @Controller('live-support')
@@ -21,6 +22,10 @@ export class LiveSupportController {
 
   private getRequestUserId(req: any): string {
     return (req?.user?._id || req?.user?.userId || req?.user?.sub || req?.user?.id || '').toString();
+  }
+
+  private getAdminActorId(req: any): string {
+    return (req?.adminUser?._id || req?.user?._id || req?.user?.userId || req?.user?.sub || req?.user?.id || '').toString();
   }
 
   @Get('me/ticket')
@@ -66,7 +71,7 @@ export class LiveSupportController {
   }
 
   @Get('admin/tickets')
-  @UseGuards(JwtAuthGuard, AdminGuard)
+  @UseGuards(AdminAuthGuard, AdminRolesGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'List admin live support tickets' })
   async listAdminTickets(
@@ -77,7 +82,7 @@ export class LiveSupportController {
     @Query('limit') limit = 20,
   ) {
     return this.liveSupportService.listAdminTickets(
-      this.getRequestUserId(req),
+      this.getAdminActorId(req),
       view,
       search,
       Number(page),
@@ -86,7 +91,7 @@ export class LiveSupportController {
   }
 
   @Get('admin/tickets/:id/messages')
-  @UseGuards(JwtAuthGuard, AdminGuard)
+  @UseGuards(AdminAuthGuard, AdminRolesGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get ticket messages for admin' })
   async getAdminMessages(
@@ -96,7 +101,7 @@ export class LiveSupportController {
     @Query('limit') limit = 40,
   ) {
     return this.liveSupportService.getTicketMessagesForAdmin(
-      this.getRequestUserId(req),
+      this.getAdminActorId(req),
       id,
       cursor,
       Number(limit),
@@ -104,37 +109,37 @@ export class LiveSupportController {
   }
 
   @Post('admin/tickets/:id/claim')
-  @UseGuards(JwtAuthGuard, AdminGuard)
+  @UseGuards(AdminAuthGuard, AdminRolesGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Claim available ticket' })
   async claimTicket(@Request() req: any, @Param('id') id: string) {
-    return this.liveSupportService.claimTicket(this.getRequestUserId(req), id);
+    return this.liveSupportService.claimTicket(this.getAdminActorId(req), id);
   }
 
   @Post('admin/tickets/:id/message')
-  @UseGuards(JwtAuthGuard, AdminGuard)
+  @UseGuards(AdminAuthGuard, AdminRolesGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Send message to assigned ticket' })
   async sendAdminMessage(@Request() req: any, @Param('id') id: string, @Body() body: { text: string }) {
     if (!body?.text || !String(body.text).trim()) {
       throw new BadRequestException('Text is required');
     }
-    return this.liveSupportService.sendAdminMessage(this.getRequestUserId(req), id, body.text);
+    return this.liveSupportService.sendAdminMessage(this.getAdminActorId(req), id, body.text);
   }
 
   @Post('admin/tickets/:id/close')
-  @UseGuards(JwtAuthGuard, AdminGuard)
+  @UseGuards(AdminAuthGuard, AdminRolesGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Close assigned ticket' })
   async closeTicket(@Request() req: any, @Param('id') id: string) {
-    return this.liveSupportService.closeTicket(this.getRequestUserId(req), id);
+    return this.liveSupportService.closeTicket(this.getAdminActorId(req), id);
   }
 
   @Get('admin/queue-counts')
-  @UseGuards(JwtAuthGuard, AdminGuard)
+  @UseGuards(AdminAuthGuard, AdminRolesGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get queue counts for sidebar/header badges' })
   async getQueueCounts(@Request() req: any) {
-    return this.liveSupportService.getQueueCounts(this.getRequestUserId(req));
+    return this.liveSupportService.getQueueCounts(this.getAdminActorId(req));
   }
 }

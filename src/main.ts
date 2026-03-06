@@ -527,8 +527,8 @@ async function bootstrap() {
     console.log('🔒 Swagger UI is disabled (set ENABLE_SWAGGER=true to enable in production).');
   }
 
-  // Bind to 0.0.0.0 to allow connections from both localhost and network
-  await app.listen(port, '0.0.0.0');
+  const host = process.env.HOST || (isProduction ? '127.0.0.1' : '0.0.0.0');
+  await app.listen(port, host);
 
   const baseUrl = `http://${localIP}:${port}`;
 

@@ -2,6 +2,7 @@ import { Types } from 'mongoose';
 import { Request } from 'express';
 import { AdminRole, AdminPermission } from '../../schemas/admin-user.schema';
 import { AdminAction } from '../../schemas/audit-log.schema';
+import type { AdminCapabilities, AdminSessionPayload } from '../../admin.service';
 
 /**
  * Common interfaces used across the admin module
@@ -21,16 +22,22 @@ export enum TimePeriod {
 export interface AdminUserInfo {
   _id: Types.ObjectId;
   userId: Types.ObjectId;
-  roles: AdminRole[];
-  permissions: AdminPermission[];
+  roles: string[];
+  permissions: Array<AdminPermission | '*'>;
   isActive: boolean;
   lastLoginAt?: Date;
   lastActivityAt?: Date;
+  email?: string;
+  name?: string;
+  role?: string;
+  authSource?: 'legacy_admin' | 'admin_user';
+  capabilities?: AdminCapabilities;
   user?: {
     _id: Types.ObjectId;
     name: string;
     email: string;
     role?: string;
+    createdAt?: Date;
   };
 }
 
@@ -107,10 +114,15 @@ export interface AdminResponse<T = any> {
 export interface AdminRequest extends Request {
   user: {
     id: string;
+    _id?: string;
+    userId?: string;
+    sub?: string;
     email: string;
     role?: string;
+    isAdmin?: boolean;
   };
   adminUser: AdminUserInfo;
+  adminSession?: AdminSessionPayload;
 }
 
 export interface AuditContext {

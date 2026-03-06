@@ -14,15 +14,20 @@ export class AdminGuard implements CanActivate {
   ): boolean | Promise<boolean> | Observable<boolean> {
     const request = context.switchToHttp().getRequest();
     const user = request.user;
+    const adminUser = request.adminUser;
 
     // Vérifier si l'utilisateur est authentifié
-    if (!user) {
+    if (!user && !adminUser) {
       throw new UnauthorizedException('Vous devez être connecté pour effectuer cette action');
     }
 
+    if (adminUser?.isActive) {
+      return true;
+    }
+
     // Vérifier si l'utilisateur est un admin
-    const role = user.role || user.type || user.userRole;
-    const isAdmin = user.isAdmin || role === 'admin' || role === 'superadmin' || role === 'owner';
+    const role = user?.role || user?.type || user?.userRole;
+    const isAdmin = user?.isAdmin || role === 'admin' || role === 'superadmin' || role === 'owner';
     if (!isAdmin) {
       throw new ForbiddenException('Seuls les administrateurs peuvent créer des ressources');
     }
