@@ -1,11 +1,11 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
 import { ConfigService } from '@nestjs/config';
 import { RedisClientType, createClient } from 'redis';
 
 @Injectable()
-export class CacheService {
+export class CacheService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(CacheService.name);
   private readonly isRedisEnabled: boolean;
   private readonly defaultTtlSeconds: number;
@@ -16,7 +16,7 @@ export class CacheService {
     @Inject(CACHE_MANAGER) private cacheManager: Cache,
     private configService: ConfigService,
   ) {
-    this.isRedisEnabled = this.configService.get<string>('REDIS_ENABLED') === 'true';
+    this.isRedisEnabled = String(this.configService.get<string>('REDIS_ENABLED') || '').toLowerCase() === 'true';
     this.defaultTtlSeconds = this.configService.get<number>('REDIS_TTL', 300);
 
     if (this.isRedisEnabled) {
@@ -43,6 +43,28 @@ export class CacheService {
           this.logger.error('Failed to connect Redis client:', error);
           this.redisConnectPromise = null;
         });
+    }
+  }
+
+  async onModuleInit(): Promise<void> {
+    if (!this.isRedisEnabled) {
+      return;
+    }
+
+    const isProduction = String(this.configService.get<string>('NODE_ENV') || '').toLowerCase() === 'production';
+    const connected = await this.ensureRedisConnected();
+
+    if (!connected && isProduction) {
+      this.logger.error(
+        'Redis is enabled but unreachable in production. Refusing to boot to prevent cache drift and perf regression.',
+      );
+      throw new Error('REDIS_ENABLED=true but Redis is unreachable');
+    }
+  }
+
+  async onModuleDestroy(): Promise<void> {
+    if (this.redisClient?.isOpen) {
+      await this.redisClient.quit().catch(() => undefined);
     }
   }
 

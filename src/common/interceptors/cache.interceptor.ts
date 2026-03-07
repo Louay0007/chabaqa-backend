@@ -46,6 +46,7 @@ export class HttpCacheInterceptor implements NestInterceptor {
       '/dm/',
       '/wallet',
       '/admin/',
+      '/auth/',
     ];
 
     if (skipPatterns.some((pattern) => String(url).includes(pattern))) {
@@ -57,6 +58,7 @@ export class HttpCacheInterceptor implements NestInterceptor {
     // Guard against accidental cache sharing for authenticated requests
     // where user payload cannot be resolved.
     if (hasAuthHeader && !userId) {
+      this.logger.debug(`Cache BYPASS: unresolved authenticated user for url=${url}`);
       return next.handle();
     }
 
@@ -137,6 +139,17 @@ export class HttpCacheInterceptor implements NestInterceptor {
   }
 
   private getTTL(url: string): number {
+    // Membership/progress checks directly impact protected dashboard experience.
+    if (
+      url.includes('/membership') ||
+      url.includes('/joined') ||
+      url.includes('/my-created') ||
+      url.includes('/my-joined') ||
+      url.includes('/my-manageable')
+    ) {
+      return 45; // 30-60s class
+    }
+
     // User-scoped dashboard-style endpoints should refresh quickly.
     if (
       url.includes('/user/') ||
@@ -154,7 +167,7 @@ export class HttpCacheInterceptor implements NestInterceptor {
 
     // More static listing/explore endpoints
     if (url.includes('/communities') || url.includes('/explore')) {
-      return 3600; // 1 hour
+      return 900; // 15 minutes
     }
 
     // Aggregate/statistics endpoints

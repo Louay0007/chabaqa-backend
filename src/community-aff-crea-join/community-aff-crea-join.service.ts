@@ -14,6 +14,7 @@ import { TrackableContentType, ContentProgressDocument } from '../schema/content
 import { NotificationService } from '../notification/notification.service';
 import { ContentTrackingService } from '../common/services/content-tracking.service';
 import { PaginatedResponseDto } from '../common/dto/paginated-response.dto';
+import { CacheService } from '../common/services/cache.service';
 
 @Injectable()
 export class CommunityAffCreaJoinService implements OnModuleInit {
@@ -28,6 +29,7 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
     private readonly feeService: FeeService,
     private readonly notificationService: NotificationService,
     private readonly trackingService: ContentTrackingService,
+    private readonly cacheService: CacheService,
   ) { }
 
   async onModuleInit(): Promise<void> {
@@ -248,6 +250,34 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
         `Failed to notify creator ${community?.createur?.toString?.() || ''} about new member ${userId}: ${error?.message || error}`,
       );
     }
+  }
+
+  private async invalidateCommunityAndProfileCaches(params: {
+    communitySlug?: string;
+    communityId?: string;
+    creatorUsername?: string;
+  }): Promise<void> {
+    const patterns = [
+      'http:/community-aff-crea-join*',
+      'http:/communities*',
+    ];
+
+    if (params.communitySlug) {
+      patterns.push(`http:/communities/${params.communitySlug}*`);
+    }
+
+    if (params.communityId) {
+      patterns.push(`http:/community-aff-crea-join/community/${params.communityId}*`);
+      patterns.push(`http:/community-aff-crea-join/members/${params.communityId}*`);
+    }
+
+    if (params.creatorUsername) {
+      patterns.push(`http:/user/by-username/${params.creatorUsername}*`);
+    }
+
+    await Promise.allSettled(
+      patterns.map((pattern) => this.cacheService.deletePattern(pattern)),
+    );
   }
 
   /**
@@ -500,6 +530,11 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
 
       // Recalculer les rangs après la création
       await this.updateCommunityRanks();
+      await this.invalidateCommunityAndProfileCaches({
+        communitySlug: savedCommunity.slug,
+        communityId: savedCommunity._id?.toString?.(),
+        creatorUsername: (updatedUser as any)?.username,
+      });
 
       // Transformer la réponse pour être 100% compatible avec le frontend
       const transformedCommunity = this.transformCommunityForFrontend(populatedCommunity, {
@@ -1624,6 +1659,10 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
 
       // Recalculer les rangs
       await this.updateCommunityRanks();
+      await this.invalidateCommunityAndProfileCaches({
+        communitySlug: community.slug,
+        communityId: community._id?.toString?.(),
+      });
 
       await this.notifyCreatorMemberJoined(community, userId, this.resolveMemberDisplayName(user));
 
@@ -1716,6 +1755,10 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
 
       // Recalculer les rangs
       await this.updateCommunityRanks();
+      await this.invalidateCommunityAndProfileCaches({
+        communitySlug: community.slug,
+        communityId: community._id?.toString?.(),
+      });
 
       await this.notifyCreatorMemberJoined(community, userId, this.resolveMemberDisplayName(user));
 
@@ -1781,6 +1824,10 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
       const changed = await this.ensurePrivateInviteData(community, Boolean(generateData.regenerate));
       if (changed) {
         await community.save();
+        await this.invalidateCommunityAndProfileCaches({
+          communitySlug: community.slug,
+          communityId: community._id?.toString?.(),
+        });
       }
 
       return {
@@ -1947,6 +1994,10 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
 
       // Recalculer les rangs
       await this.updateCommunityRanks();
+      await this.invalidateCommunityAndProfileCaches({
+        communitySlug: community.slug,
+        communityId: community._id?.toString?.(),
+      });
 
       return {
         message: 'Vous avez quitté la communauté avec succès'

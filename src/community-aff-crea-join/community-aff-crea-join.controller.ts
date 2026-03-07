@@ -45,9 +45,11 @@ import { diskStorage } from 'multer';
 import { extname } from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { Response } from 'express';
+import { HttpCacheInterceptor } from '../common/interceptors/cache.interceptor';
 
 @ApiTags('Community Management')
 @Controller('community-aff-crea-join')
+@UseInterceptors(HttpCacheInterceptor)
 export class CommunityAffCreaJoinController {
   constructor(
     private readonly communityService: CommunityAffCreaJoinService,

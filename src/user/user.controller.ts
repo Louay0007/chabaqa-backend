@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Put, Delete, Body, Param, HttpStatus, Res, Response, ConflictException, UseGuards, Request, ForbiddenException, BadRequestException } from '@nestjs/common';
+import { Controller, Post, Get, Put, Delete, Body, Param, HttpStatus, Res, Response, ConflictException, UseGuards, Request, ForbiddenException, BadRequestException, UseInterceptors } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBody, ApiBearerAuth, ApiParam } from '@nestjs/swagger';
 import { UserService } from './user.service';
 import { CreateUserDto } from '../dto-user/create-user.dto';
@@ -8,6 +8,8 @@ import { ResetPasswordDto } from '../dto-user/reset-password.dto';
 import { ChangePasswordDto } from '../dto-user/change-password.dto';
 import { DeleteAccountDto } from '../dto-user/delete-account.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { HttpCacheInterceptor } from '../common/interceptors/cache.interceptor';
+import { CacheTTL } from '../common/decorators/cache-ttl.decorator';
 
 @ApiTags('Users')
 @Controller('user')
@@ -290,6 +292,8 @@ export class UserController {
 
   //get user by username/handle
   @Get('by-username/:handle')
+  @UseInterceptors(HttpCacheInterceptor)
+  @CacheTTL(120)
   @ApiOperation({
     summary: 'Get User by Username/Handle',
     description: 'Fetch user profile by username handle',

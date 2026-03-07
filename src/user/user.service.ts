@@ -14,6 +14,7 @@ import { VerificationCode, VerificationCodeDocument } from '../schema/verificati
 import { UploadService, FileType } from '../upload/upload.service';
 import { CommunityAffCreaJoinService } from '../community-aff-crea-join/community-aff-crea-join.service';
 import { generateUniqueUsername, slugifyFullNameToUsername } from '../common/utils/username.util';
+import { CacheService } from '../common/services/cache.service';
 
 @Injectable()
 export class UserService {
@@ -23,6 +24,7 @@ export class UserService {
     private emailService: EmailService,
     private uploadService: UploadService,
     private communityAffCreaJoinService: CommunityAffCreaJoinService,
+    private cacheService: CacheService,
   ) { }
 
   /**
@@ -74,6 +76,22 @@ export class UserService {
     } catch (error: any) {
       console.warn(`⚠️ [DELETE ACCOUNT] Could not delete avatar file: ${error?.message || 'unknown error'}`);
     }
+  }
+
+  private async invalidateUserProfileCaches(user?: Partial<IUser> & { username?: string; _id?: any }): Promise<void> {
+    const patterns = ['http:/user/by-username*'];
+
+    const username = String((user as any)?.username || '').trim();
+    if (username) {
+      patterns.push(`http:/user/by-username/${username}*`);
+    }
+
+    const id = String((user as any)?._id || '').trim();
+    if (id) {
+      patterns.push(`http:/user/user/${id}*`);
+    }
+
+    await Promise.allSettled(patterns.map((pattern) => this.cacheService.deletePattern(pattern)));
   }
 
   /**
@@ -468,6 +486,7 @@ export class UserService {
 
       await this.cleanupLocalAvatarFile(user);
       await this.userModel.findByIdAndDelete(userObjectId);
+      await this.invalidateUserProfileCaches(user as any);
       console.log(`✅ [DELETE ACCOUNT] User account deleted: ${normalizedId}`);
     } catch (error: any) {
       console.error('❌ [DELETE ACCOUNT] Cascade deletion failed:', error);
@@ -481,6 +500,7 @@ export class UserService {
     if (!updatedUser) {
       throw new NotFoundException(`User #${id} not found`);
     }
+    await this.invalidateUserProfileCaches(updatedUser as any);
     const u = updatedUser.toObject();
     u.photo_profil = this.uploadService.ensureAbsoluteUrl(u.photo_profil);
     u.profile_picture = this.uploadService.ensureAbsoluteUrl(u.profile_picture);
