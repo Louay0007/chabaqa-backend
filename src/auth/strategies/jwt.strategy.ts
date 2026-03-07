@@ -6,7 +6,6 @@ import { Model } from 'mongoose';
 import { Request } from 'express';
 import { User, UserDocument } from '../../schema/user.schema';
 import { Admin, AdminDocument } from '../../schema/admin.schema';
-import { TokenBlacklistService } from '../../common/services/token-blacklist.service';
 import { getJwtSecret } from '../../common/utils/security-config.util';
 
 @Injectable()
@@ -14,7 +13,6 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     @InjectModel(Admin.name) private adminModel: Model<AdminDocument>,
-    private readonly tokenBlacklistService: TokenBlacklistService,
   ) {
     super({
       jwtFromRequest: ExtractJwt.fromExtractors([
@@ -33,13 +31,6 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(_req: Request, payload: any) {
-    const tokenId = payload?.jti || `${payload?.sub || 'unknown'}-${payload?.iat || 'unknown'}`;
-    const userId = String(payload?.sub || '');
-    const isRevoked = await this.tokenBlacklistService.isTokenRevoked(tokenId, userId);
-    if (isRevoked) {
-      throw new UnauthorizedException('Token révoqué');
-    }
-
     // Check if it's an admin (support both 'admin' and 'super_admin' roles, or any future admin roles)
     if (payload.role === 'admin' || payload.role === 'super_admin' || payload.role === 'moderator') {
       const admin = await this.adminModel.findById(payload.sub);

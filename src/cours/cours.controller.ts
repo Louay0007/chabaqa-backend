@@ -1,7 +1,11 @@
 import { Controller, Get, Post, Param, Body, Query, UseGuards, Req, Patch, Delete, Put, UseInterceptors, UploadedFile } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags, ApiQuery, ApiParam, ApiBody, ApiResponse, ApiConsumes } from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { CoursService } from './cours.service';
+import { CoursContentService } from './services/cours-content.service';
+import { CoursEnrollmentService } from './services/cours-enrollment.service';
+import { CoursTrackingService } from './services/cours-tracking.service';
+import { CoursProgressionService } from './services/cours-progression.service';
+import { CoursNotesService } from './services/cours-notes.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CreateCoursDto } from '../dto-cours/create-cours.dto';
 import { CreateUserNoteDto, UpdateUserNoteDto, UserNoteResponseDto } from '../dto-cours/user-note.dto';
@@ -11,6 +15,7 @@ import { UpdateSequentialProgressionDto, ChapterAccessResponseDto, UnlockedChapt
 import { UpdateCoursDto, UpdateSectionDto, UpdateChapitreDto } from '../dto-cours/update-cours.dto';
 import { HttpCacheInterceptor } from '../common/interceptors/cache.interceptor';
 import { CacheTTL, CacheDuration } from '../common/decorators/cache-ttl.decorator';
+import { UpdateIncrementalWatchTimeDto } from '../common/dto/update-watch-time.dto';
 
 interface AuthenticatedUser {
 	_id: string;
@@ -47,7 +52,13 @@ const enrichTrackingMetadata = (req: any, metadata?: any) => {
 @Controller('cours')
 @UseInterceptors(HttpCacheInterceptor)
 export class CoursController {
-	constructor(private readonly coursService: CoursService) { }
+	constructor(
+		private readonly coursContentService: CoursContentService,
+		private readonly coursEnrollmentService: CoursEnrollmentService,
+		private readonly coursTrackingService: CoursTrackingService,
+		private readonly coursProgressionService: CoursProgressionService,
+		private readonly coursNotesService: CoursNotesService,
+	) { }
 
 	// ============ LISTE DES COURS ============
 
@@ -103,7 +114,7 @@ export class CoursController {
 		@Query('niveau') niveau?: string,
 		@Query('search') search?: string
 	) {
-		return this.coursService.getCourses(page, limit, category, niveau, search);
+		return this.coursContentService.getCourses(page, limit, category, niveau, search);
 	}
 
 	// ============ CRÉATION DE COURS ============
@@ -237,7 +248,7 @@ export class CoursController {
 	})
 	async createCours(@Body() dto: CreateCoursDto, @Req() req) {
 		const user = req.user as AuthenticatedUser;
-		const result = await this.coursService.creerCours(dto, user._id);
+		const result = await this.coursContentService.creerCours(dto, user._id);
 		return { message: 'Cours créé avec succès', cours: result };
 	}
 
@@ -248,7 +259,7 @@ export class CoursController {
 	@ApiOperation({ summary: 'Créer un cours (alias /create-cours)' })
 	async createCoursAlias(@Body() dto: CreateCoursDto, @Req() req) {
 		const user = req.user as AuthenticatedUser;
-		const result = await this.coursService.creerCours(dto, user._id);
+		const result = await this.coursContentService.creerCours(dto, user._id);
 		return { message: 'Cours créé avec succès', cours: result };
 	}
 
@@ -259,7 +270,7 @@ export class CoursController {
 	@ApiOperation({ summary: 'Créer un cours (alias racine)' })
 	async createCoursRoot(@Body() dto: CreateCoursDto, @Req() req) {
 		const user = req.user as AuthenticatedUser;
-		const result = await this.coursService.creerCours(dto, user._id);
+		const result = await this.coursContentService.creerCours(dto, user._id);
 		return { message: 'Cours créé avec succès', cours: result };
 	}
 
@@ -279,7 +290,7 @@ export class CoursController {
 		@Req() req,
 	) {
 		const userId = req.user?._id;
-		const result = await this.coursService.obtenirCoursParCommunaute(
+		const result = await this.coursContentService.obtenirCoursParCommunaute(
 			slug,
 			Number(page) || 1,
 			Number(limit) || 10,
@@ -315,7 +326,7 @@ export class CoursController {
 		@Req() req,
 	) {
 		const user = req.user as AuthenticatedUser;
-		return await this.coursService.obtenirCoursInscrit(user._id, Number(page) || 1, Number(limit) || 10);
+		return await this.coursEnrollmentService.obtenirCoursInscrit(user._id, Number(page) || 1, Number(limit) || 10);
 	}
 
 	@UseGuards(JwtAuthGuard)
@@ -332,7 +343,7 @@ export class CoursController {
 		@Query('communityId') communityId?: string,
 	) {
 		const user = req.user as AuthenticatedUser;
-		const result = await this.coursService.obtenirCoursParCreateur(
+		const result = await this.coursContentService.obtenirCoursParCreateur(
 			user._id,
 			Number(page) || 1,
 			Number(limit) || 10,
@@ -401,7 +412,7 @@ export class CoursController {
 		@Query('limit') limit = '10',
 		@Query('type') type: 'enrolled' | 'created' | 'all' = 'all'
 	) {
-		return await this.coursService.obtenirCoursParUtilisateur(
+		return await this.coursContentService.obtenirCoursParUtilisateur(
 			userId,
 			Number(page) || 1,
 			Number(limit) || 10,
@@ -417,7 +428,7 @@ export class CoursController {
 		const userId = req.user?._id;
 		console.log('🔍 [CONTROLLER] User ID:', userId);
 		try {
-			const result = await this.coursService.obtenirCours(id, userId);
+			const result = await this.coursContentService.obtenirCours(id, userId);
 			console.log('✅ [CONTROLLER] Course found:', result.titre);
 			return result;
 		} catch (error) {
@@ -434,7 +445,7 @@ export class CoursController {
 	@ApiOperation({ summary: 'Mettre à jour un cours' })
 	async updateCours(@Param('id') id: string, @Body() dto: UpdateCoursDto, @Req() req) {
 		const user = req.user as AuthenticatedUser;
-		return await this.coursService.updateCours(id, dto, user._id);
+		return await this.coursContentService.updateCours(id, dto, user._id);
 	}
 
 	@UseGuards(JwtAuthGuard)
@@ -443,7 +454,7 @@ export class CoursController {
 	@ApiOperation({ summary: 'Publier/Dépublier un cours' })
 	async togglePublication(@Param('id') id: string, @Req() req) {
 		const user = req.user as AuthenticatedUser;
-		return await this.coursService.togglePublication(id, user._id);
+		return await this.coursContentService.togglePublication(id, user._id);
 	}
 
 	@UseGuards(JwtAuthGuard)
@@ -452,7 +463,7 @@ export class CoursController {
 	@ApiOperation({ summary: 'Supprimer un cours' })
 	async deleteCours(@Param('id') id: string, @Req() req) {
 		const user = req.user as AuthenticatedUser;
-		return await this.coursService.supprimerCours(id, user._id);
+		return await this.coursContentService.supprimerCours(id, user._id);
 	}
 
 	// ============ GESTION DES SECTIONS ============
@@ -468,7 +479,7 @@ export class CoursController {
 		@Req() req,
 	) {
 		const user = req.user as AuthenticatedUser;
-		return await this.coursService.updateSection(coursId, sectionId, dto, user._id);
+		return await this.coursContentService.updateSection(coursId, sectionId, dto, user._id);
 	}
 
 	@UseGuards(JwtAuthGuard)
@@ -481,7 +492,7 @@ export class CoursController {
 		@Req() req,
 	) {
 		const user = req.user as AuthenticatedUser;
-		return await this.coursService.ajouterSection(id, dto, user._id);
+		return await this.coursContentService.ajouterSection(id, dto, user._id);
 	}
 
 	@UseGuards(JwtAuthGuard)
@@ -494,7 +505,7 @@ export class CoursController {
 		@Req() req,
 	) {
 		const user = req.user as AuthenticatedUser;
-		return await this.coursService.supprimerSection(coursId, sectionId, user._id);
+		return await this.coursContentService.supprimerSection(coursId, sectionId, user._id);
 	}
 
 	// ============ GESTION DES CHAPITRES ============
@@ -511,7 +522,7 @@ export class CoursController {
 		@Req() req,
 	) {
 		const user = req.user as AuthenticatedUser;
-		return await this.coursService.updateChapitre(coursId, sectionId, chapitreId, dto, user._id);
+		return await this.coursContentService.updateChapitre(coursId, sectionId, chapitreId, dto, user._id);
 	}
 
 	@UseGuards(JwtAuthGuard)
@@ -525,7 +536,7 @@ export class CoursController {
 		@Req() req,
 	) {
 		const user = req.user as AuthenticatedUser;
-		return await this.coursService.ajouterChapitreASection(coursId, sectionId, dto, user._id);
+		return await this.coursContentService.ajouterChapitreASection(coursId, sectionId, dto, user._id);
 	}
 
 	@UseGuards(JwtAuthGuard)
@@ -539,7 +550,7 @@ export class CoursController {
 		@Req() req,
 	) {
 		const user = req.user as AuthenticatedUser;
-		return await this.coursService.supprimerChapitre(coursId, sectionId, chapitreId, user._id);
+		return await this.coursContentService.supprimerChapitre(coursId, sectionId, chapitreId, user._id);
 	}
 
 	// ============ GESTION DES RESSOURCES ============
@@ -556,7 +567,7 @@ export class CoursController {
 		@Req() req,
 	) {
 		const user = req.user as AuthenticatedUser;
-		return await this.coursService.ajouterRessourceAChapitre(coursId, sectionId, chapitreId, ressource, user._id);
+		return await this.coursContentService.ajouterRessourceAChapitre(coursId, sectionId, chapitreId, ressource, user._id);
 	}
 
 	// ============ GESTION DES MÉDIAS ============
@@ -571,7 +582,7 @@ export class CoursController {
 		@Req() req,
 	) {
 		const user = req.user as AuthenticatedUser;
-		return await this.coursService.mettreAJourThumbnail(id, thumbnailUrl, user._id);
+		return await this.coursContentService.mettreAJourThumbnail(id, thumbnailUrl, user._id);
 	}
 
 	@UseGuards(JwtAuthGuard)
@@ -586,7 +597,7 @@ export class CoursController {
 		@Req() req,
 	) {
 		const user = req.user as AuthenticatedUser;
-		return await this.coursService.mettreAJourVideoUrl(coursId, sectionId, chapitreId, videoUrl, user._id);
+		return await this.coursContentService.mettreAJourVideoUrl(coursId, sectionId, chapitreId, videoUrl, user._id);
 	}
 
 	@UseGuards(JwtAuthGuard)
@@ -614,7 +625,7 @@ export class CoursController {
 		@Req() req
 	) {
 		const user = req.user as AuthenticatedUser;
-		return await this.coursService.uploadChapterVideo(coursId, sectionId, chapitreId, file, user._id);
+		return await this.coursContentService.uploadChapterVideo(coursId, sectionId, chapitreId, file, user._id);
 	}
 
 	// ============ INSCRIPTION AUX COURS ============
@@ -626,7 +637,7 @@ export class CoursController {
 	@ApiQuery({ name: 'promoCode', required: false, type: String })
 	async enrollToCours(@Param('id') id: string, @Query('promoCode') promoCode: string | undefined, @Req() req) {
 		const user = req.user as AuthenticatedUser;
-		return await this.coursService.inscrireAuCours(id, user._id, promoCode);
+		return await this.coursEnrollmentService.inscrireAuCours(id, user._id, promoCode);
 	}
 
 	// ============ VÉRIFICATION D'ACCÈS ============
@@ -641,7 +652,7 @@ export class CoursController {
 		@Req() req,
 	) {
 		const user = req.user as AuthenticatedUser;
-		return await this.coursService.verifierAccesChapitre(coursId, chapitreId, user._id);
+		return await this.coursEnrollmentService.verifierAccesChapitre(coursId, chapitreId, user._id);
 	}
 
 
@@ -656,7 +667,7 @@ export class CoursController {
 	@ApiOperation({ summary: 'Vérifier les permissions sur un cours' })
 	async checkPermissions(@Param('id') id: string, @Req() req) {
 		const user = req.user as AuthenticatedUser;
-		const hasPermission = await this.coursService.verifierPermissionsCours(id, user._id);
+		const hasPermission = await this.coursContentService.verifierPermissionsCours(id, user._id);
 		return { hasPermission };
 	}
 
@@ -677,7 +688,7 @@ export class CoursController {
 	async trackView(@Param('id') id: string, @Req() req, @Body('metadata') metadata?: any) {
 		const user = req.user as AuthenticatedUser;
 		const enriched = enrichTrackingMetadata(req, metadata);
-		return await this.coursService.trackCoursView(id, user._id, enriched);
+		return await this.coursTrackingService.trackCoursView(id, user._id, enriched);
 	}
 
 	@UseGuards(JwtAuthGuard)
@@ -695,7 +706,7 @@ export class CoursController {
 	async trackStart(@Param('id') id: string, @Req() req, @Body('metadata') metadata?: any) {
 		const user = req.user as AuthenticatedUser;
 		const enriched = enrichTrackingMetadata(req, metadata);
-		return await this.coursService.trackCoursStart(id, user._id, enriched);
+		return await this.coursTrackingService.trackCoursStart(id, user._id, enriched);
 	}
 
 	@UseGuards(JwtAuthGuard)
@@ -713,7 +724,7 @@ export class CoursController {
 	async trackComplete(@Param('id') id: string, @Req() req, @Body('metadata') metadata?: any) {
 		const user = req.user as AuthenticatedUser;
 		const enriched = enrichTrackingMetadata(req, metadata);
-		return await this.coursService.trackCoursComplete(id, user._id, enriched);
+		return await this.coursTrackingService.trackCoursComplete(id, user._id, enriched);
 	}
 
 	@UseGuards(JwtAuthGuard)
@@ -725,20 +736,14 @@ export class CoursController {
 	})
 	@ApiParam({ name: 'id', description: 'ID du cours', type: 'string' })
 	@ApiBody({
-		schema: {
-			type: 'object',
-			properties: {
-				additionalTime: { type: 'number', description: 'Temps additionnel en secondes' }
-			},
-			required: ['additionalTime']
-		}
+		type: UpdateIncrementalWatchTimeDto,
 	})
 	@ApiResponse({ status: 200, description: 'Temps de visionnage mis à jour avec succès' })
 	@ApiResponse({ status: 401, description: 'Non autorisé' })
 	@ApiResponse({ status: 404, description: 'Cours non trouvé' })
-	async updateWatchTime(@Param('id') id: string, @Body('additionalTime') additionalTime: number, @Req() req) {
+	async updateWatchTime(@Param('id') id: string, @Body() body: UpdateIncrementalWatchTimeDto, @Req() req) {
 		const user = req.user as AuthenticatedUser;
-		return await this.coursService.updateCoursWatchTime(id, user._id, additionalTime);
+		return await this.coursTrackingService.updateCoursWatchTime(id, user._id, body.additionalTime);
 	}
 
 	@UseGuards(JwtAuthGuard)
@@ -756,7 +761,7 @@ export class CoursController {
 	async trackLike(@Param('id') id: string, @Req() req, @Body('metadata') metadata?: any) {
 		const user = req.user as AuthenticatedUser;
 		const enriched = enrichTrackingMetadata(req, metadata);
-		return await this.coursService.trackCoursLike(id, user._id, enriched);
+		return await this.coursTrackingService.trackCoursLike(id, user._id, enriched);
 	}
 
 	@UseGuards(JwtAuthGuard)
@@ -774,7 +779,7 @@ export class CoursController {
 	async trackShare(@Param('id') id: string, @Req() req, @Body('metadata') metadata?: any) {
 		const user = req.user as AuthenticatedUser;
 		const enriched = enrichTrackingMetadata(req, metadata);
-		return await this.coursService.trackCoursShare(id, user._id, enriched);
+		return await this.coursTrackingService.trackCoursShare(id, user._id, enriched);
 	}
 
 	@UseGuards(JwtAuthGuard)
@@ -792,7 +797,7 @@ export class CoursController {
 	async trackDownload(@Param('id') id: string, @Req() req, @Body('metadata') metadata?: any) {
 		const user = req.user as AuthenticatedUser;
 		const enriched = enrichTrackingMetadata(req, metadata);
-		return await this.coursService.trackCoursDownload(id, user._id, enriched);
+		return await this.coursTrackingService.trackCoursDownload(id, user._id, enriched);
 	}
 
 	@UseGuards(JwtAuthGuard)
@@ -817,7 +822,7 @@ export class CoursController {
 	@ApiResponse({ status: 404, description: 'Cours non trouvé' })
 	async addBookmark(@Param('id') id: string, @Body('bookmarkId') bookmarkId: string, @Req() req) {
 		const user = req.user as AuthenticatedUser;
-		return await this.coursService.addCoursBookmark(id, user._id, bookmarkId);
+		return await this.coursTrackingService.addCoursBookmark(id, user._id, bookmarkId);
 	}
 
 	@UseGuards(JwtAuthGuard)
@@ -834,7 +839,7 @@ export class CoursController {
 	@ApiResponse({ status: 404, description: 'Cours ou bookmark non trouvé' })
 	async removeBookmark(@Param('id') id: string, @Param('bookmarkId') bookmarkId: string, @Req() req) {
 		const user = req.user as AuthenticatedUser;
-		return await this.coursService.removeCoursBookmark(id, user._id, bookmarkId);
+		return await this.coursTrackingService.removeCoursBookmark(id, user._id, bookmarkId);
 	}
 
 	@UseGuards(JwtAuthGuard)
@@ -861,7 +866,7 @@ export class CoursController {
 	@ApiResponse({ status: 400, description: 'Note invalide (doit être entre 1 et 5)' })
 	async addRating(@Param('id') id: string, @Body('rating') rating: number, @Req() req, @Body('review') review?: string) {
 		const user = req.user as AuthenticatedUser;
-		return await this.coursService.addCoursRating(id, user._id, rating, review);
+		return await this.coursTrackingService.addCoursRating(id, user._id, rating, review);
 	}
 
 	@UseGuards(JwtAuthGuard)
@@ -900,7 +905,7 @@ export class CoursController {
 	@ApiResponse({ status: 404, description: 'Cours non trouvé' })
 	async getProgress(@Param('id') id: string, @Req() req) {
 		const user = req.user as AuthenticatedUser;
-		return await this.coursService.getCoursProgress(id, user._id);
+		return await this.coursTrackingService.getCoursProgress(id, user._id);
 	}
 
 	@Get(':id/track/stats')
@@ -930,7 +935,7 @@ export class CoursController {
 	})
 	@ApiResponse({ status: 404, description: 'Cours non trouvé' })
 	async getStats(@Param('id') id: string) {
-		return await this.coursService.getCoursStats(id);
+		return await this.coursTrackingService.getCoursStats(id);
 	}
 
 	@Get(':id/reviews')
@@ -975,7 +980,7 @@ export class CoursController {
 	})
 	@ApiResponse({ status: 404, description: 'Cours non trouvé' })
 	async getReviews(@Param('id') id: string) {
-		return await this.coursService.getCoursReviews(id);
+		return await this.coursTrackingService.getCoursReviews(id);
 	}
 
 	@UseGuards(JwtAuthGuard)
@@ -1009,7 +1014,7 @@ export class CoursController {
 	@ApiResponse({ status: 401, description: 'Non autorisé' })
 	async getUserProgress(@Query('page') page = '1', @Query('limit') limit = '10', @Req() req) {
 		const user = req.user as AuthenticatedUser;
-		return await this.coursService.getUserCoursProgress(user._id, Number(page) || 1, Number(limit) || 10);
+		return await this.coursProgressionService.getUserCoursProgress(user._id, Number(page) || 1, Number(limit) || 10);
 	}
 
 	@UseGuards(JwtAuthGuard)
@@ -1045,7 +1050,7 @@ export class CoursController {
 	@ApiResponse({ status: 401, description: 'Non autorisé' })
 	async getUserRecentActions(@Query('limit') limit = '20', @Req() req): Promise<any> {
 		const user = req.user as AuthenticatedUser;
-		return await this.coursService.getUserCoursRecentActions(user._id, Number(limit) || 20);
+		return await this.coursProgressionService.getUserCoursRecentActions(user._id, Number(limit) || 20);
 	}
 
 	// ============ SEQUENTIAL PROGRESSION ENDPOINTS ============
@@ -1068,7 +1073,7 @@ export class CoursController {
 		@Req() req
 	) {
 		const user = req.user as AuthenticatedUser;
-		return await this.coursService.updateSequentialProgression(
+		return await this.coursProgressionService.updateSequentialProgression(
 			id,
 			dto.enabled,
 			dto.unlockMessage,
@@ -1094,7 +1099,7 @@ export class CoursController {
 		@Req() req
 	) {
 		const user = req.user as AuthenticatedUser;
-		return await this.coursService.checkChapterAccessWithSequential(id, chapterId, user._id);
+		return await this.coursProgressionService.checkChapterAccessWithSequential(id, chapterId, user._id);
 	}
 
 	@UseGuards(JwtAuthGuard)
@@ -1113,7 +1118,7 @@ export class CoursController {
 		@Req() req
 	) {
 		const user = req.user as AuthenticatedUser;
-		return await this.coursService.getUnlockedChapters(id, user._id);
+		return await this.coursProgressionService.getUnlockedChapters(id, user._id);
 	}
 
 	@UseGuards(JwtAuthGuard)
@@ -1144,7 +1149,7 @@ export class CoursController {
 		@Req() req
 	) {
 		const user = req.user as AuthenticatedUser;
-		return await this.coursService.unlockChapterManually(id, chapterId, userId, user._id);
+		return await this.coursProgressionService.unlockChapterManually(id, chapterId, userId, user._id);
 	}
 
 	// ============ USER NOTES ENDPOINTS ============
@@ -1156,7 +1161,7 @@ export class CoursController {
 	@ApiResponse({ status: 201, description: 'Note created', type: UserNoteResponseDto })
 	async createNote(@Param('id') courseId: string, @Body() createDto: CreateUserNoteDto, @Req() req) {
 		const user = req.user as AuthenticatedUser;
-		return await this.coursService.createUserNote(user._id, courseId, createDto);
+		return await this.coursNotesService.createUserNote(user._id, courseId, createDto);
 	}
 
 	@UseGuards(JwtAuthGuard)
@@ -1166,7 +1171,7 @@ export class CoursController {
 	@ApiResponse({ status: 200, description: 'Notes retrieved', type: [UserNoteResponseDto] })
 	async getNotes(@Param('id') courseId: string, @Req() req) {
 		const user = req.user as AuthenticatedUser;
-		return await this.coursService.getUserNotes(user._id, courseId);
+		return await this.coursNotesService.getUserNotes(user._id, courseId);
 	}
 
 	@UseGuards(JwtAuthGuard)
@@ -1177,7 +1182,7 @@ export class CoursController {
 	async updateNote(@Param('id') courseId: string, @Param('noteId') noteId: string, @Body() updateDto: UpdateUserNoteDto, @Req() req) {
 		const user = req.user as AuthenticatedUser;
 		// courseId is not strictly needed for update if noteId is unique, but kept for consistency
-		return await this.coursService.updateUserNote(user._id, noteId, updateDto);
+		return await this.coursNotesService.updateUserNote(user._id, noteId, updateDto);
 	}
 
 	@UseGuards(JwtAuthGuard)
@@ -1187,6 +1192,6 @@ export class CoursController {
 	@ApiResponse({ status: 200, description: 'Note deleted' })
 	async deleteNote(@Param('id') courseId: string, @Param('noteId') noteId: string, @Req() req) {
 		const user = req.user as AuthenticatedUser;
-		return await this.coursService.deleteUserNote(user._id, noteId);
+		return await this.coursNotesService.deleteUserNote(user._id, noteId);
 	}
 }

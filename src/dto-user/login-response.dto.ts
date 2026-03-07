@@ -40,11 +40,23 @@ export class LoginResponseDto {
   })
   access_token: string;
 
+  @ApiPropertyOptional({
+    description: 'JWT access token (camelCase compatibility field)',
+    example: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...'
+  })
+  accessToken?: string;
+
   @ApiProperty({
     description: 'JWT refresh token',
     example: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...'
   })
   refresh_token: string;
+
+  @ApiPropertyOptional({
+    description: 'JWT refresh token (camelCase compatibility field)',
+    example: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...'
+  })
+  refreshToken?: string;
 
   @ApiPropertyOptional({
     description: 'User information (only present after successful 2FA verification)',

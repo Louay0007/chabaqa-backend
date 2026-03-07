@@ -15,11 +15,20 @@ import { Challenge, ChallengeSchema } from '../../schema/challenge.schema';
 import { Event, EventSchema } from '../../schema/event.schema';
 import { Product, ProductSchema } from '../../schema/product.schema';
 import { Session, SessionSchema } from '../../schema/session.schema';
+import {
+  ProcessedWebhookEvent,
+  ProcessedWebhookEventSchema,
+} from '../../schema/processed-webhook-event.schema';
+import {
+  PaymentAuditLog,
+  PaymentAuditLogSchema,
+} from '../../schema/payment-audit-log.schema';
 import { PromoService } from '../services/promo.service';
 import { FeeService } from '../services/fee.service';
 import { ManualPaymentService } from '../services/manual-payment.service';
 import { EmailService } from '../services/email.service';
 import { PaymentFulfillmentService } from '../services/payment-fulfillment.service';
+import { PaymentAuditService } from '../services/payment-audit.service';
 import { UploadModule } from '../../upload/upload.module';
 import { NotificationModule } from '../../notification/notification.module';
 import { CoursModule } from '../../cours/cours.module';
@@ -45,6 +54,8 @@ import { ProductModule } from '../../product/product.module';
       { name: Event.name, schema: EventSchema },
       { name: Product.name, schema: ProductSchema },
       { name: Session.name, schema: SessionSchema },
+      { name: ProcessedWebhookEvent.name, schema: ProcessedWebhookEventSchema },
+      { name: PaymentAuditLog.name, schema: PaymentAuditLogSchema },
     ]),
     UploadModule,
     NotificationModule,
@@ -64,6 +75,7 @@ import { ProductModule } from '../../product/product.module';
     ManualPaymentService,
     EmailService,
     PaymentFulfillmentService,
+    PaymentAuditService,
   ],
   exports: [
     FlouciPaymentService,
@@ -72,6 +84,7 @@ import { ProductModule } from '../../product/product.module';
     PromoService,
     FeeService,
     PaymentFulfillmentService,
+    PaymentAuditService,
   ],
 })
 export class PaymentModule { }

@@ -30,6 +30,7 @@ import {
   ChapterAccessContext,
   ChapterAccessService,
 } from '../common/services/chapter-access.service';
+import { applyWatchTimePolicy } from '../common/utils/watch-time-policy.util';
 
 @Injectable()
 export class CourseEnrollmentService {
@@ -95,11 +96,6 @@ export class CourseEnrollmentService {
     progressionEntry?: any,
     explicitVideoDuration?: number,
   ): number {
-    const explicit = Number(explicitVideoDuration || 0);
-    if (Number.isFinite(explicit) && explicit > 0) {
-      return Math.floor(explicit);
-    }
-
     const progressVideoDuration = Number(progressionEntry?.videoDuration || 0);
     if (Number.isFinite(progressVideoDuration) && progressVideoDuration > 0) {
       return Math.floor(progressVideoDuration);
@@ -107,7 +103,8 @@ export class CourseEnrollmentService {
 
     const rawDuration = Number(chapter?.duree || 0);
     if (!Number.isFinite(rawDuration) || rawDuration <= 0) {
-      return 0;
+      const explicit = Number(explicitVideoDuration || 0);
+      return Number.isFinite(explicit) && explicit > 0 ? Math.floor(explicit) : 0;
     }
 
     // Canonical storage is minutes in course chapter payloads.
@@ -803,12 +800,57 @@ export class CourseEnrollmentService {
 
     const normalizedWatchTimeSeconds = Math.floor(watchTime);
     const currentProgression = Number(progress.watchTime ?? 0);
+    const trustedDurationSeconds = this.normalizeChapterDurationSeconds(
+      chapterNode.chapter,
+      progress,
+      undefined,
+    );
+    const clientDurationSeconds = Number(videoDuration || 0);
+
+    if (
+      clientDurationSeconds > 0 &&
+      trustedDurationSeconds <= 0
+    ) {
+      const normalizedMinutes = Math.max(1, Math.round(clientDurationSeconds / 60));
+      if (!chapterNode.chapter.duree || chapterNode.chapter.duree <= 0) {
+        console.log(
+          `📝 [CourseEnrollmentService] Backfilling chapter ${chapterId} duration to ${normalizedMinutes} minutes (${clientDurationSeconds}s)`,
+        );
+        chapterNode.chapter.duree = normalizedMinutes;
+        course.markModified('sections');
+        await course.save();
+      }
+      (progress as any).videoDuration = Math.floor(clientDurationSeconds);
+    }
+
+    const chapterDurationSeconds = this.normalizeChapterDurationSeconds(
+      chapterNode.chapter,
+      progress,
+      undefined,
+    );
+    const boundedRequestedWatchTimeSeconds =
+      chapterDurationSeconds > 0
+        ? Math.min(normalizedWatchTimeSeconds, chapterDurationSeconds)
+        : normalizedWatchTimeSeconds;
+
+    const policy = applyWatchTimePolicy({
+      currentWatchTimeSeconds: currentProgression,
+      requestedWatchTimeSeconds: boundedRequestedWatchTimeSeconds,
+      lastAcceptedAt: progress.lastAccessedAt,
+      maxDurationSeconds: chapterDurationSeconds,
+    });
 
     // Store monotonically increasing watch time only.
-    if (normalizedWatchTimeSeconds > currentProgression) {
-      const deltaSeconds = normalizedWatchTimeSeconds - currentProgression;
-      progress.watchTime = normalizedWatchTimeSeconds;
-      console.log(`📈 [CourseEnrollmentService] Progress increased: ${currentProgression}s -> ${normalizedWatchTimeSeconds}s (delta: ${deltaSeconds}s)`);
+    if (!policy.ignored) {
+      if (policy.acceptedAdvanceSeconds > policy.maxAllowedAdvanceSeconds) {
+        throw new BadRequestException(
+          `Watch time jump rejected. Maximum allowed advance is ${policy.maxAllowedAdvanceSeconds} seconds.`,
+        );
+      }
+
+      const deltaSeconds = policy.acceptedAdvanceSeconds;
+      progress.watchTime = policy.acceptedWatchTimeSeconds;
+      console.log(`📈 [CourseEnrollmentService] Progress increased: ${currentProgression}s -> ${policy.acceptedWatchTimeSeconds}s (delta: ${deltaSeconds}s)`);
 
       // Real-time rollup of watchTime into AnalyticsDaily
       if (deltaSeconds > 0 && course?.creatorId) {
@@ -832,7 +874,7 @@ export class CourseEnrollmentService {
         }
       }
     } else {
-      console.log(`ℹ️ [CourseEnrollmentService] Progress maintained at ${currentProgression}s (ignored smaller value ${normalizedWatchTimeSeconds}s)`);
+      console.log(`ℹ️ [CourseEnrollmentService] Progress maintained at ${currentProgression}s (ignored stale value ${normalizedWatchTimeSeconds}s)`);
     }
 
     // Auto-complete chapter if watch time reaches threshold
@@ -843,32 +885,6 @@ export class CourseEnrollmentService {
     let watchPercentage = 0;
 
     // Get chapter duration for percentage calculation
-    let chapterDurationSeconds: number | undefined = undefined;
-
-    // If videoDuration is provided from client, keep a canonical minute value in chapter data
-    // and save exact seconds on enrollment progression entry.
-    if (videoDuration && videoDuration > 0) {
-      const normalizedMinutes = Math.max(1, Math.round(videoDuration / 60));
-      if (
-        !chapterNode.chapter.duree ||
-        chapterNode.chapter.duree <= 0 ||
-        Math.abs(Number(chapterNode.chapter.duree) - normalizedMinutes) >= 1
-      ) {
-        console.log(
-          `📝 [CourseEnrollmentService] Normalizing chapter ${chapterId} duration to ${normalizedMinutes} minutes (${videoDuration}s)`,
-        );
-        chapterNode.chapter.duree = normalizedMinutes;
-        course.markModified('sections');
-        await course.save();
-      }
-      (progress as any).videoDuration = Math.floor(videoDuration);
-    }
-    chapterDurationSeconds = this.normalizeChapterDurationSeconds(
-      chapterNode.chapter,
-      progress,
-      videoDuration,
-    );
-
     if (
       !progress.isCompleted &&
       chapterDurationSeconds &&

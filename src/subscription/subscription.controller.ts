@@ -1,4 +1,4 @@
-import { Controller, Post, UseGuards, Request, Body, Get, Query, Put, Delete, Param, HttpCode, HttpStatus } from '@nestjs/common';
+import { Controller, Post, UseGuards, Request, Body, Get, Query, Put, Delete, Param, HttpCode, HttpStatus, Logger } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags, ApiBody, ApiQuery, ApiResponse, ApiParam } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { SubscriptionService } from './subscription.service';
@@ -23,6 +23,8 @@ import { PaginatedResponseDto } from '../common/dto/paginated-response.dto';
 @ApiTags('Subscriptions')
 @Controller('subscriptions')
 export class SubscriptionController {
+  private readonly logger = new Logger(SubscriptionController.name);
+
   constructor(private readonly subscriptionService: SubscriptionService) {}
 
   @Post('start-trial')
@@ -225,12 +227,19 @@ export class SubscriptionController {
   // ============ WEBHOOK ENDPOINTS ============
 
   @Post('webhook')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Handle payment provider webhooks' })
+  @HttpCode(HttpStatus.GONE)
+  @ApiOperation({ summary: 'Deprecated unsigned webhook endpoint' })
   @ApiBody({ type: WebhookEventDto })
   @ApiResponse({ status: 200, type: WebhookResponseDto })
   async handleWebhook(@Body() webhookEvent: WebhookEventDto): Promise<WebhookResponseDto> {
-    return this.subscriptionService.handleWebhook(webhookEvent);
+    this.logger.warn(
+      `Rejected unsigned subscription webhook attempt for event ${webhookEvent?.id || 'unknown'}`,
+    );
+    return {
+      message: 'Unsigned webhook payloads are no longer accepted. Use a provider-specific signed webhook endpoint.',
+      eventId: webhookEvent?.id || 'unknown',
+      status: 'skipped',
+    };
   }
 
   // ============ INVOICE ENDPOINTS ============

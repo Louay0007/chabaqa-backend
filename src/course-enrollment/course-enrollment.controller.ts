@@ -15,6 +15,7 @@ import { CourseEnrollmentService } from './course-enrollment.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { StartChapterDto, StartChapterResponseDto } from '../dto-cours/start-chapter.dto';
 import { CompleteSectionDto, CompleteSectionResponseDto } from '../dto-cours/complete-section.dto';
+import { UpdateTotalWatchTimeDto } from '../common/dto/update-watch-time.dto';
 
 // Interface pour typer l'objet req.user
 interface AuthenticatedUser {
@@ -155,21 +156,14 @@ export class CourseEnrollmentController {
   @ApiParam({ name: 'courseId', description: 'Course ID' })
   @ApiParam({ name: 'chapterId', description: 'Chapter ID' })
   @ApiBody({
-    schema: {
-      type: 'object',
-      properties: {
-        watchTime: { type: 'number', description: 'Watch time in seconds' },
-        videoDuration: { type: 'number', description: 'Video duration in seconds (optional)' }
-      },
-      required: ['watchTime']
-    }
+    type: UpdateTotalWatchTimeDto,
   })
   @ApiResponse({ status: 200, description: 'Watch time updated successfully' })
   async updateWatchTime(
     @Request() req: { user: AuthenticatedUser },
     @Param('courseId') courseId: string,
     @Param('chapterId') chapterId: string,
-    @Body() body: { watchTime: number; videoDuration?: number }
+    @Body() body: UpdateTotalWatchTimeDto
   ) {
     console.log(`⏱️ [CourseEnrollmentController] Mise à jour du temps de visionnage pour le chapitre ${chapterId}`);
     console.log(`   👤 Utilisateur: ${req.user._id}`);

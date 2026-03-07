@@ -7,6 +7,7 @@ import { FileValidationService } from '../services/file-validation.service';
 import { RateLimitGuard } from '../guards/rate-limit.guard';
 import { IPReputationGuard } from '../guards/ip-reputation.guard';
 import { BotDetectionGuard } from '../guards/bot-detection.guard';
+import { PublicThrottlerGuard } from '../guards/public-throttler.guard';
 import { SecurityMiddleware } from '../middleware/security.middleware';
 import { WAFMiddleware } from '../middleware/waf.middleware';
 import { CaptchaController } from '../controllers/captcha.controller';
@@ -46,6 +47,7 @@ import { CacheModule } from './cache.module';
     BotDetectionService,
     FileValidationService,
     RateLimitGuard, 
+    PublicThrottlerGuard,
     IPReputationGuard, 
     BotDetectionGuard,
     SecurityMiddleware,
@@ -57,6 +59,7 @@ import { CacheModule } from './cache.module';
     BotDetectionService,
     FileValidationService,
     RateLimitGuard, 
+    PublicThrottlerGuard,
     IPReputationGuard, 
     BotDetectionGuard,
     SecurityMiddleware,

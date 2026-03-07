@@ -2713,6 +2713,28 @@ export class CoursService {
     return { trackingId: course?.id ? String(course.id) : String(coursId), course };
   }
 
+  private estimateCourseDurationSeconds(course: any | null): number | undefined {
+    if (!course || !Array.isArray(course.sections)) {
+      return undefined;
+    }
+
+    const totalMinutes = course.sections.reduce((sectionAcc: number, section: any) => {
+      const chapterMinutes = Array.isArray(section?.chapitres)
+        ? section.chapitres.reduce((chapterAcc: number, chapter: any) => {
+          const rawMinutes = Number(chapter?.duree || 0);
+          return chapterAcc + (Number.isFinite(rawMinutes) && rawMinutes > 0 ? rawMinutes : 0);
+        }, 0)
+        : 0;
+      return sectionAcc + chapterMinutes;
+    }, 0);
+
+    if (!Number.isFinite(totalMinutes) || totalMinutes <= 0) {
+      return undefined;
+    }
+
+    return Math.floor(totalMinutes * 60);
+  }
+
   /**
    * Enregistrer une vue d'un cours
    */
@@ -2784,8 +2806,14 @@ export class CoursService {
    * Mettre à jour le temps de visionnage d'un cours
    */
   async updateCoursWatchTime(coursId: string, userId: string, additionalTime: number) {
-    const { trackingId } = await this.resolveCourseTrackingId(coursId);
-    return await this.trackingService.updateWatchTime(userId, trackingId, TrackableContentType.COURSE, additionalTime);
+    const { trackingId, course } = await this.resolveCourseTrackingId(coursId);
+    return await this.trackingService.updateWatchTime(
+      userId,
+      trackingId,
+      TrackableContentType.COURSE,
+      additionalTime,
+      { maxDurationSeconds: this.estimateCourseDurationSeconds(course) },
+    );
   }
 
   /**

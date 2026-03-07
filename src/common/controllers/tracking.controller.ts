@@ -15,6 +15,7 @@ import { ApiBearerAuth, ApiOperation, ApiTags, ApiQuery, ApiParam, ApiBody } fro
 import { ContentTrackingService } from '../services/content-tracking.service';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { TrackableContentType, TrackingActionType } from '../../schema/content-tracking.schema';
+import { UpdateIncrementalWatchTimeDto } from '../dto/update-watch-time.dto';
 
 interface AuthenticatedUser {
   _id: string;
@@ -128,14 +129,15 @@ export class TrackingController {
   @ApiOperation({ summary: 'Update watch time' })
   @ApiParam({ name: 'contentType', enum: TrackableContentType })
   @ApiParam({ name: 'contentId', description: 'Content ID' })
+  @ApiBody({ type: UpdateIncrementalWatchTimeDto })
   async updateWatchTime(
     @Param('contentType') contentType: TrackableContentType,
     @Param('contentId') contentId: string,
-    @Body('additionalTime') additionalTime: number,
+    @Body() body: UpdateIncrementalWatchTimeDto,
     @Req() req
   ) {
     const user = req.user as AuthenticatedUser;
-    return await this.trackingService.updateWatchTime(user._id, contentId, contentType, additionalTime);
+    return await this.trackingService.updateWatchTime(user._id, contentId, contentType, body.additionalTime);
   }
 
   /**

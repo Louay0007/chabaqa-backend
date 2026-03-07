@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Order, OrderDocument } from '../../schema/order.schema';
+import { PaymentAuditService } from './payment-audit.service';
 
 type ClaimState = 'claimed' | 'completed' | 'requires_booking' | 'processing' | 'missing' | 'unclaimed';
 
@@ -9,6 +10,7 @@ type ClaimState = 'claimed' | 'completed' | 'requires_booking' | 'processing' | 
 export class PaymentFulfillmentService {
   constructor(
     @InjectModel(Order.name) private readonly orderModel: Model<OrderDocument>,
+    private readonly paymentAuditService: PaymentAuditService,
   ) {}
 
   async claimForProcessing(
@@ -48,6 +50,18 @@ export class PaymentFulfillmentService {
     }
     const claimedOrder = await query.exec();
     if (claimedOrder) {
+      await this.paymentAuditService.log(
+        {
+          orderId: claimedOrder._id,
+          eventType: 'claimed',
+          paymentMethod,
+          nextStatus: String(claimedOrder.status || 'paid'),
+          metadata: {
+            fulfillmentStatus: claimedOrder.metadata?.fulfillmentStatus,
+          },
+        },
+        session,
+      );
       return { state: 'claimed', order: claimedOrder };
     }
 
@@ -79,6 +93,7 @@ export class PaymentFulfillmentService {
     session: any = null,
     metadataPatch?: Record<string, any>,
   ): Promise<OrderDocument | any> {
+    const previousStatus = String(order.status || '');
     const nextMetadata: Record<string, any> = {
       ...(order.metadata || {}),
       ...(metadataPatch || {}),
@@ -92,6 +107,20 @@ export class PaymentFulfillmentService {
     order.status = 'paid';
     order.metadata = nextMetadata;
     await order.save(session ? { session } : undefined);
+    await this.paymentAuditService.log(
+      {
+        orderId: order._id,
+        eventType: 'completed',
+        paymentMethod: order.paymentMethod,
+        previousStatus,
+        nextStatus: 'paid',
+        metadata: {
+          fulfillmentStatus: nextMetadata.fulfillmentStatus,
+          fulfillmentCompletedAt: nextMetadata.fulfillmentCompletedAt,
+        },
+      },
+      session,
+    );
     return order;
   }
 
@@ -100,6 +129,7 @@ export class PaymentFulfillmentService {
     session: any = null,
     metadataPatch?: Record<string, any>,
   ): Promise<OrderDocument | any> {
+    const previousStatus = String(order.status || '');
     order.status = 'paid';
     order.metadata = {
       ...(order.metadata || {}),
@@ -110,6 +140,21 @@ export class PaymentFulfillmentService {
       fulfillmentUpdatedAt: new Date().toISOString(),
     };
     await order.save(session ? { session } : undefined);
+    await this.paymentAuditService.log(
+      {
+        orderId: order._id,
+        eventType: 'requires_booking',
+        paymentMethod: order.paymentMethod,
+        previousStatus,
+        nextStatus: order.status,
+        reason: 'missing_scheduledAt',
+        metadata: {
+          fulfillmentStatus: order.metadata?.fulfillmentStatus,
+          fulfillmentAction: order.metadata?.fulfillmentAction,
+        },
+      },
+      session,
+    );
     return order;
   }
 
@@ -118,6 +163,7 @@ export class PaymentFulfillmentService {
     error: any,
     session: any = null,
   ): Promise<OrderDocument | any> {
+    const previousStatus = String(order.status || '');
     order.metadata = {
       ...(order.metadata || {}),
       fulfillmentStatus: 'failed',
@@ -125,6 +171,20 @@ export class PaymentFulfillmentService {
       fulfillmentUpdatedAt: new Date().toISOString(),
     };
     await order.save(session ? { session } : undefined);
+    await this.paymentAuditService.log(
+      {
+        orderId: order._id,
+        eventType: 'failed',
+        paymentMethod: order.paymentMethod,
+        previousStatus,
+        nextStatus: order.status,
+        error: String(error?.message || error || 'Fulfillment failed'),
+        metadata: {
+          fulfillmentStatus: order.metadata?.fulfillmentStatus,
+        },
+      },
+      session,
+    );
     return order;
   }
 }

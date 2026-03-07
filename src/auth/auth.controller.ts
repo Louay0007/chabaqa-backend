@@ -2,7 +2,8 @@ import { Controller, Post, Body, HttpCode, HttpStatus, UseGuards, Get, Req, Res,
 import { AuthGuard } from '@nestjs/passport';
 import { Response } from 'express';
 import { ApiTags, ApiOperation, ApiResponse, ApiBody, ApiBearerAuth } from '@nestjs/swagger';
-import { AuthService } from './auth.service';
+import { Throttle } from '@nestjs/throttler';
+import { AuthService, UserAuthPayload, UserRefreshPayload } from './auth.service';
 import { LoginDto } from '../dto-user/login.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { RegisterDto } from '../dto-user/register.dto';
@@ -11,6 +12,8 @@ import { VerifyEmailOtpDto } from '../dto-user/verify-email-otp.dto';
 import { ResendEmailOtpDto } from '../dto-user/resend-email-otp.dto';
 import { GoogleAuthGuard } from './guards/google-auth.guard';
 import { CookieUtil } from '../common/utils/cookie.util';
+import { PublicThrottlerGuard } from '../common/guards/public-throttler.guard';
+import { RefreshTokenDto } from './dto/refresh-token.dto';
 
 @ApiTags('Authentication')
 @Controller('auth')
@@ -47,6 +50,8 @@ export class AuthController {
   }
 
   @Post('login')
+  @UseGuards(PublicThrottlerGuard)
+  @Throttle({ default: { ttl: 60000, limit: 5 } } as any)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'User Login',
@@ -65,15 +70,61 @@ export class AuthController {
     }
   })
   @ApiResponse({ status: 401, description: 'Invalid credentials' })
-  async login(@Body() loginDto: LoginDto, @Res({ passthrough: true }) res: Response) {
+  async login(
+    @Body() loginDto: LoginDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<UserAuthPayload> {
     const result = await this.authService.login(loginDto);
-    if (result?.accessToken) {
-      res.cookie(CookieUtil.COOKIE_NAMES.ACCESS_TOKEN, result.accessToken, {
-        ...CookieUtil.ACCESS_TOKEN_CONFIG,
-        maxAge: 7 * 24 * 60 * 60 * 1000,
-      });
+    if (result?.accessToken && result?.refreshToken) {
+      CookieUtil.setTokenCookies(res as any, result.accessToken, result.refreshToken, !!result.rememberMe);
     }
     return result;
+  }
+
+  @Post('refresh')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Refresh user access token',
+    description: 'Refresh a user access token using a refresh token from the request body or cookies.',
+  })
+  @ApiBody({ type: RefreshTokenDto, required: false })
+  async refreshToken(
+    @Body() body: { refreshToken?: string; refresh_token?: string } = {},
+    @Req() req,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<{
+    success: true;
+    data: UserRefreshPayload;
+    access_token: string;
+    accessToken: string;
+    expires_in: number;
+    user: any;
+  }> {
+    const refreshToken = (
+      body?.refreshToken
+      || body?.refresh_token
+      || req.cookies?.refreshToken
+      || req.cookies?.refresh_token
+      || ''
+    ).trim();
+
+    if (!refreshToken) {
+      throw new UnauthorizedException('Refresh token manquant');
+    }
+
+    const result = await this.authService.refreshToken(refreshToken);
+    if (result?.accessToken) {
+      CookieUtil.setAccessTokenCookie(res as any, result.accessToken, false);
+    }
+
+    return {
+      success: true,
+      data: result,
+      access_token: result.access_token,
+      accessToken: result.accessToken,
+      expires_in: result.expires_in,
+      user: result.user,
+    };
   }
 
   @UseGuards(JwtAuthGuard)
@@ -125,14 +176,13 @@ export class AuthController {
       || req.cookies?.access_token
       || ''
     ).trim();
+    const refreshToken = (
+      req.cookies?.refreshToken
+      || req.cookies?.refresh_token
+      || ''
+    ).trim();
 
-    try {
-      if (accessToken) {
-        await this.authService.revokeToken(accessToken);
-      }
-    } catch {
-      // Keep logout idempotent even with invalid/expired token
-    }
+    await this.authService.logout(accessToken, refreshToken);
 
     CookieUtil.clearTokenCookies(res as any);
 
@@ -156,10 +206,17 @@ export class AuthController {
       || req.cookies?.access_token
       || ''
     ).trim();
+    const refreshToken = (
+      req.cookies?.refreshToken
+      || req.cookies?.refresh_token
+      || ''
+    ).trim();
 
     try {
       if (accessToken) {
         await this.authService.revokeAllTokensFromAccessToken(accessToken);
+      } else if (refreshToken) {
+        await this.authService.revokeAllTokensFromRefreshToken(refreshToken);
       }
     } catch {
       // Keep endpoint idempotent.
@@ -173,6 +230,8 @@ export class AuthController {
   }
 
   @Post('forgot-password')
+  @UseGuards(PublicThrottlerGuard)
+  @Throttle({ default: { ttl: 900000, limit: 3 } } as any)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Forgot Password', description: 'Send password reset code to user email.' })
   @ApiBody({ schema: { type: 'object', properties: { email: { type: 'string' } } } })
@@ -181,6 +240,8 @@ export class AuthController {
   }
 
   @Post('reset-password')
+  @UseGuards(PublicThrottlerGuard)
+  @Throttle({ default: { ttl: 900000, limit: 3 } } as any)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Reset Password', description: 'Reset password using code sent to email.' })
   @ApiBody({ type: ResetPasswordDto })
@@ -201,6 +262,7 @@ export class AuthController {
   async googleAuthCallback(@Req() req, @Res() res: Response) {
     try {
       const result = await (this.authService as any).loginWithGoogle(req.user);
+      CookieUtil.setTokenCookies(res as any, result.accessToken, result.refreshToken, !!result.rememberMe);
       const frontendBaseUrl = this.getFrontendBaseUrl();
 
       const stateParam = Array.isArray(req.query?.state) ? req.query.state[0] : req.query?.state;
@@ -232,6 +294,8 @@ export class AuthController {
   }
 
   @Post('register')
+  @UseGuards(PublicThrottlerGuard)
+  @Throttle({ default: { ttl: 900000, limit: 3 } } as any)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'User Registration (Send OTP)' })
   @ApiBody({ type: RegisterDto })
@@ -240,6 +304,8 @@ export class AuthController {
   }
 
   @Post('register-creator')
+  @UseGuards(PublicThrottlerGuard)
+  @Throttle({ default: { ttl: 900000, limit: 3 } } as any)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Creator Registration (Send OTP)' })
   @ApiBody({ type: RegisterDto })
@@ -256,6 +322,8 @@ export class AuthController {
   }
 
   @Post('register/resend-otp')
+  @UseGuards(PublicThrottlerGuard)
+  @Throttle({ default: { ttl: 900000, limit: 3 } } as any)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Resend Registration OTP' })
   @ApiBody({ type: ResendEmailOtpDto })

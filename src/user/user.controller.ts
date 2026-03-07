@@ -1,5 +1,6 @@
 import { Controller, Post, Get, Put, Delete, Body, Param, HttpStatus, Res, Response, ConflictException, UseGuards, Request, ForbiddenException, BadRequestException, UseInterceptors } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBody, ApiBearerAuth, ApiParam } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { UserService } from './user.service';
 import { CreateUserDto } from '../dto-user/create-user.dto';
 import { UpdateUserDto } from '../dto-user/update-user.dto';
@@ -10,6 +11,7 @@ import { DeleteAccountDto } from '../dto-user/delete-account.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { HttpCacheInterceptor } from '../common/interceptors/cache.interceptor';
 import { CacheTTL } from '../common/decorators/cache-ttl.decorator';
+import { PublicThrottlerGuard } from '../common/guards/public-throttler.guard';
 
 @ApiTags('Users')
 @Controller('user')
@@ -507,6 +509,8 @@ export class UserController {
 
   // Demande de mot de passe oublié
   @Post('forgot-password')
+  @UseGuards(PublicThrottlerGuard)
+  @Throttle({ default: { ttl: 900000, limit: 3 } } as any)
   @ApiOperation({
     summary: 'Request Password Reset',
     description: 'Request password reset and send verification code to email.',
@@ -569,6 +573,8 @@ export class UserController {
 
   // Réinitialisation du mot de passe avec code de vérification
   @Post('reset-password')
+  @UseGuards(PublicThrottlerGuard)
+  @Throttle({ default: { ttl: 900000, limit: 3 } } as any)
   @ApiOperation({
     summary: 'Reset Password with Verification Code',
     description: 'Reset password using verification code sent to email.',

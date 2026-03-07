@@ -14,7 +14,7 @@ import { RegisterDto } from '../dto-user/register.dto';
 import { UploadService } from '../upload/upload.service';
 import { generateUniqueUsername } from '../common/utils/username.util';
 import { TokenBlacklistService } from '../common/services/token-blacklist.service';
-import { getJwtSecret } from '../common/utils/security-config.util';
+import { getJwtRefreshSecret, getJwtSecret } from '../common/utils/security-config.util';
 
 type RegistrationRole = 'user' | 'creator';
 
@@ -25,6 +25,32 @@ interface PendingRegistrationMetadata {
   numtel?: string;
   date_naissance?: string;
   role: RegistrationRole;
+}
+
+interface UserTokenPair {
+  accessToken: string;
+  refreshToken: string;
+  rememberMe: boolean;
+  accessExpiresInSeconds: number;
+  refreshExpiresInSeconds: number;
+}
+
+export interface UserAuthPayload {
+  accessToken: string;
+  refreshToken: string;
+  access_token: string;
+  refresh_token: string;
+  rememberMe: boolean;
+  expires_in: number;
+  user: any;
+  message?: string;
+}
+
+export interface UserRefreshPayload {
+  accessToken: string;
+  access_token: string;
+  expires_in: number;
+  user: any;
 }
 
 @Injectable()
@@ -75,6 +101,23 @@ export class AuthService {
     };
   }
 
+  private buildAuthPayload(
+    user: UserDocument,
+    tokens: UserTokenPair,
+    message?: string,
+  ): UserAuthPayload {
+    return {
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+      access_token: tokens.accessToken,
+      refresh_token: tokens.refreshToken,
+      rememberMe: tokens.rememberMe,
+      expires_in: tokens.accessExpiresInSeconds,
+      user: this.buildUserDto(user),
+      ...(message ? { message } : {}),
+    };
+  }
+
   async loginWithGoogle(oauthUser: {
     provider: 'google';
     providerId: string;
@@ -102,17 +145,11 @@ export class AuthService {
       });
     }
 
-    const accessToken = this.generateToken(user);
+    const tokens = this.generateTokens(user, true);
 
     await this.userLoginActivityService.trackUserLoginForAllCommunities(user._id.toString());
 
-    return {
-      access_token: accessToken,
-      refresh_token: '',
-      user: this.buildUserDto(user),
-      rememberMe: true,
-      message: 'Connexion réussie avec Google',
-    };
+    return this.buildAuthPayload(user, tokens, 'Connexion réussie avec Google');
   }
 
   async loginWithGoogleMobile(idToken: string): Promise<LoginResponseDto> {
@@ -160,18 +197,54 @@ export class AuthService {
     return user as UserDocument;
   }
 
-  public generateToken(user: UserDocument): string {
+  private generateTokens(user: UserDocument, rememberMe = false): UserTokenPair {
+    const currentTime = Date.now();
+    const accessTokenId = `${user._id}-access-${currentTime}`;
+    const refreshTokenId = `${user._id}-refresh-${currentTime}`;
+    const accessExpiresIn = rememberMe ? '4h' : '2h';
+    const refreshExpiresIn = rememberMe ? '90d' : '30d';
+    const accessExpiresInSeconds = rememberMe ? 4 * 60 * 60 : 2 * 60 * 60;
+    const refreshExpiresInSeconds = rememberMe ? 90 * 24 * 60 * 60 : 30 * 24 * 60 * 60;
     const payload = {
       sub: user._id,
       email: user.email,
       role: user.role,
-      jti: `${user._id}-${Date.now()}`,
+      rememberMe,
     };
 
-    return this.jwtService.sign(payload, {
-      expiresIn: '7d',
-      secret: getJwtSecret(),
-    });
+    const accessToken = this.jwtService.sign(
+      {
+        ...payload,
+        jti: accessTokenId,
+      },
+      {
+        expiresIn: accessExpiresIn,
+        secret: getJwtSecret(),
+      },
+    );
+
+    const refreshToken = this.jwtService.sign(
+      {
+        ...payload,
+        jti: refreshTokenId,
+      },
+      {
+        expiresIn: refreshExpiresIn,
+        secret: getJwtRefreshSecret(),
+      },
+    );
+
+    return {
+      accessToken,
+      refreshToken,
+      rememberMe,
+      accessExpiresInSeconds,
+      refreshExpiresInSeconds,
+    };
+  }
+
+  public generateToken(user: UserDocument): string {
+    return this.generateTokens(user, false).accessToken;
   }
 
   async revokeToken(token: string): Promise<void> {
@@ -183,6 +256,18 @@ export class AuthService {
       new Types.ObjectId(payload.sub),
       payload,
       'access',
+    );
+  }
+
+  async revokeRefreshToken(token: string): Promise<void> {
+    const parsed = token?.trim();
+    if (!parsed) return;
+    const payload: any = this.jwtService.verify(parsed, { secret: getJwtRefreshSecret() });
+    if (!payload?.sub) return;
+    await this.tokenBlacklistService.revokeTokenFromJWT(
+      new Types.ObjectId(payload.sub),
+      payload,
+      'refresh',
     );
   }
 
@@ -200,15 +285,96 @@ export class AuthService {
     await this.revokeAllTokensForUser(userId);
   }
 
-  async login(loginDto: LoginDto): Promise<{ accessToken: string; user: any }> {
-    const user = await this.validateUser(loginDto.email, loginDto.password);
+  async revokeAllTokensFromRefreshToken(token: string): Promise<void> {
+    const parsed = token?.trim();
+    if (!parsed) return;
+    const payload: any = this.jwtService.verify(parsed, { secret: getJwtRefreshSecret() });
+    const userId = payload?.sub ? String(payload.sub) : '';
+    if (!userId) return;
+    await this.revokeAllTokensForUser(userId);
+  }
 
-    const accessToken = this.generateToken(user);
+  private async verifyRefreshToken(refreshToken: string): Promise<any> {
+    const payload = this.jwtService.verify(refreshToken, {
+      secret: getJwtRefreshSecret(),
+    });
+    const tokenId = payload?.jti || `${payload?.sub}-${payload?.iat}`;
+    const isRevoked = await this.tokenBlacklistService.isTokenRevoked(tokenId, String(payload?.sub || ''));
+    if (isRevoked) {
+      throw new UnauthorizedException('Token de rafraîchissement révoqué');
+    }
+    return payload;
+  }
+
+  async login(loginDto: LoginDto): Promise<UserAuthPayload> {
+    const user = await this.validateUser(loginDto.email, loginDto.password);
+    const tokens = this.generateTokens(user, !!loginDto.remember_me);
     await this.userLoginActivityService.trackUserLoginForAllCommunities(user._id.toString());
 
+    return this.buildAuthPayload(user, tokens, 'Connexion réussie');
+  }
+
+  async refreshToken(refreshToken: string): Promise<UserRefreshPayload> {
+    try {
+      const payload = await this.verifyRefreshToken(refreshToken);
+      const user = await this.userModel.findById(payload.sub).exec();
+      if (!user) {
+        throw new UnauthorizedException('Utilisateur non trouvé');
+      }
+
+      const currentTime = Date.now();
+      const rememberMe = !!payload?.rememberMe;
+      const accessExpiresIn = rememberMe ? '4h' : '2h';
+      const accessExpiresInSeconds = rememberMe ? 4 * 60 * 60 : 2 * 60 * 60;
+      const newAccessToken = this.jwtService.sign(
+        {
+          sub: user._id,
+          email: user.email,
+          role: user.role,
+          rememberMe,
+          jti: `${user._id}-access-${currentTime}`,
+        },
+        {
+          expiresIn: accessExpiresIn,
+          secret: getJwtSecret(),
+        },
+      );
+
+      return {
+        accessToken: newAccessToken,
+        access_token: newAccessToken,
+        expires_in: accessExpiresInSeconds,
+        user: this.buildUserDto(user),
+      };
+    } catch (error) {
+      throw new UnauthorizedException('Token de rafraîchissement invalide');
+    }
+  }
+
+  async logout(accessToken?: string, refreshToken?: string): Promise<{ message: string; revokedTokens: number }> {
+    let revokedCount = 0;
+
+    try {
+      if (accessToken) {
+        await this.revokeToken(accessToken);
+        revokedCount += 1;
+      }
+    } catch {
+      // Keep logout idempotent even if access token is invalid or expired.
+    }
+
+    try {
+      if (refreshToken) {
+        await this.revokeRefreshToken(refreshToken);
+        revokedCount += 1;
+      }
+    } catch {
+      // Keep logout idempotent even if refresh token is invalid or expired.
+    }
+
     return {
-      accessToken,
-      user: this.buildUserDto(user),
+      message: 'Déconnexion réussie.',
+      revokedTokens: revokedCount,
     };
   }
 

@@ -6,6 +6,12 @@ import { extname, join } from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { CoursController } from './cours.controller';
 import { CoursService } from './cours.service';
+import { CoursContentService } from './services/cours-content.service';
+import { CoursEnrollmentService } from './services/cours-enrollment.service';
+import { CoursProgressionService } from './services/cours-progression.service';
+import { CoursTrackingService } from './services/cours-tracking.service';
+import { CoursNotesService } from './services/cours-notes.service';
+import { CoursRewardsService } from './services/cours-rewards.service';
 import { CoursSchema, CourseEnrollmentSchema, CourseProgressSchema } from '../schema/course.schema';
 import { UserCourseNote, UserCourseNoteSchema } from '../schema/user-course-note.schema';
 import { CommunitySchema } from '../schema/community.schema';
@@ -69,7 +75,23 @@ import { AchievementModule } from '../achievement/achievement.module';
     AchievementModule
   ],
   controllers: [CoursController],
-  providers: [CoursService],
-  exports: [CoursService]
+  providers: [
+    CoursService,
+    CoursContentService,
+    CoursEnrollmentService,
+    CoursProgressionService,
+    CoursTrackingService,
+    CoursNotesService,
+    CoursRewardsService,
+  ],
+  exports: [
+    CoursService,
+    CoursContentService,
+    CoursEnrollmentService,
+    CoursProgressionService,
+    CoursTrackingService,
+    CoursNotesService,
+    CoursRewardsService,
+  ]
 })
 export class CoursModule {} 

@@ -20,6 +20,7 @@ import { Event, EventDocument } from '../../schema/event.schema';
 import { Product, ProductDocument } from '../../schema/product.schema';
 import { Post, PostDocument } from '../../schema/post.schema';
 import { Ga4Service } from '../../ga4/ga4.service';
+import { applyWatchTimePolicy } from '../utils/watch-time-policy.util';
 
 @Injectable()
 export class ContentTrackingService {
@@ -479,13 +480,44 @@ export class ContentTrackingService {
     contentId: string,
     contentType: TrackableContentType,
     additionalTime: number,
+    options: {
+      maxDurationSeconds?: number;
+    } = {},
   ): Promise<ContentProgressDocument> {
+    const normalizedAdditionalTime = Math.floor(Number(additionalTime || 0));
+    if (!Number.isFinite(normalizedAdditionalTime) || normalizedAdditionalTime < 0) {
+      throw new BadRequestException('Watch time increment must be a non-negative number');
+    }
+
     const progress = await this.getOrCreateProgress(
       userId,
       contentId,
       contentType,
     );
-    progress.ajouterTempsVisionne(additionalTime);
+
+    const currentWatchTimeSeconds = Math.floor(Number(progress.watchTime || 0));
+    const nextWatchTimeSeconds = currentWatchTimeSeconds + normalizedAdditionalTime;
+    const policy = applyWatchTimePolicy({
+      currentWatchTimeSeconds,
+      requestedWatchTimeSeconds: nextWatchTimeSeconds,
+      lastAcceptedAt: progress.lastAccessedAt,
+      maxDurationSeconds: options.maxDurationSeconds,
+    });
+
+    if (policy.ignored) {
+      progress.mettreAJourDernierAcces();
+      await progress.save();
+      return progress;
+    }
+
+    if (policy.acceptedAdvanceSeconds > policy.maxAllowedAdvanceSeconds) {
+      throw new BadRequestException(
+        `Watch time jump rejected. Maximum allowed advance is ${policy.maxAllowedAdvanceSeconds} seconds.`,
+      );
+    }
+
+    progress.watchTime = policy.acceptedWatchTimeSeconds;
+    progress.mettreAJourDernierAcces();
     await progress.save();
 
     return progress;

@@ -1,5 +1,6 @@
 import { Controller, Post, Body, HttpStatus, Res, ConflictException, HttpCode, Response as ExpressResponse, Req, UseGuards, Delete, ForbiddenException, Get } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBody, ApiExtraModels } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { AdminService } from './admin.service';
 import { CreateAdminDto } from '../dto-admin/create-admin.dto';
 import { AdminLoginDto } from '../dto-admin/login.dto';
@@ -174,6 +175,7 @@ export class AdminController {
   }
   //login admin
   @Post('login')
+  @Throttle({ default: { ttl: 300000, limit: 5 } } as any)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Admin Login with 2FA',
@@ -238,6 +240,7 @@ export class AdminController {
   }
   // verify 2fa
   @Post('verify-2fa')
+  @Throttle({ default: { ttl: 900000, limit: 3 } } as any)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Verify Admin 2FA Code',
@@ -361,6 +364,7 @@ export class AdminController {
   }
   // forgot password
   @Post('forgot-password')
+  @Throttle({ default: { ttl: 900000, limit: 3 } } as any)
   @HttpCode(HttpStatus.OK)
   async forgotPassword(@Body() forgotPasswordDto: AdminForgotPasswordDto, @Res() response) {
     try {
@@ -380,6 +384,7 @@ export class AdminController {
   }
   // reset password
   @Post('reset-password')
+  @Throttle({ default: { ttl: 900000, limit: 3 } } as any)
   @HttpCode(HttpStatus.OK)
   async resetPassword(@Res() response, @Body() resetPasswordDto: AdminResetPasswordDto) {
     try {

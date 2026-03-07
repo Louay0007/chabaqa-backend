@@ -13,27 +13,15 @@ import { RevokedToken, RevokedTokenSchema } from './schema/revoked-token.schema'
 import { Payout, PayoutSchema } from './schema/payout.schema';
 import { UserService } from './user/user.service';
 import { UserController } from './user/user.controller';
-import { PayoutModule } from './payout/payout.module';
 import { AuthModule } from './auth/auth.module';
 import { EmailService } from './common/services/email.service';
-import { CommunityAffCreaJoinModule } from './community-aff-crea-join/community-aff-crea-join.module';
 import { Community, CommunitySchema } from './schema/community.schema';
 import { ResourceModule } from './resource/resource.module';
 import { AdminModule } from './admin/admin.module';
-import { CoursModule } from './cours/cours.module';
 import { UploadModule } from './upload/upload.module';
 import { MediaModule } from './media/media.module';
-import { CourseEnrollmentModule } from './course-enrollment/course-enrollment.module';
-import { ProductModule } from './product/product.module';
 import { ChallengeModule } from './challenge/challenge.module';
-import { SessionModule } from './session/session.module';
-import { PostModule } from './post/post.module';
-import { EventModule } from './event/event.module';
-import { TrackingModule } from './common/modules/tracking.module';
 import { PolicyModule } from './common/modules/policy.module';
-import { FeeModule } from './common/modules/fee.module';
-import { PromoModule } from './common/modules/promo.module';
-import { SubscriptionModule } from './subscription/subscription.module';
 import { StripePaymentService } from './common/services/stripe-payment.service';
 import { FlouciPaymentService } from './common/services/flouci-payment.service';
 import { PromoService } from './common/services/promo.service';
@@ -51,35 +39,30 @@ import { ChallengeSchema } from './schema/challenge.schema';
 import { EventSchema } from './schema/event.schema';
 import { ProductSchema } from './schema/product.schema';
 import { SessionSchema } from './schema/session.schema';
-import { FlouciModule } from './common/modules/flouci.module';
-import { DmModule } from './dm/dm.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { EmailModule } from './email/email.module';
-import { PaymentModule } from './common/modules/payment.module';
 import { FeedbackModule } from './feedback/feedback.module';
-import { NotificationModule } from './notification/notification.module';
-import { CommunitiesModule } from './communities/communities.module';
 import { EmailCampaignModule } from './email-campaign/email-campaign.module';
 import { GoogleCalendarModule } from './google-calendar/google-calendar.module';
 import { SecurityModule } from './common/modules/security.module';
 import { MonitoringModule } from './common/modules/monitoring.module';
 import { CacheModule } from './common/modules/cache.module';
-import { CommunityPageContentModule } from './community-page-content/community-page-content.module';
-import { ProgressionModule } from './progression/progression.module';
-import { AchievementModule } from './achievement/achievement.module';
 import { Achievement, AchievementSchema } from './schema/achievement.schema';
 import { UserAchievement, UserAchievementSchema } from './schema/user-achievement.schema';
 import { ManualPaymentService } from './common/services/manual-payment.service';
-import { WalletModule } from './wallet/wallet.module';
 import { AiModule } from './ai/ai.module';
 import { Ga4Module } from './ga4/ga4.module';
-import { LiveSupportModule } from './live-support/live-support.module';
+import { LearningDomainModule } from './domains/learning-domain.module';
+import { CommerceDomainModule } from './domains/commerce-domain.module';
+import { CommunityDomainModule } from './domains/community-domain.module';
 
 // Import new admin schemas
 import { AdminUser, AdminUserSchema } from './admin/schemas/admin-user.schema';
 import { AuditLog, AuditLogSchema } from './admin/schemas/audit-log.schema';
 import { ContentModerationQueue, ContentModerationQueueSchema } from './admin/schemas/content-moderation-queue.schema';
 import { ChallengeSubmission, ChallengeSubmissionSchema } from './schema/challenge-submission.schema';
+import { ProcessedWebhookEvent, ProcessedWebhookEventSchema } from './schema/processed-webhook-event.schema';
+import { PaymentAuditLog, PaymentAuditLogSchema } from './schema/payment-audit-log.schema';
 
 @Module({
   imports: [
@@ -152,46 +135,29 @@ import { ChallengeSubmission, ChallengeSubmissionSchema } from './schema/challen
       { name: AuditLog.name, schema: AuditLogSchema },
       { name: ContentModerationQueue.name, schema: ContentModerationQueueSchema },
       { name: ChallengeSubmission.name, schema: ChallengeSubmissionSchema },
+      { name: ProcessedWebhookEvent.name, schema: ProcessedWebhookEventSchema },
+      { name: PaymentAuditLog.name, schema: PaymentAuditLogSchema },
     ]),
     AuthModule,
-    CommunityAffCreaJoinModule,
+    CommunityDomainModule,
     ResourceModule,
     EmailModule,
-    PaymentModule,
+    CommerceDomainModule,
     AdminModule,
-    CoursModule,
+    LearningDomainModule,
     UploadModule,
     MediaModule,
-    AchievementModule,
-    CourseEnrollmentModule,
-    ProductModule,
     ChallengeModule,
-    SessionModule,
-    PostModule,
-    EventModule,
-    TrackingModule,
     PolicyModule,
-    SubscriptionModule,
-    FeeModule,
-    PromoModule,
-    FlouciModule,
-    DmModule,
     AnalyticsModule,
     FeedbackModule,
-    NotificationModule,
-    CommunitiesModule,
     EmailCampaignModule,
     GoogleCalendarModule,
     SecurityModule,
     MonitoringModule,
     CacheModule,
-    CommunityPageContentModule,
-    ProgressionModule,
-    PayoutModule,
-    WalletModule,
     AiModule,
     Ga4Module,
-    LiveSupportModule,
   ],
   controllers: [AppController, UserController, TrackingController, PaymentController],
   providers: [

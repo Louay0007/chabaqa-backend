@@ -60,6 +60,8 @@ async function bootstrap() {
     next();
   });
 
+  app.use('/api/payment/stripe-link/webhook', express.raw({ type: 'application/json' }));
+
   app.use(express.static('public'));
   // app.use('/uploads', cors(), express.static('uploads')); // Handled by ServeStaticModule in AppModule
 
@@ -68,9 +70,6 @@ async function bootstrap() {
   const urlEncodedBodyLimit = process.env.URLENCODED_BODY_LIMIT || '2mb';
   app.use(express.json({ limit: jsonBodyLimit }));
   app.use(express.urlencoded({ limit: urlEncodedBodyLimit, extended: true }));
-
-
-  app.use('/api/payment/stripe-link/webhook', express.raw({ type: 'application/json' }));
 
 
   app.use(cookieParser());

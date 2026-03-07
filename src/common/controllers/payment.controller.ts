@@ -10,6 +10,7 @@ import { FlouciPaymentService } from '../services/flouci-payment.service';
 import { StripePaymentService } from '../services/stripe-payment.service';
 import { ManualPaymentService } from '../services/manual-payment.service';
 import { PaymentFulfillmentService } from '../services/payment-fulfillment.service';
+import { PaymentAuditService } from '../services/payment-audit.service';
 import { UploadService } from '../../upload/upload.service';
 import { Community, CommunityDocument } from '../../schema/community.schema';
 import { User, UserDocument } from '../../schema/user.schema';
@@ -32,6 +33,10 @@ import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { NotificationService } from '../../notification/notification.service';
 import { EmailService } from '../services/email.service';
 import { MediaPurpose } from '../../media/media.types';
+import {
+  ProcessedWebhookEvent,
+  ProcessedWebhookEventDocument,
+} from '../../schema/processed-webhook-event.schema';
 
 const manualProofStorage = diskStorage({
   destination: (req, file, cb) => {
@@ -69,6 +74,7 @@ export class PaymentController {
     private readonly manualPaymentService: ManualPaymentService,
     private readonly uploadService: UploadService,
     private readonly paymentFulfillmentService: PaymentFulfillmentService,
+    private readonly paymentAuditService: PaymentAuditService,
     private readonly notificationService: NotificationService,
     private readonly emailService: EmailService,
     @InjectModel(Community.name) private communityModel: Model<CommunityDocument>,
@@ -79,6 +85,8 @@ export class PaymentController {
     @InjectModel(Event.name) private eventModel: Model<EventDocument>,
     @InjectModel(Product.name) private productModel: Model<ProductDocument>,
     @InjectModel(Session.name) private sessionModel: Model<SessionDocument>,
+    @InjectModel(ProcessedWebhookEvent.name)
+    private readonly processedWebhookEventModel: Model<ProcessedWebhookEventDocument>,
     private readonly coursService: CoursService,
     private readonly challengeService: ChallengeService,
     private readonly eventService: EventService,
@@ -179,6 +187,59 @@ export class PaymentController {
       fulfillmentStatus: 'pending',
       fulfillmentUpdatedAt: new Date().toISOString(),
     };
+  }
+
+  private async hasProcessedWebhookEvent(provider: string, eventId: string): Promise<boolean> {
+    if (!eventId) {
+      return false;
+    }
+
+    const count = await this.processedWebhookEventModel.countDocuments({
+      provider,
+      eventId,
+    });
+    return count > 0;
+  }
+
+  private async markWebhookEventProcessed(
+    provider: string,
+    eventId: string,
+    eventType: string,
+  ): Promise<void> {
+    if (!eventId) {
+      return;
+    }
+
+    await this.processedWebhookEventModel.updateOne(
+      { provider, eventId },
+      {
+        $setOnInsert: {
+          provider,
+          eventId,
+          eventType,
+          processedAt: new Date(),
+        },
+      },
+      { upsert: true },
+    );
+  }
+
+  private async auditPaymentEvent(
+    entry: {
+      orderId?: string;
+      eventType: string;
+      provider?: string;
+      eventId?: string;
+      paymentMethod?: string;
+      previousStatus?: string;
+      nextStatus?: string;
+      reason?: string;
+      error?: string;
+      metadata?: Record<string, any>;
+    },
+    session: any = null,
+  ): Promise<void> {
+    await this.paymentAuditService.log(entry, session);
   }
 
   private async enrichOrderDetails(order: any) {
@@ -513,6 +574,15 @@ export class PaymentController {
     if (!verify.success) throw new BadRequestException((verify as any).error);
 
     if (verify.status === 'SUCCESS') {
+      await this.auditPaymentEvent({
+        orderId: order._id?.toString?.(),
+        eventType: 'provider_verification_completed',
+        provider: 'flouci',
+        eventId: paymentId,
+        paymentMethod: (verify as any).paymentMethod || order.paymentMethod,
+        previousStatus: order.status,
+        nextStatus: 'paid',
+      });
       let didCompleteFulfillment = false;
       await this.runWithOptionalTransaction(async (session) => {
         const claim = await this.paymentFulfillmentService.claimForProcessing(
@@ -2283,13 +2353,50 @@ export class PaymentController {
   @ApiOperation({ summary: 'Stripe Link webhook handler' })
   async stripeLinkWebhook(@Req() req: any) {
     const signature = req.headers['stripe-signature'] as string;
-    if (!signature) throw new UnauthorizedException('Missing Stripe signature');
+    if (!signature) {
+      await this.auditPaymentEvent({
+        eventType: 'webhook_rejected',
+        provider: 'stripe',
+        reason: 'missing_signature',
+      });
+      throw new UnauthorizedException('Missing Stripe signature');
+    }
 
     const event = await this.stripe.createWebhookEvent(req.body, signature);
-    if (!event.success) throw new UnauthorizedException(event.error);
+    if (!event.success) {
+      await this.auditPaymentEvent({
+        eventType: 'webhook_rejected',
+        provider: 'stripe',
+        reason: 'invalid_signature',
+        error: event.error,
+      });
+      throw new UnauthorizedException(event.error);
+    }
 
     const stripeEvent = event.event!;
     this.logger.log(`Received Stripe webhook event: ${stripeEvent.type}`);
+    await this.auditPaymentEvent({
+      eventType: 'webhook_received',
+      provider: 'stripe',
+      eventId: stripeEvent.id,
+      metadata: {
+        webhookType: stripeEvent.type,
+      },
+    });
+
+    if (await this.hasProcessedWebhookEvent('stripe', stripeEvent.id)) {
+      this.logger.log(`Ignoring duplicate Stripe webhook event ${stripeEvent.id}`);
+      await this.auditPaymentEvent({
+        eventType: 'duplicate_event_ignored',
+        provider: 'stripe',
+        eventId: stripeEvent.id,
+        reason: 'already_processed',
+        metadata: {
+          webhookType: stripeEvent.type,
+        },
+      });
+      return { received: true, duplicate: true };
+    }
 
     // Handle different event types
     switch (stripeEvent.type) {
@@ -2345,6 +2452,8 @@ export class PaymentController {
         // These are handled by subscriptionService.handleWebhook if configured
         break;
     }
+
+    await this.markWebhookEventProcessed('stripe', stripeEvent.id, stripeEvent.type);
 
     return { received: true };
   }
@@ -3122,6 +3231,14 @@ export class PaymentController {
       }
 
       const order = await this.manualPaymentService.verifyPayment(orderId, userId, action);
+      await this.auditPaymentEvent({
+        orderId: order._id?.toString?.(),
+        eventType: action === 'approve' ? 'manual_verification_completed' : 'manual_verification_rejected',
+        provider: 'manual',
+        paymentMethod: 'manual',
+        previousStatus: 'pending_verification',
+        nextStatus: order.status,
+      });
 
       const buyer = await this.userModel.findById(order.buyerId).select('email name').exec();
 
