@@ -177,6 +177,51 @@ describe('ChallengeService', () => {
       expect(participated.community?.slug).toBe('design-community');
       expect(participated.slug).toBe('design-community');
     });
+
+    it('hides participated challenges for public scope and filters created challenges to active only', async () => {
+      const userId = '507f1f77bcf86cd799439011';
+
+      const createdFind = {
+        populate: jest.fn().mockReturnThis(),
+        sort: jest.fn().mockReturnThis(),
+        exec: jest.fn().mockResolvedValue([
+          {
+            id: 'challenge-created',
+            title: 'Created challenge',
+            description: 'Desc',
+            thumbnail: '',
+            communityId: 'community-custom-id',
+            category: 'Design',
+            difficulty: 'Beginner',
+            isActive: true,
+            createdAt: new Date('2025-01-11T00:00:00.000Z'),
+            participants: [],
+            creatorId: { name: 'Creator', profile_picture: '' },
+          },
+        ]),
+      };
+
+      const find = jest.fn().mockReturnValue(createdFind);
+
+      const service = makeService({
+        challengeModel: { find },
+        communityModel: {
+          find: jest.fn().mockResolvedValue([
+            { _id: new Types.ObjectId(), id: 'community-custom-id', name: 'Design Community', slug: 'design-community' },
+          ]),
+        },
+      });
+
+      const result = await service.getChallengesByUser(userId, 1, 12, 'all', undefined, 'public');
+      const createdQuery = find.mock.calls[0][0];
+
+      expect(createdQuery['participants.userId']).toBeUndefined();
+      expect(String(createdQuery.creatorId)).toBe(userId);
+      expect(createdQuery.isActive).toBe(true);
+      expect(result.success).toBe(true);
+      expect(result.data.challenges).toHaveLength(1);
+      expect(result.data.challenges[0].type).toBe('created');
+    });
   });
 
   describe('update', () => {

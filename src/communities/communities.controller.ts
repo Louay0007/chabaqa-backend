@@ -3,11 +3,13 @@ import {
   Get, 
   Query, 
   Param,
+  Request,
   HttpCode, 
   HttpStatus,
   ValidationPipe,
   UsePipes,
-  UseInterceptors
+  UseInterceptors,
+  UseGuards,
 } from '@nestjs/common';
 import { 
   ApiTags, 
@@ -20,6 +22,7 @@ import { CommunitiesService } from './communities.service';
 import { CommunityPageContentService } from '../community-page-content/community-page-content.service';
 import { HttpCacheInterceptor } from '../common/interceptors/cache.interceptor';
 import { CacheTTL, CacheDuration } from '../common/decorators/cache-ttl.decorator';
+import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 
 @ApiTags('Communities Discovery')
 @Controller('communities')
@@ -29,6 +32,16 @@ export class CommunitiesController {
     private readonly communitiesService: CommunitiesService,
     private readonly pageContentService: CommunityPageContentService
   ) {}
+
+  private getRequestUserId(req: any): string {
+    return (
+      req?.user?._id ||
+      req?.user?.userId ||
+      req?.user?.sub ||
+      req?.user?.id ||
+      ''
+    ).toString();
+  }
 
   /**
    * Get communities list with filters and search
@@ -380,6 +393,7 @@ export class CommunitiesController {
 
   // Get communities for a specific user (for profile viewing)
   @Get('by-user/:userId')
+  @UseGuards(OptionalJwtAuthGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ 
     summary: 'Get communities for a specific user',
@@ -425,15 +439,19 @@ export class CommunitiesController {
     @Param('userId') userId: string,
     @Query('page') page?: number,
     @Query('limit') limit?: number,
-    @Query('type') type?: 'joined' | 'created' | 'all'
+    @Query('type') type?: 'joined' | 'created' | 'all',
+    @Request() req?: any,
   ) {
+    const requesterId = this.getRequestUserId(req);
+    const visibilityScope = requesterId && requesterId === userId ? 'owner' : 'public';
     const result = await this.communitiesService.getCommunitiesByUser(
       userId,
       {
         page: page || 1,
         limit: limit || 10,
-        type: type || 'all'
-      }
+        type: type || 'all',
+      },
+      visibilityScope,
     );
     
     return {

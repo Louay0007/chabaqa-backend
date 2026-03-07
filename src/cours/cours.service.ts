@@ -1044,18 +1044,20 @@ export class CoursService {
     userId: string,
     page: number = 1,
     limit: number = 10,
-    type: 'enrolled' | 'created' | 'all' = 'all'
+    type: 'enrolled' | 'created' | 'all' = 'all',
+    visibilityScope: 'owner' | 'public' = 'owner',
   ) {
     console.log('🔧 DEBUG - obtenirCoursParUtilisateur');
     console.log(`   👤 User ID: ${userId}`);
-    console.log(`   📄 Page: ${page}, Limit: ${limit}, Type: ${type}`);
+    console.log(`   📄 Page: ${page}, Limit: ${limit}, Type: ${type}, Scope: ${visibilityScope}`);
 
     const skip = (page - 1) * limit;
     let allCourses: any[] = [];
     let totalCount = 0;
+    const isOwnerView = visibilityScope === 'owner';
 
     // Get enrolled courses
-    if (type === 'enrolled' || type === 'all') {
+    if (isOwnerView && (type === 'enrolled' || type === 'all')) {
       const enrollments = await this.courseEnrollmentModel
         .find({ userId: new Types.ObjectId(userId), isActive: true })
         .populate({
@@ -1113,8 +1115,13 @@ export class CoursService {
 
     // Get created courses
     if (type === 'created' || type === 'all') {
+      const createdCourseQuery: any = { creatorId: new Types.ObjectId(userId) };
+      if (!isOwnerView) {
+        createdCourseQuery.isPublished = true;
+      }
+
       const createdCourses = await this.coursModel
-        .find({ creatorId: new Types.ObjectId(userId) })
+        .find(createdCourseQuery)
         .populate('creatorId', 'name email profile_picture photo_profil')
         .sort({ createdAt: -1 })
         .exec();

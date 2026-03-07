@@ -42,18 +42,20 @@ export class CommunitiesService {
       page: number;
       limit: number;
       type: 'joined' | 'created' | 'all';
-    }
+    },
+    visibilityScope: 'owner' | 'public' = 'owner',
   ) {
     console.log('🔧 DEBUG - getCommunitiesByUser');
     console.log(`   👤 User ID: ${userId}`);
-    console.log(`   📄 Page: ${options.page}, Limit: ${options.limit}, Type: ${options.type}`);
+    console.log(`   📄 Page: ${options.page}, Limit: ${options.limit}, Type: ${options.type}, Scope: ${visibilityScope}`);
 
     const skip = (options.page - 1) * options.limit;
     let allCommunities: any[] = [];
     let totalCount = 0;
+    const isOwnerView = visibilityScope === 'owner';
 
     // Get joined communities
-    if (options.type === 'joined' || options.type === 'all') {
+    if (isOwnerView && (options.type === 'joined' || options.type === 'all')) {
       const joinedCommunities = await this.communityModel
         .find({ members: new Types.ObjectId(userId) })
         .populate('createur', 'name email profile_picture photo_profil')
@@ -95,8 +97,14 @@ export class CommunitiesService {
 
     // Get created communities
     if (options.type === 'created' || options.type === 'all') {
+      const createdCommunityQuery: any = { createur: new Types.ObjectId(userId) };
+      if (!isOwnerView) {
+        createdCommunityQuery.isActive = true;
+        createdCommunityQuery.isPrivate = false;
+      }
+
       const createdCommunities = await this.communityModel
-        .find({ createur: new Types.ObjectId(userId) })
+        .find(createdCommunityQuery)
         .populate('createur', 'name email profile_picture photo_profil')
         .sort({ createdAt: -1 })
         .exec();

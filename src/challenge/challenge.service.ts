@@ -287,10 +287,11 @@ export class ChallengeService {
     limit: number = 10,
     type: 'participated' | 'created' | 'all' = 'all',
     communityId?: string,
+    visibilityScope: 'owner' | 'public' = 'owner',
   ) {
     console.log('🔧 DEBUG - getChallengesByUser');
     console.log(`   👤 User ID: ${userId}`);
-    console.log(`   📄 Page: ${page}, Limit: ${limit}, Type: ${type}`);
+    console.log(`   📄 Page: ${page}, Limit: ${limit}, Type: ${type}, Scope: ${visibilityScope}`);
     if (communityId) {
       console.log(`   🏢 Community filter: ${communityId}`);
     }
@@ -298,6 +299,7 @@ export class ChallengeService {
     const skip = (page - 1) * limit;
     let allChallenges: any[] = [];
     let totalCount = 0;
+    const isOwnerView = visibilityScope === 'owner';
     const communityFilter: any = {};
     if (communityId) {
       // communityId is stored as string in schema, so keep it as string
@@ -307,7 +309,7 @@ export class ChallengeService {
     }
 
     // Get participated challenges
-    if (type === 'participated' || type === 'all') {
+    if (isOwnerView && (type === 'participated' || type === 'all')) {
       const participatedChallenges = await this.challengeModel
         .find({ 'participants.userId': new Types.ObjectId(userId), ...communityFilter })
         .populate('creatorId', 'name email profile_picture photo_profil')
@@ -346,8 +348,13 @@ export class ChallengeService {
 
     // Get created challenges
     if (type === 'created' || type === 'all') {
+      const createdChallengeQuery: any = { creatorId: new Types.ObjectId(userId), ...communityFilter };
+      if (!isOwnerView) {
+        createdChallengeQuery.isActive = true;
+      }
+
       const createdChallenges = await this.challengeModel
-        .find({ creatorId: new Types.ObjectId(userId), ...communityFilter })
+        .find(createdChallengeQuery)
         .populate('creatorId', 'name email profile_picture photo_profil')
         .sort({ createdAt: -1 })
         .exec();

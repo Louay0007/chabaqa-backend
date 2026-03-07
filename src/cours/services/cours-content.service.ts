@@ -38,8 +38,9 @@ export class CoursContentService {
     page = 1,
     limit = 10,
     type: 'enrolled' | 'created' | 'all' = 'all',
+    visibilityScope: 'owner' | 'public' = 'owner',
   ) {
-    return this.coursService.obtenirCoursParUtilisateur(userId, page, limit, type);
+    return this.coursService.obtenirCoursParUtilisateur(userId, page, limit, type, visibilityScope);
   }
 
   obtenirCours(coursId: string, userId?: string) {

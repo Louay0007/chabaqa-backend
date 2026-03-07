@@ -254,11 +254,12 @@ export class SessionService {
     limit: number = 10,
     type: 'booked' | 'created' | 'all' = 'all',
     timeFilter: 'upcoming' | 'past' | 'all' = 'all',
-    communityId?: string
+    communityId?: string,
+    visibilityScope: 'owner' | 'public' = 'owner',
   ) {
     console.log('🔧 DEBUG - getSessionsByUser');
     console.log(`   👤 User ID: ${userId}`);
-    console.log(`   📄 Page: ${page}, Limit: ${limit}, Type: ${type}, TimeFilter: ${timeFilter}`);
+    console.log(`   📄 Page: ${page}, Limit: ${limit}, Type: ${type}, TimeFilter: ${timeFilter}, Scope: ${visibilityScope}`);
     if (communityId) {
       console.log(`   🏢 Community filter: ${communityId}`);
     }
@@ -267,6 +268,7 @@ export class SessionService {
     let allSessions: any[] = [];
     let totalCount = 0;
     const now = new Date();
+    const isOwnerView = visibilityScope === 'owner';
 
     // Build community filter
     const communityFilter: any = {};
@@ -278,7 +280,7 @@ export class SessionService {
     }
 
     // Get booked sessions
-    if (type === 'booked' || type === 'all') {
+    if (isOwnerView && (type === 'booked' || type === 'all')) {
       const bookedSessions = await this.sessionModel
         .find({ 'bookings.userId': new Types.ObjectId(userId), ...communityFilter })
         .populate('creatorId', 'name email profile_picture photo_profil')
@@ -326,8 +328,13 @@ export class SessionService {
 
     // Get created sessions
     if (type === 'created' || type === 'all') {
+      const createdSessionQuery: any = { creatorId: new Types.ObjectId(userId), ...communityFilter };
+      if (!isOwnerView) {
+        createdSessionQuery.isActive = true;
+      }
+
       const createdSessions = await this.sessionModel
-        .find({ creatorId: new Types.ObjectId(userId), ...communityFilter })
+        .find(createdSessionQuery)
         .populate('creatorId', 'name email profile_picture photo_profil')
         .populate('communityId', 'name slug')
         .sort({ startTime: -1 })

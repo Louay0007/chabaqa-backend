@@ -42,6 +42,7 @@ import {
   UnlockedTasksResponseDto
 } from '../dto-challenge/sequential-progression.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 import { HttpCacheInterceptor } from '../common/interceptors/cache.interceptor';
 
 const resolveRequestIpAddress = (req: any): string | undefined => {
@@ -75,6 +76,16 @@ const enrichTrackingMetadata = (req: any, metadata?: any) => {
 @UseInterceptors(HttpCacheInterceptor)
 export class ChallengeController {
   constructor(private readonly challengeService: ChallengeService) { }
+
+  private getRequestUserId(req: any): string {
+    return (
+      req?.user?._id ||
+      req?.user?.userId ||
+      req?.user?.sub ||
+      req?.user?.id ||
+      ''
+    ).toString();
+  }
 
   // ============================================================
   // STATIC ROUTES (no :id param) — must come BEFORE @Get(':id')
@@ -220,6 +231,7 @@ export class ChallengeController {
 
   // Get challenges for a specific user (for profile viewing)
   @Get('by-user/:userId')
+  @UseGuards(OptionalJwtAuthGuard)
   @ApiOperation({
     summary: 'Get challenges for a specific user',
     description: 'Retrieve challenges associated with a user (participated + created)'
@@ -268,13 +280,17 @@ export class ChallengeController {
     @Query('limit') limit = '10',
     @Query('type') type: 'participated' | 'created' | 'all' = 'all',
     @Query('communityId') communityId?: string,
+    @Request() req?: any,
   ) {
+    const requesterId = this.getRequestUserId(req);
+    const visibilityScope = requesterId && requesterId === userId ? 'owner' : 'public';
     return await this.challengeService.getChallengesByUser(
       userId,
       Number(page) || 1,
       Number(limit) || 10,
       type,
       communityId,
+      visibilityScope,
     );
   }
 

@@ -22,6 +22,7 @@ import { SessionResponseDto, SessionListResponseDto, UserBookingsResponseDto, Cr
 import { SetAvailableHoursDto, GenerateSlotsDto, BookSlotDto, GetAvailableSlotsDto } from '../dto-session/available-hours.dto';
 import { AvailableSlotsResponseDto, AvailableHoursResponseDto } from '../dto-session/available-slots-response.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 import { HttpCacheInterceptor } from '../common/interceptors/cache.interceptor';
 import { CacheDuration, CacheTTL } from '../common/decorators/cache-ttl.decorator';
 
@@ -29,6 +30,16 @@ import { CacheDuration, CacheTTL } from '../common/decorators/cache-ttl.decorato
 @Controller('sessions')
 export class SessionController {
   constructor(private readonly sessionService: SessionService) {}
+
+  private getRequestUserId(req: any): string {
+    return (
+      req?.user?._id ||
+      req?.user?.userId ||
+      req?.user?.sub ||
+      req?.user?.id ||
+      ''
+    ).toString();
+  }
 
   @Post()
   @UseGuards(JwtAuthGuard)
@@ -325,6 +336,7 @@ export class SessionController {
 
   // Get sessions for a specific user (for profile viewing)
   @Get('by-user/:userId')
+  @UseGuards(OptionalJwtAuthGuard)
   @UseInterceptors(HttpCacheInterceptor)
   @CacheTTL(30)
   @ApiOperation({ 
@@ -379,15 +391,19 @@ export class SessionController {
     @Query('limit') limit = '10',
     @Query('type') type: 'booked' | 'created' | 'all' = 'all',
     @Query('timeFilter') timeFilter: 'upcoming' | 'past' | 'all' = 'all',
-    @Query('communityId') communityId?: string
+    @Query('communityId') communityId?: string,
+    @Request() req?: any,
   ) {
+    const requesterId = this.getRequestUserId(req);
+    const visibilityScope = requesterId && requesterId === userId ? 'owner' : 'public';
     return await this.sessionService.getSessionsByUser(
       userId, 
       Number(page) || 1, 
       Number(limit) || 10,
       type,
       timeFilter,
-      communityId
+      communityId,
+      visibilityScope,
     );
   }
 

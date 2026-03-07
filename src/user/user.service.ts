@@ -16,6 +16,19 @@ import { CommunityAffCreaJoinService } from '../community-aff-crea-join/communit
 import { generateUniqueUsername, slugifyFullNameToUsername } from '../common/utils/username.util';
 import { CacheService } from '../common/services/cache.service';
 
+export interface PublicUserProfile {
+  _id: string;
+  id: string;
+  name: string;
+  username: string;
+  role: string;
+  avatar: string;
+  ville: string;
+  pays: string;
+  bio: string;
+  createdAt: Date | string | null;
+}
+
 @Injectable()
 export class UserService {
   constructor(
@@ -57,6 +70,26 @@ export class UserService {
 
   private escapeRegex(value: string): string {
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  private toPublicUserProfile(user: any): PublicUserProfile {
+    const id = String(user?._id || user?.id || '').trim();
+    const avatar = this.uploadService.ensureAbsoluteUrl(
+      String(user?.profile_picture || user?.photo_profil || '').trim(),
+    ) || '';
+
+    return {
+      _id: id,
+      id,
+      name: String(user?.name || '').trim(),
+      username: String(user?.username || '').trim(),
+      role: String(user?.role || 'user').trim() || 'user',
+      avatar,
+      ville: String(user?.ville || '').trim(),
+      pays: String(user?.pays || '').trim(),
+      bio: String(user?.bio || '').trim(),
+      createdAt: user?.createdAt || null,
+    };
   }
 
   private async cleanupLocalAvatarFile(user: IUser): Promise<void> {
@@ -161,30 +194,29 @@ export class UserService {
   }
 
   // get user by username/handle
-  async getUserByUsername(handle: string): Promise<IUser> {
+  async getUserByUsername(handle: string): Promise<PublicUserProfile> {
     const rawHandle = String(handle || '').trim();
     const canonicalHandle = slugifyFullNameToUsername(rawHandle);
     const candidateHandles = Array.from(new Set([rawHandle.toLowerCase(), canonicalHandle]));
+    const projection = 'name username role ville pays bio createdAt photo_profil profile_picture';
 
     let user = await this.userModel.findOne({
       username: { $in: candidateHandles },
-    });
+    }).select(projection).lean();
 
     // Legacy compatibility: old profile URLs used email local-part
     if (!user) {
       const escaped = this.escapeRegex(rawHandle);
       user = await this.userModel.findOne({
         email: { $regex: `^${escaped}@`, $options: 'i' },
-      });
+      }).select(projection).lean();
     }
 
     if (!user) {
       throw new NotFoundException(`User with handle '${handle}' not found`);
     }
-    const u = user.toObject();
-    u.photo_profil = this.uploadService.ensureAbsoluteUrl(u.photo_profil);
-    u.profile_picture = this.uploadService.ensureAbsoluteUrl(u.profile_picture);
-    return u as IUser;
+
+    return this.toPublicUserProfile(user);
   }
 
 

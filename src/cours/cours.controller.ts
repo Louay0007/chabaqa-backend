@@ -7,6 +7,7 @@ import { CoursTrackingService } from './services/cours-tracking.service';
 import { CoursProgressionService } from './services/cours-progression.service';
 import { CoursNotesService } from './services/cours-notes.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 import { CreateCoursDto } from '../dto-cours/create-cours.dto';
 import { CreateUserNoteDto, UpdateUserNoteDto, UserNoteResponseDto } from '../dto-cours/user-note.dto';
 import { AddSectionDto } from '../dto-cours/add-section.dto';
@@ -52,13 +53,23 @@ const enrichTrackingMetadata = (req: any, metadata?: any) => {
 @Controller('cours')
 @UseInterceptors(HttpCacheInterceptor)
 export class CoursController {
-	constructor(
+		constructor(
 		private readonly coursContentService: CoursContentService,
 		private readonly coursEnrollmentService: CoursEnrollmentService,
 		private readonly coursTrackingService: CoursTrackingService,
 		private readonly coursProgressionService: CoursProgressionService,
-		private readonly coursNotesService: CoursNotesService,
-	) { }
+			private readonly coursNotesService: CoursNotesService,
+		) { }
+
+		private getRequestUserId(req: any): string {
+			return (
+				req?.user?._id ||
+				req?.user?.userId ||
+				req?.user?.sub ||
+				req?.user?.id ||
+				''
+			).toString();
+		}
 
 	// ============ LISTE DES COURS ============
 
@@ -367,6 +378,7 @@ export class CoursController {
 
 	// Get courses for a specific user (for profile viewing)
 	@Get('by-user/:userId')
+	@UseGuards(OptionalJwtAuthGuard)
 	@ApiOperation({
 		summary: 'Get courses for a specific user',
 		description: 'Retrieve courses associated with a user (enrolled + created)'
@@ -410,13 +422,17 @@ export class CoursController {
 		@Param('userId') userId: string,
 		@Query('page') page = '1',
 		@Query('limit') limit = '10',
-		@Query('type') type: 'enrolled' | 'created' | 'all' = 'all'
+		@Query('type') type: 'enrolled' | 'created' | 'all' = 'all',
+		@Req() req: any,
 	) {
+		const requesterId = this.getRequestUserId(req);
+		const visibilityScope = requesterId && requesterId === userId ? 'owner' : 'public';
 		return await this.coursContentService.obtenirCoursParUtilisateur(
 			userId,
 			Number(page) || 1,
 			Number(limit) || 10,
-			type
+			type,
+			visibilityScope,
 		);
 	}
 

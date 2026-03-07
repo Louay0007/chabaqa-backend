@@ -260,6 +260,70 @@ describe('CoursService profile by-user community enrichment', () => {
     expect(result.data.courses.every((course: any) => course.slug === 'tech-community')).toBe(true);
     expect(result.data.courses.every((course: any) => course.community?.slug === 'tech-community')).toBe(true);
   });
+
+  it('hides enrolled courses for public scope and filters created courses to published only', async () => {
+    const userId = new Types.ObjectId().toString();
+
+    const enrollmentFind = {
+      populate: jest.fn().mockReturnThis(),
+      sort: jest.fn().mockReturnThis(),
+      exec: jest.fn(),
+    };
+
+    const createdFind = {
+      populate: jest.fn().mockReturnThis(),
+      sort: jest.fn().mockReturnThis(),
+      exec: jest.fn().mockResolvedValue([
+        {
+          _id: new Types.ObjectId(),
+          titre: 'Published course',
+          description: 'Desc',
+          thumbnail: '',
+          communityId: new Types.ObjectId().toString(),
+          isPublished: true,
+          createdAt: new Date('2025-01-01T00:00:00.000Z'),
+          creatorId: { name: 'Creator', profile_picture: '' },
+        },
+      ]),
+    };
+
+    const courseEnrollmentModel: any = {
+      find: jest.fn().mockReturnValue(enrollmentFind),
+    };
+
+    const coursModel: any = {
+      find: jest.fn().mockReturnValue(createdFind),
+    };
+
+    const service = new CoursService(
+      coursModel,
+      courseEnrollmentModel,
+      {} as any,
+      {} as any,
+      { find: jest.fn().mockResolvedValue([]) } as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      { syncProgressSnapshot: jest.fn().mockResolvedValue(undefined) } as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
+
+    const result = await service.obtenirCoursParUtilisateur(userId, 1, 12, 'all', 'public');
+
+    expect(courseEnrollmentModel.find).not.toHaveBeenCalled();
+    const createdQuery = coursModel.find.mock.calls[0][0];
+    expect(String(createdQuery.creatorId)).toBe(userId);
+    expect(createdQuery.isPublished).toBe(true);
+    expect(result.success).toBe(true);
+    expect(result.data.courses).toHaveLength(1);
+    expect(result.data.courses[0].type).toBe('created');
+  });
 });
 
 describe('CoursService chapter video/content validation', () => {
