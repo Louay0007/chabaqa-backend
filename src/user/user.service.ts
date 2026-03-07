@@ -26,6 +26,16 @@ export interface PublicUserProfile {
   ville: string;
   pays: string;
   bio: string;
+  socialLinks?: {
+    instagram?: string;
+    facebook?: string;
+    linkedin?: string;
+    twitter?: string;
+    youtube?: string;
+    tiktok?: string;
+    github?: string;
+    website?: string;
+  };
   createdAt: Date | string | null;
 }
 
@@ -110,11 +120,45 @@ export class UserService {
     return { raw, slug, compact, embeddedObjectId, candidates };
   }
 
+  private normalizeSocialUrl(value?: string): string | undefined {
+    const raw = String(value || '').trim();
+    if (!raw) return undefined;
+    const withProtocol = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+    try {
+      const parsed = new URL(withProtocol);
+      if (!['http:', 'https:'].includes(parsed.protocol)) return undefined;
+      return parsed.toString();
+    } catch {
+      return undefined;
+    }
+  }
+
+  private normalizeSocialLinks(input?: any): PublicUserProfile['socialLinks'] {
+    const links = input && typeof input === 'object' ? input : {};
+    const normalized = {
+      instagram: this.normalizeSocialUrl(links.instagram),
+      facebook: this.normalizeSocialUrl(links.facebook),
+      linkedin: this.normalizeSocialUrl(links.linkedin),
+      twitter: this.normalizeSocialUrl(links.twitter),
+      youtube: this.normalizeSocialUrl(links.youtube),
+      tiktok: this.normalizeSocialUrl(links.tiktok),
+      github: this.normalizeSocialUrl(links.github),
+      website: this.normalizeSocialUrl(links.website),
+    };
+
+    return Object.fromEntries(Object.entries(normalized).filter(([, value]) => Boolean(value))) as PublicUserProfile['socialLinks'];
+  }
+
   private toPublicUserProfile(user: any): PublicUserProfile {
     const id = String(user?._id || user?.id || '').trim();
     const avatar = this.uploadService.ensureAbsoluteUrl(
       String(user?.profile_picture || user?.photo_profil || '').trim(),
     ) || '';
+    const socialLinks = this.normalizeSocialLinks(user?.socialLinks) || {};
+    const legacyInstagram = this.normalizeSocialUrl(String(user?.lien_instagram || ''));
+    if (legacyInstagram && !socialLinks?.instagram) {
+      socialLinks.instagram = legacyInstagram;
+    }
 
     return {
       _id: id,
@@ -126,6 +170,7 @@ export class UserService {
       ville: String(user?.ville || '').trim(),
       pays: String(user?.pays || '').trim(),
       bio: String(user?.bio || '').trim(),
+      socialLinks,
       createdAt: user?.createdAt || null,
     };
   }
@@ -215,6 +260,10 @@ export class UserService {
       const u = user.toObject();
       u.photo_profil = this.uploadService.ensureAbsoluteUrl(u.photo_profil);
       u.profile_picture = this.uploadService.ensureAbsoluteUrl(u.profile_picture);
+      (u as any).socialLinks = this.normalizeSocialLinks((u as any).socialLinks);
+      if ((u as any).lien_instagram && !(u as any).socialLinks?.instagram) {
+        (u as any).socialLinks = { ...((u as any).socialLinks || {}), instagram: this.normalizeSocialUrl((u as any).lien_instagram) };
+      }
       return u as IUser;
     });
   }
@@ -228,6 +277,10 @@ export class UserService {
     const u = user.toObject();
     u.photo_profil = this.uploadService.ensureAbsoluteUrl(u.photo_profil);
     u.profile_picture = this.uploadService.ensureAbsoluteUrl(u.profile_picture);
+    (u as any).socialLinks = this.normalizeSocialLinks((u as any).socialLinks);
+    if ((u as any).lien_instagram && !(u as any).socialLinks?.instagram) {
+      (u as any).socialLinks = { ...((u as any).socialLinks || {}), instagram: this.normalizeSocialUrl((u as any).lien_instagram) };
+    }
     return u as IUser;
   }
 
@@ -241,7 +294,7 @@ export class UserService {
       candidates: candidateHandles,
     } =
       this.normalizeHandleCandidates(handle);
-    const projection = 'name username role ville pays bio createdAt photo_profil profile_picture';
+    const projection = 'name username role ville pays bio createdAt photo_profil profile_picture socialLinks lien_instagram';
 
     let user = await this.userModel.findOne({
       username: { $in: candidateHandles },
@@ -626,7 +679,22 @@ export class UserService {
 
   // update user
   async updateUser(id: string, updateUserDto: UpdateUserDto): Promise<IUser> {
-    const updatedUser = await this.userModel.findByIdAndUpdate(id, updateUserDto, { new: true });
+    const payload: any = { ...(updateUserDto as any) };
+    const normalizedSocialLinks = this.normalizeSocialLinks(payload.socialLinks);
+    const legacyInstagram = this.normalizeSocialUrl(payload.lien_instagram);
+
+    if (payload.socialLinks !== undefined) {
+      payload.socialLinks = normalizedSocialLinks || {};
+    }
+
+    if (legacyInstagram) {
+      payload.lien_instagram = legacyInstagram;
+      payload.socialLinks = { ...(payload.socialLinks || {}), instagram: legacyInstagram };
+    } else if (payload.socialLinks?.instagram) {
+      payload.lien_instagram = payload.socialLinks.instagram;
+    }
+
+    const updatedUser = await this.userModel.findByIdAndUpdate(id, payload, { new: true });
     if (!updatedUser) {
       throw new NotFoundException(`User #${id} not found`);
     }
@@ -634,6 +702,10 @@ export class UserService {
     const u = updatedUser.toObject();
     u.photo_profil = this.uploadService.ensureAbsoluteUrl(u.photo_profil);
     u.profile_picture = this.uploadService.ensureAbsoluteUrl(u.profile_picture);
+    (u as any).socialLinks = this.normalizeSocialLinks((u as any).socialLinks);
+    if ((u as any).lien_instagram && !(u as any).socialLinks?.instagram) {
+      (u as any).socialLinks = { ...((u as any).socialLinks || {}), instagram: this.normalizeSocialUrl((u as any).lien_instagram) };
+    }
     return u as IUser;
   }
 

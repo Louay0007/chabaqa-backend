@@ -1,6 +1,17 @@
 import { Types } from 'mongoose';
 import { UserRole } from '../schema/user.schema';
 
+export interface IUserSocialLinks {
+  instagram?: string;
+  facebook?: string;
+  linkedin?: string;
+  twitter?: string;
+  youtube?: string;
+  tiktok?: string;
+  github?: string;
+  website?: string;
+}
+
 /**
  * Interface de base pour un utilisateur avec propriétés readonly
  * Assure l'immutabilité des données utilisateur
@@ -18,6 +29,8 @@ export interface IUser {
   readonly ville?: string;
   readonly pays?: string;
   readonly bio?: string;
+  readonly socialLinks?: IUserSocialLinks;
+  readonly lien_instagram?: string;
 }
 
 

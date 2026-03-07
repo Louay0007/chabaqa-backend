@@ -36,6 +36,16 @@ export interface UserDocument extends Document {
   photo_profil: string;
   bio: string;
   lien_instagram: string;
+  socialLinks?: {
+    instagram?: string;
+    facebook?: string;
+    linkedin?: string;
+    twitter?: string;
+    youtube?: string;
+    tiktok?: string;
+    github?: string;
+    website?: string;
+  };
   profile_picture: string;
   twoFactorEnabled: boolean;
   walletBalance: number;
@@ -272,6 +282,25 @@ export class User {
     required: false,
   })
   lien_instagram: string;
+
+  /**
+   * Liens sociaux de l'utilisateur
+   */
+  @Prop({
+    type: Object,
+    required: false,
+    default: {},
+  })
+  socialLinks?: {
+    instagram?: string;
+    facebook?: string;
+    linkedin?: string;
+    twitter?: string;
+    youtube?: string;
+    tiktok?: string;
+    github?: string;
+    website?: string;
+  };
 
   /**
    * Photo de profil de l'utilisateur

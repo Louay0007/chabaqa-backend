@@ -8,6 +8,7 @@ import { Cours, CoursDocument } from '../../schema/course.schema';
 import { Event, EventDocument } from '../../schema/event.schema';
 import { Product, ProductDocument } from '../../schema/product.schema';
 import { AuditLogService } from '../common/services/audit-log.service';
+import { CacheService } from '../../common/services/cache.service';
 import { AdminAction } from '../schemas/audit-log.schema';
 import { 
   CommunityFiltersDto, 
@@ -52,7 +53,42 @@ export class CommunityManagementService {
     @InjectModel(Event.name) private eventModel: Model<EventDocument>,
     @InjectModel(Product.name) private productModel: Model<ProductDocument>,
     private readonly auditLogService: AuditLogService,
+    private readonly cacheService: CacheService,
   ) {}
+
+  private async invalidateExploreAndCommunityCaches(community?: Partial<Community> & { _id?: any; slug?: string }): Promise<void> {
+    const communityId = String((community as any)?._id || '').trim();
+    const communitySlug = String((community as any)?.slug || '').trim();
+
+    const patterns = [
+      'http:/community-aff-crea-join*',
+      'http:/communities*',
+      'http:/cours*',
+      'http:/challenges*',
+      'http:/products*',
+      'http:/sessions*',
+      'http:/events*',
+    ];
+
+    if (communityId) {
+      patterns.push(`http:/community-aff-crea-join/${communityId}*`);
+      patterns.push(`http:/community-aff-crea-join/community/${communityId}*`);
+      patterns.push(`http:/communities/${communityId}*`);
+    }
+
+    if (communitySlug) {
+      patterns.push(`http:/community-aff-crea-join/${communitySlug}*`);
+      patterns.push(`http:/communities/${communitySlug}*`);
+    }
+
+    try {
+      await Promise.allSettled(
+        Array.from(new Set(patterns)).map((pattern) => this.cacheService.deletePattern(pattern)),
+      );
+    } catch (error) {
+      console.warn('Failed to invalidate community/explore caches:', error);
+    }
+  }
 
   /**
    * Get communities with advanced filtering and pagination
@@ -536,6 +572,7 @@ export class CommunityManagementService {
       }
 
       await community.save();
+      await this.invalidateExploreAndCommunityCaches(community as any);
 
       // Log admin action
       await this.auditLogService.logAction({
@@ -614,6 +651,7 @@ export class CommunityManagementService {
       }
 
       await community.save();
+      await this.invalidateExploreAndCommunityCaches(community as any);
 
       // Log admin action
       await this.auditLogService.logAction({
@@ -782,6 +820,7 @@ export class CommunityManagementService {
       }
 
       await community.save();
+      await this.invalidateExploreAndCommunityCaches(community as any);
 
       // Log admin action
       await this.auditLogService.logAction({
