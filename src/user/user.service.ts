@@ -72,6 +72,44 @@ export class UserService {
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 
+  private decodeUriComponentSafe(value: string): string {
+    try {
+      return decodeURIComponent(value);
+    } catch {
+      return value;
+    }
+  }
+
+  private normalizeHandleCandidates(handle: string): {
+    raw: string;
+    slug: string;
+    compact: string;
+    embeddedObjectId: string;
+    candidates: string[];
+  } {
+    const raw = String(handle || '').trim();
+    const decoded = this.decodeUriComponentSafe(raw).trim();
+    const lowerRaw = raw.toLowerCase();
+    const lowerDecoded = decoded.toLowerCase();
+    const slug = slugifyFullNameToUsername(decoded || raw);
+    const compact = slug.replace(/[-_.]/g, '');
+    const underscore = slug.replace(/-/g, '_');
+    const dotted = slug.replace(/-/g, '.');
+    const rawCompact = lowerDecoded.replace(/[^a-z0-9]/g, '');
+    const embeddedObjectId = (lowerDecoded.match(/[a-f0-9]{24}/i) || [])[0] || '';
+    const embeddedNameSlug = (lowerDecoded.match(/(?:^|-)name-([a-z0-9-]{2,}?)(?:-email-|$)/i) || [])[1] || '';
+
+    const candidates = Array.from(
+      new Set(
+        [lowerRaw, lowerDecoded, slug, compact, underscore, dotted, rawCompact, embeddedObjectId, embeddedNameSlug]
+          .map((value) => String(value || '').trim())
+          .filter((value) => value.length > 0),
+      ),
+    );
+
+    return { raw, slug, compact, embeddedObjectId, candidates };
+  }
+
   private toPublicUserProfile(user: any): PublicUserProfile {
     const id = String(user?._id || user?.id || '').trim();
     const avatar = this.uploadService.ensureAbsoluteUrl(
@@ -195,14 +233,33 @@ export class UserService {
 
   // get user by username/handle
   async getUserByUsername(handle: string): Promise<PublicUserProfile> {
-    const rawHandle = String(handle || '').trim();
-    const canonicalHandle = slugifyFullNameToUsername(rawHandle);
-    const candidateHandles = Array.from(new Set([rawHandle.toLowerCase(), canonicalHandle]));
+    const {
+      raw: rawHandle,
+      slug: canonicalHandle,
+      compact: compactHandle,
+      embeddedObjectId,
+      candidates: candidateHandles,
+    } =
+      this.normalizeHandleCandidates(handle);
     const projection = 'name username role ville pays bio createdAt photo_profil profile_picture';
 
     let user = await this.userModel.findOne({
       username: { $in: candidateHandles },
     }).select(projection).lean();
+
+    // If route param is actually an ObjectId, resolve directly.
+    if (!user) {
+      const possibleIds = Array.from(
+        new Set(
+          [rawHandle, embeddedObjectId, ...candidateHandles].filter((value) => Types.ObjectId.isValid(value)),
+        ),
+      );
+
+      for (const possibleId of possibleIds) {
+        user = await this.userModel.findById(possibleId).select(projection).lean();
+        if (user) break;
+      }
+    }
 
     // Legacy compatibility: old profile URLs used email local-part
     if (!user) {
@@ -210,6 +267,47 @@ export class UserService {
       user = await this.userModel.findOne({
         email: { $regex: `^${escaped}@`, $options: 'i' },
       }).select(projection).lean();
+    }
+
+    // Match usernames with numeric suffixes (e.g. "john-doe-2", "john_doe2")
+    if (!user) {
+      const suffixRegexCandidates = Array.from(
+        new Set(
+          [canonicalHandle, canonicalHandle.replace(/-/g, '_'), canonicalHandle.replace(/-/g, '.'), compactHandle]
+            .filter((value) => value.length > 0),
+        ),
+      );
+
+      for (const base of suffixRegexCandidates) {
+        user = await this.userModel.findOne({
+          username: {
+            $regex: `^${this.escapeRegex(base)}(?:[-_.]?\\d+)?$`,
+            $options: 'i',
+          },
+        })
+          .sort({ createdAt: 1 })
+          .select(projection)
+          .lean();
+        if (user) break;
+      }
+    }
+
+    // Match by display name slug for legacy users without stable usernames.
+    if (!user) {
+      const nameRegex = new RegExp(`^${this.escapeRegex(canonicalHandle).replace(/-/g, '[\\s\\-_.]*')}$`, 'i');
+      const nameCandidates = await this.userModel
+        .find({ name: { $regex: nameRegex } })
+        .sort({ createdAt: 1 })
+        .limit(10)
+        .select(projection)
+        .lean();
+
+      user =
+        nameCandidates.find((candidate) => {
+          const candidateNameSlug = slugifyFullNameToUsername(String((candidate as any)?.name || ''));
+          const candidateNameCompact = candidateNameSlug.replace(/-/g, '');
+          return candidateNameSlug === canonicalHandle || candidateNameCompact === compactHandle;
+        }) || null;
     }
 
     if (!user) {
