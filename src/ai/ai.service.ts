@@ -35,17 +35,25 @@ export class AiService {
     @InjectModel(AiChapterConversation.name)
     private aiConversationModel: Model<AiChapterConversationDocument>,
   ) {
-    const apiKey = this.configService.get<string>('OPENROUTER_API_KEY');
-    const baseURL =
-      this.configService.get<string>('OPENROUTER_BASE_URL') ||
-      'https://openrouter.ai/api/v1';
+    const aiProvider = (
+      this.configService.get<string>('AI_PROVIDER') || 'OPENROUTER'
+    ).toUpperCase();
+    const useOllamaCloud = aiProvider === 'OLLAMA_CLOUD';
+    const apiKey = useOllamaCloud
+      ? this.configService.get<string>('OLLAMA_API_KEY')
+      : this.configService.get<string>('OPENROUTER_API_KEY');
+    const baseURL = useOllamaCloud
+      ? this.configService.get<string>('OLLAMA_BASE_URL') || 'https://ollama.com/v1'
+      : this.configService.get<string>('OPENROUTER_BASE_URL') ||
+        'https://openrouter.ai/api/v1';
     const siteUrl =
       this.configService.get<string>('OPENROUTER_SITE_URL') ||
       this.configService.get<string>('FRONTEND_URL') ||
       'https://chabaqa.io';
-    const appName =
-      this.configService.get<string>('OPENROUTER_APP_NAME') ||
-      'Chabaqa AI Tutor';
+    const appName = useOllamaCloud
+      ? this.configService.get<string>('OLLAMA_APP_NAME') || 'Chabaqa AI Tutor'
+      : this.configService.get<string>('OPENROUTER_APP_NAME') ||
+        'Chabaqa AI Tutor';
     const requestTimeoutMs = this.parseNumberConfig(
       'AI_REQUEST_TIMEOUT_MS',
       30000,
@@ -54,11 +62,13 @@ export class AiService {
     );
     const primaryModel = (
       this.configService.get<string>('AI_MODEL') ||
-      'google/gemini-2.0-flash-001'
+      (useOllamaCloud ? 'gpt-oss:20b-cloud' : 'google/gemini-2.5-flash-lite')
     ).trim();
     const fallbackModels = (
       this.configService.get<string>('AI_FALLBACK_MODELS') ||
-      'google/gemini-2.0-flash-lite-001,google/gemini-2.5-flash-lite,qwen/qwen3-next-80b-a3b-instruct:free,mistralai/mistral-small-3.1-24b-instruct:free'
+      (useOllamaCloud
+        ? 'minimax-m2.1:cloud,glm-4.7:cloud'
+        : 'google/gemini-2.0-flash-001,google/gemini-2.0-flash-lite-001,mistralai/mistral-small-3.1-24b-instruct:free')
     )
       .split(',')
       .map((value) => value.trim())
@@ -95,15 +105,19 @@ export class AiService {
       apiKey,
       baseURL,
       timeout: requestTimeoutMs,
-      defaultHeaders: {
-        'HTTP-Referer': siteUrl,
-        'X-Title': appName,
-      },
+      ...(useOllamaCloud
+        ? {}
+        : {
+            defaultHeaders: {
+              'HTTP-Referer': siteUrl,
+              'X-Title': appName,
+            },
+          }),
     });
 
     if (!apiKey) {
       this.logger.error(
-        'OPENROUTER_API_KEY is missing. AI Tutor requests will fail until it is configured.',
+        `${useOllamaCloud ? 'OLLAMA_API_KEY' : 'OPENROUTER_API_KEY'} is missing. AI Tutor requests will fail until it is configured.`,
       );
     }
 
