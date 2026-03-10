@@ -139,14 +139,16 @@ export class AdminNotificationsService {
     }
 
     for (const alert of unresolvedSecurityAlerts) {
+      if (!alert) continue;
+      const timestamp = alert.timestamp instanceof Date ? alert.timestamp : new Date(alert.timestamp || Date.now());
       feed.push({
-        id: `security-${String(alert.id || alert.timestamp?.toISOString?.() || Date.now())}`,
+        id: `security-${alert.id || timestamp.getTime()}`,
         category: 'security_alerts',
         severity: alert.severity === 'critical' ? 'critical' : alert.severity === 'high' ? 'warning' : 'info',
-        title: alert.title,
-        message: alert.description,
+        title: alert.title || 'Security Alert',
+        message: alert.description || 'Action required',
         href: '/admin/security/events',
-        createdAt: new Date(alert.timestamp || new Date()).toISOString(),
+        createdAt: timestamp.toISOString(),
         metadata: {
           alertType: alert.type,
           resolved: alert.resolved,

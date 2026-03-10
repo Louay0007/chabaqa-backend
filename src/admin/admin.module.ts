@@ -57,9 +57,12 @@ import { AdminRateLimitGuard } from './common/guards/admin-rate-limit.guard';
 import { SecurityAuditModule } from './security-audit/security-audit.module';
 import { UserManagementModule } from './user-management/user-management.module';
 import { CommunityManagementModule } from './community-management/community-management.module';
+import { ContentManagementModule } from './content-management/content-management.module';
 import { ContentModerationModule } from './content-moderation/content-moderation.module';
 import { FinancialManagementModule } from './financial-management/financial-management.module';
 import { AnalyticsDashboardModule } from './analytics-dashboard/analytics-dashboard.module';
+import { DataManagementModule } from './common/data-management.module';
+import { CommunicationManagementModule } from './communication-management/communication-management.module';
 import { AdminAlertConfig, AdminAlertConfigSchema } from './analytics-dashboard/schemas/admin-alert-config.schema';
 
 // Import admin controllers
@@ -120,7 +123,7 @@ import { AnalyticsController } from './common/controllers/analytics.controller';
       {
         name: 'admin-bulk',
         ttl: 60000, // 60 seconds
-        limit: 50, // 50 requests per minute for bulk operations
+        limit: 200, // 200 requests per minute for bulk operations
       },
     ]),
     
@@ -128,9 +131,12 @@ import { AnalyticsController } from './common/controllers/analytics.controller';
     SecurityAuditModule,
     UserManagementModule,
     CommunityManagementModule,
+    ContentManagementModule,
     ContentModerationModule,
     FinancialManagementModule,
     AnalyticsDashboardModule,
+    DataManagementModule,
+    CommunicationManagementModule,
   ],
   controllers: [AdminController, ExportController, AnalyticsController],
   providers: [

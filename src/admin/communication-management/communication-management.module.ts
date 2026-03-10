@@ -43,7 +43,8 @@ import { AdminUser, AdminUserSchema } from '../schemas/admin-user.schema';
   controllers: [CommunicationManagementController],
   providers: [
     CommunicationManagementService,
-    // Note: EmailService and AuditLogService are provided by parent AdminModule
+    EmailService,
+    AuditLogService,
   ],
   exports: [CommunicationManagementService],
 })

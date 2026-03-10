@@ -849,7 +849,7 @@ export class FinancialManagementService {
             type: WalletTransactionType.PURCHASE,
             contentType: 'community',
             createdAt: { $gte: startDate, $lte: endDate },
-            contentId: { $type: 'string' },
+            contentId: { $exists: true, $ne: null },
           },
         },
         {
@@ -871,7 +871,7 @@ export class FinancialManagementService {
           },
         },
         { $sort: { revenue: -1 } },
-        { $limit: Math.max(limit * 25, 250) },
+        { $limit: limit },
       ] as any[])
       .exec();
 

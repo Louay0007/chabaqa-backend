@@ -54,6 +54,12 @@ export const CommunityManagementAccess = () => RequireAdminRoles(
   AdminRole.COMMUNITY_MANAGER
 );
 
+export const ContentManagementAccess = () => RequireAdminRoles(
+  AdminRole.SUPER_ADMIN, 
+  AdminRole.CONTENT_MODERATOR,
+  AdminRole.COMMUNITY_MANAGER
+);
+
 export const AnalyticsAccess = () => RequireAdminRoles(
   AdminRole.SUPER_ADMIN, 
   AdminRole.ANALYTICS_VIEWER,
