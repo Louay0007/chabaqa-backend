@@ -19,6 +19,7 @@ import {
 } from '../../schema/payout.schema';
 import { Community, CommunityDocument } from '../../schema/community.schema';
 import { User, UserDocument } from '../../schema/user.schema';
+import { Plan, PlanDocument, PlanTier } from '../../schema/plan.schema';
 import {
   RevenueDashboardQueryDto,
   RevenueMetricsDto,
@@ -67,6 +68,8 @@ export class FinancialManagementService {
     private communityModel: Model<CommunityDocument>,
     @InjectModel(User.name)
     private userModel: Model<UserDocument>,
+    @InjectModel(Plan.name)
+    private planModel: Model<PlanDocument>,
   ) {}
 
   /**
@@ -406,7 +409,7 @@ export class FinancialManagementService {
       .exec();
 
     // Calculate revenue breakdown
-    const revenueBreakdown = this.calculateRevenueBreakdown(transactions);
+    const revenueBreakdown = await this.calculateRevenueBreakdown(transactions);
 
     // Calculate payout summary
     const payoutSummary = this.calculatePayoutSummary(payouts);
@@ -1444,7 +1447,7 @@ export class FinancialManagementService {
     const creatorPayouts = payoutResult.length > 0 ? payoutResult[0].totalPayouts : 0;
 
     // Calculate derived metrics
-    const subscriptionRevenue = 0; // TODO: Implement subscription revenue calculation
+    const subscriptionRevenue = await this.calculateSubscriptionRevenue(startDate, endDate);
     const oneTimeRevenue = totalRevenue - subscriptionRevenue;
     const platformFees = totalRevenue * 0.1;
     const averageTransactionValue = transactionCount > 0 ? totalRevenue / transactionCount : 0;
@@ -1460,7 +1463,54 @@ export class FinancialManagementService {
     };
   }
 
-  private calculateRevenueBreakdown(transactions: WalletTransaction[]): any {
+  /**
+   * Calculate subscription revenue for a given time period
+   */
+  private async calculateSubscriptionRevenue(startDate: Date, endDate: Date): Promise<number> {
+    // Get all active subscriptions that were active during the period
+    const subscriptions = await this.subscriptionModel.find({
+      status: SubscriptionStatus.ACTIVE,
+      currentPeriodEnd: { $gte: startDate },
+      currentPeriodStart: { $lte: endDate },
+    }).exec();
+
+    if (subscriptions.length === 0) {
+      return 0;
+    }
+
+    // Get plan prices
+    const plans = await this.planModel.find().exec();
+    const planPrices = new Map<string, number>();
+    plans.forEach(plan => {
+      planPrices.set(plan.tier, plan.priceDTPerMonth);
+    });
+
+    // Default prices for each plan tier
+    const defaultPrices: Record<PlanTier, number> = {
+      [PlanTier.STARTER]: 9.99,
+      [PlanTier.GROWTH]: 29.99,
+      [PlanTier.PRO]: 79.99,
+      [PlanTier.ENTERPRISE]: 199.99,
+    };
+
+    let totalRevenue = 0;
+    
+    for (const subscription of subscriptions) {
+      // Get the plan price, fallback to default if not found
+      const planPrice = planPrices.get(subscription.plan) || defaultPrices[subscription.plan] || 0;
+      
+      // Calculate the number of months in the period (simplified calculation)
+      const periodDays = Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
+      const monthsInPeriod = periodDays / 30;
+      
+      // Add revenue proportional to the period
+      totalRevenue += planPrice * monthsInPeriod;
+    }
+
+    return Math.round(totalRevenue * 100) / 100;
+  }
+
+  private async calculateRevenueBreakdown(transactions: WalletTransaction[]): Promise<any> {
     const purchaseTransactions = transactions.filter(
       (tx) => tx.type === WalletTransactionType.PURCHASE,
     );
@@ -1486,12 +1536,53 @@ export class FinancialManagementService {
       }
     });
 
+    // Calculate subscription revenue
+    const subscriptionRevenueAmount = await this.calculateSubscriptionRevenueFromTransactions();
+
     return {
       totalRevenue,
-      subscriptionRevenue: 0, // TODO: Implement
-      oneTimeRevenue: totalRevenue,
+      subscriptionRevenue: subscriptionRevenueAmount,
+      oneTimeRevenue: totalRevenue - subscriptionRevenueAmount,
       revenueByContentType,
     };
+  }
+
+  /**
+   * Calculate subscription revenue from transactions
+   */
+  private async calculateSubscriptionRevenueFromTransactions(): Promise<number> {
+    // Get active subscriptions
+    const subscriptions = await this.subscriptionModel.find({
+      status: SubscriptionStatus.ACTIVE,
+    }).exec();
+
+    if (subscriptions.length === 0) {
+      return 0;
+    }
+
+    // Get plan prices
+    const plans = await this.planModel.find().exec();
+    const planPrices = new Map<string, number>();
+    plans.forEach(plan => {
+      planPrices.set(plan.tier, plan.priceDTPerMonth);
+    });
+
+    // Default prices for each plan tier
+    const defaultPrices: Record<PlanTier, number> = {
+      [PlanTier.STARTER]: 9.99,
+      [PlanTier.GROWTH]: 29.99,
+      [PlanTier.PRO]: 79.99,
+      [PlanTier.ENTERPRISE]: 199.99,
+    };
+
+    let totalSubscriptionRevenue = 0;
+    
+    for (const subscription of subscriptions) {
+      const planPrice = planPrices.get(subscription.plan) || defaultPrices[subscription.plan] || 0;
+      totalSubscriptionRevenue += planPrice;
+    }
+
+    return Math.round(totalSubscriptionRevenue * 100) / 100;
   }
 
   private calculatePayoutSummary(payouts: Payout[]): any {

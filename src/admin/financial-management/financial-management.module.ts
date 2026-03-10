@@ -9,6 +9,7 @@ import { WalletTransaction, WalletTransactionSchema } from '../../schema/wallet-
 import { Payout, PayoutSchema } from '../../schema/payout.schema';
 import { Community, CommunitySchema } from '../../schema/community.schema';
 import { User, UserSchema } from '../../schema/user.schema';
+import { Plan, PlanSchema } from '../../schema/plan.schema';
 
 // Import admin common services
 import { AuditLogService } from '../common/services/audit-log.service';
@@ -23,6 +24,7 @@ import { AdminRolesGuard } from '../common/guards/admin-roles.guard';
       { name: Payout.name, schema: PayoutSchema },
       { name: Community.name, schema: CommunitySchema },
       { name: User.name, schema: UserSchema },
+      { name: Plan.name, schema: PlanSchema },
     ]),
   ],
   controllers: [FinancialManagementController],

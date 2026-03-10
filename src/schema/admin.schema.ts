@@ -23,6 +23,12 @@ export interface AdminDocument extends Document {
   photo_profil: string;
   poste: string;
   departement: string;
+  adminPreferences?: {
+    theme?: 'light' | 'dark' | 'system';
+    locale?: string;
+    timezone?: string;
+    emailNotifications?: boolean;
+  };
 }
 
 @Schema({
@@ -123,6 +129,18 @@ export class Admin {
     required: false,
   })
   departement: string;
+
+  @Prop({
+    type: Object,
+    required: false,
+    default: {},
+  })
+  adminPreferences?: {
+    theme?: 'light' | 'dark' | 'system';
+    locale?: string;
+    timezone?: string;
+    emailNotifications?: boolean;
+  };
 
 
 }

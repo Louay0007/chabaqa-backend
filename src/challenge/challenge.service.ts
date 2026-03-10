@@ -902,7 +902,7 @@ export class ChallengeService {
   ): Promise<any> {
     try {
       // Build query to find challenges where user is a participant
-      let query: any = {
+      const query: any = {
         'participants.userId': new Types.ObjectId(userId),
       };
 

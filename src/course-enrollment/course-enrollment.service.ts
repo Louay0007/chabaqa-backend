@@ -302,7 +302,7 @@ export class CourseEnrollmentService {
     }
 
     // Vérifier si l'utilisateur est inscrit au cours
-    let enrollment = await this.courseEnrollmentModel.findOne({
+    const enrollment = await this.courseEnrollmentModel.findOne({
       userId: new Types.ObjectId(userId),
       courseId: course._id,
       isActive: true,
@@ -1127,7 +1127,7 @@ export class CourseEnrollmentService {
     for (const chapter of sectionChapters) {
       const before = chapterProgressBefore.get(chapter.id);
       const current = enrollment.progression.find((p) => p.chapterId === chapter.id);
-      const becameCompleted = !Boolean(before?.isCompleted) && Boolean(current?.isCompleted);
+      const becameCompleted = !before?.isCompleted && Boolean(current?.isCompleted);
 
       if (!becameCompleted) continue;
 

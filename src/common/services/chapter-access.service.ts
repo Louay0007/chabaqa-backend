@@ -245,7 +245,7 @@ export class ChapterAccessService {
     const nextDescriptor = context.orderedChapters[descriptor.index + 1];
     const isPaidChapter =
       Boolean(descriptor.chapter?.isPaidChapter) &&
-      !Boolean(descriptor.chapter?.isPreview);
+      !descriptor.chapter?.isPreview;
     const chapterPrice = Number(descriptor.chapter?.prix || 0);
     const hasEnrollment = Boolean(context.enrollment);
     const hasChapterPurchase = isPaidChapter

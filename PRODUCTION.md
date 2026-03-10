@@ -1,115 +1,65 @@
-# Chabaqa Backend - Production Deployment
+# Chabaqa Backend - Production Deployment (Supervisor)
 
-## Prerequisites
+This repository now deploys backend/frontend as native host processes managed by Supervisor.
 
-- Docker Desktop installed and running
-- MongoDB Atlas account (connection string configured in `.env`)
-
-## Quick Start
+## Deployment command
 
 ```bash
-# Deploy (build & start)
-deploy.cmd up
-
-# Or on Linux/Mac
-docker compose up -d --build
+./scripts/deploy-native-apps.sh ./.env.prod
 ```
 
-## Commands
+The script builds apps, syncs runtime artifacts to `/var/www`, restarts Supervisor programs, verifies runtime env wiring, checks Redis connectivity, and (when enabled) deploys monitoring.
 
-| Command | Description |
-|---------|-------------|
-| `deploy.cmd up` | Build and start all containers |
-| `deploy.cmd stop` | Stop all containers |
-| `deploy.cmd restart` | Restart containers |
-| `deploy.cmd logs` | View backend logs |
-| `deploy.cmd status` | Check container status |
-| `deploy.cmd build` | Rebuild without cache |
+## Required services on host
 
-## Architecture
+- Supervisor (`supervisorctl` available)
+- Node.js + npm
+- Redis (if `REDIS_ENABLED=true`)
+- Nginx (recommended for TLS and routing)
+- `apt` access (required when `MONITORING_ENABLED=true` to install/update monitoring packages)
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                     Docker Network                       │
-│  ┌─────────────────┐       ┌─────────────────┐          │
-│  │   Backend:3000  │──────▶│   Redis:6379    │          │
-│  └────────┬────────┘       └─────────────────┘          │
-│           │                                             │
-│           ▼                                             │
-│  ┌─────────────────┐                                    │
-│  │   Dozzle:8080   │                                    │
-│  └─────────────────┘                                    │
-└───────────┼─────────────────────────────────────────────┘
-            │
-            ▼
-    ┌───────────────────┐
-    │  MongoDB Atlas    │
-    │  (Cloud Database) │
-    └───────────────────┘
+## Health and metrics endpoints
+
+- Health: `GET /api/health`
+- System health: `GET /api/health/system`
+- Prometheus metrics: `GET /api/metrics/prometheus`
+
+## Monitoring and alerting
+
+Monitoring overlay is in [`monitoring/README.md`](/home/ubuntu/chabaqa/monitoring/README.md).
+
+Enable in `.env.prod`:
+
+```env
+MONITORING_ENABLED=true
+GRAFANA_ADMIN_PASSWORD=replace_with_strong_password
 ```
 
-## Environment Variables
-
-Key variables in `.env`:
-
-| Variable | Description |
-|----------|-------------|
-| `MONGO_URI` | MongoDB Atlas connection string |
-| `NODE_ENV` | Set to `production` |
-| `PORT` | Backend port (default: 3000) |
-| `REDIS_PASSWORD` | Redis authentication password |
-| `HTTP_ACCESS_LOG` | Enable request/response access logs (default: `true`) |
-| `DOZZLE_PORT` | Local bind port for Dozzle UI (default: `8088`) |
-| `DOZZLE_FILTER` | Docker filter used by Dozzle (`name=chabaqa-`) |
-
-## Health Check
+Deploy monitoring only:
 
 ```bash
-curl http://localhost:3000/api/health
+./scripts/deploy-monitoring.sh ./.env.prod
 ```
 
-## Dozzle (Backend Inspection UI)
-
-Dozzle is included in `docker-compose.yml` to inspect container logs and runtime stats.
-
-- Public URL: `http://api.chabaqa.io:8088`
-
-### What to inspect
-
-- **Backend responses/statuses**: stream `chabaqa-backend` logs (enabled by `HTTP_ACCESS_LOG=true`)
-- **Container stats**: CPU/memory in Dozzle container view
-- **App metrics endpoint**: `GET /api/metrics` and `GET /api/metrics/system`
-
-## Monitoring and Alerting (App VPS)
-
-The production repo now includes a monitoring overlay at `docker-compose.monitoring.yml`.
-
-- Full setup guide: `monitoring/README.md`
-- Enable with `.env.prod`: `MONITORING_ENABLED=true`
-- Deploy with existing script: `./scripts/deploy-prod.sh ./.env.prod`
-
-This adds Prometheus, Alertmanager, Grafana, node-exporter, cAdvisor, blackbox probes, and security-event alerts from `/api/metrics/prometheus`.
-
-## Logs
+Or deploy app + monitoring together:
 
 ```bash
-# All logs
-docker compose logs
-
-# Backend only (follow mode)
-docker logs -f chabaqa-backend
-
-# Redis logs
-docker logs chabaqa-redis
+./scripts/deploy-native-apps.sh ./.env.prod
 ```
 
-## Troubleshooting
+## Supervisor web UI
 
-### Backend won't start
-1. Check logs: `docker logs chabaqa-backend`
-2. Verify MongoDB Atlas connection string in `.env`
-3. Ensure Atlas whitelist includes your server IP
+Install template config:
 
-### Redis connection failed
-1. Check Redis is running: `docker compose ps`
-2. Verify password matches in `.env` and `docker-compose.yml`
+```bash
+sudo install -m 0640 monitoring/supervisor/supervisor-webui.conf.example /etc/supervisor/conf.d/webui.conf
+sudo systemctl restart supervisor
+```
+
+## Troubleshooting quick checks
+
+```bash
+sudo supervisorctl status chabaqa-backend chabaqa-frontend
+curl -fsS http://127.0.0.1:3000/api/health
+curl -fsS http://127.0.0.1:3000/api/metrics/prometheus | head -n 20
+```

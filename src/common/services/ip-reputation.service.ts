@@ -125,8 +125,8 @@ export class IPReputationService {
    */
   private async performReputationCheck(ip: string, userAgent?: string): Promise<IPReputationResult> {
     let maxRiskScore = 0;
-    let blockingSources: string[] = [];
-    let allThreats: string[] = [];
+    const blockingSources: string[] = [];
+    const allThreats: string[] = [];
     let country: string | undefined;
     let isp: string | undefined;
 

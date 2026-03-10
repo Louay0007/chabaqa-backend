@@ -199,7 +199,7 @@ export class AchievementService {
     criteria: any,
   ): Promise<{ current: number; target: number; percentage: number }> {
     const target = criteria.timeMinutes || 60; // minutes
-    let current = 0;
+    const current = 0;
 
     // This would need to be implemented based on tracking data
     // For now, return 0

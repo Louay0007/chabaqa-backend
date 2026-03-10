@@ -6,6 +6,7 @@ import { APP_FILTER, APP_INTERCEPTOR, APP_GUARD } from '@nestjs/core';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { AdminController } from './admin.controller';
 import { AdminService } from './admin.service';
+import { AdminNotificationsService } from './admin-notifications.service';
 
 // Import existing schemas
 import { Admin, AdminSchema } from '../schema/admin.schema';
@@ -18,6 +19,7 @@ import { Community, CommunitySchema } from '../schema/community.schema';
 import { Order, OrderSchema } from '../schema/order.schema';
 import { Subscription, SubscriptionSchema } from '../schema/subscription.schema';
 import { Cours, CoursSchema } from '../schema/course.schema';
+import { Conversation, ConversationSchema } from '../schema/conversation.schema';
 
 // Import new admin-specific schemas
 import { AdminUser, AdminUserSchema } from './schemas/admin-user.schema';
@@ -58,6 +60,7 @@ import { CommunityManagementModule } from './community-management/community-mana
 import { ContentModerationModule } from './content-moderation/content-moderation.module';
 import { FinancialManagementModule } from './financial-management/financial-management.module';
 import { AnalyticsDashboardModule } from './analytics-dashboard/analytics-dashboard.module';
+import { AdminAlertConfig, AdminAlertConfigSchema } from './analytics-dashboard/schemas/admin-alert-config.schema';
 
 // Import admin controllers
 import { ExportController } from './common/controllers/export.controller';
@@ -82,6 +85,8 @@ import { AnalyticsController } from './common/controllers/analytics.controller';
       { name: Order.name, schema: OrderSchema },
       { name: Subscription.name, schema: SubscriptionSchema },
       { name: Cours.name, schema: CoursSchema },
+      { name: Conversation.name, schema: ConversationSchema },
+      { name: AdminAlertConfig.name, schema: AdminAlertConfigSchema },
 
       // New admin-specific schemas
       { name: AdminUser.name, schema: AdminUserSchema },
@@ -131,6 +136,7 @@ import { AnalyticsController } from './common/controllers/analytics.controller';
   providers: [
     // Core admin services
     AdminService,
+    AdminNotificationsService,
     TokenBlacklistService,
     EmailService, // Provide EmailService from common/services for AdminService
     
@@ -162,6 +168,7 @@ import { AnalyticsController } from './common/controllers/analytics.controller';
   ],
   exports: [
     AdminService,
+    AdminNotificationsService,
     AdminCommonModule,
     // Export services that other modules might need
     AdminNotificationService,

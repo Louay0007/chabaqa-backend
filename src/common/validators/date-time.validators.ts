@@ -24,7 +24,7 @@ export class IsEndTimeAfterStartTimeConstraint implements ValidatorConstraintInt
 }
 
 export function IsEndTimeAfterStartTime(validationOptions?: ValidationOptions) {
-  return function (object: Object, propertyName: string) {
+  return function (object: object, propertyName: string) {
     registerDecorator({
       target: object.constructor,
       propertyName: propertyName,
@@ -58,7 +58,7 @@ export class IsEndDateAfterOrEqualStartDateConstraint implements ValidatorConstr
 }
 
 export function IsEndDateAfterOrEqualStartDate(validationOptions?: ValidationOptions) {
-  return function (object: Object, propertyName: string) {
+  return function (object: object, propertyName: string) {
     registerDecorator({
       target: object.constructor,
       propertyName: propertyName,
@@ -101,7 +101,7 @@ export class IsLocationRequiredForEventTypeConstraint implements ValidatorConstr
 }
 
 export function IsLocationRequiredForEventType(validationOptions?: ValidationOptions) {
-  return function (object: Object, propertyName: string) {
+  return function (object: object, propertyName: string) {
     registerDecorator({
       target: object.constructor,
       propertyName: propertyName,
@@ -164,7 +164,7 @@ export class IsOnlineUrlRequiredForEventTypeConstraint implements ValidatorConst
 }
 
 export function IsOnlineUrlRequiredForEventType(validationOptions?: ValidationOptions) {
-  return function (object: Object, propertyName: string) {
+  return function (object: object, propertyName: string) {
     registerDecorator({
       target: object.constructor,
       propertyName: propertyName,

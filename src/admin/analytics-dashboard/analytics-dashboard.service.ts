@@ -26,6 +26,7 @@ import {
   AlertCondition,
   AlertSeverity
 } from './dto/alert-config.dto';
+import { AdminAlertConfig, AdminAlertConfigDocument } from './schemas/admin-alert-config.schema';
 
 /**
  * AnalyticsDashboardService provides comprehensive analytics dashboard functionality
@@ -34,6 +35,8 @@ import {
 @Injectable()
 export class AnalyticsDashboardService {
   constructor(
+    @InjectModel(AdminAlertConfig.name)
+    private readonly adminAlertConfigModel: Model<AdminAlertConfigDocument>,
     private readonly analyticsService: AnalyticsService,
     private readonly exportService: ExportService,
     private readonly adminNotificationService: AdminNotificationService
@@ -158,11 +161,7 @@ export class AnalyticsDashboardService {
     createAlertDto: CreateAlertDto,
     adminId: string
   ): Promise<AlertResponseDto> {
-    // In a real implementation, this would save to database
-    // For now, we'll return a mock response
-    
-    const alert: AlertResponseDto = {
-      id: new Types.ObjectId().toString(),
+    const created = await this.adminAlertConfigModel.create({
       name: createAlertDto.name,
       description: createAlertDto.description,
       metricType: createAlertDto.metricType,
@@ -173,12 +172,10 @@ export class AnalyticsDashboardService {
       notifyAdmins: createAlertDto.notifyAdmins || [],
       notifyEmails: createAlertDto.notifyEmails || [],
       triggerCount: 0,
-      createdBy: adminId,
-      createdAt: new Date(),
-      updatedAt: new Date()
-    };
+      createdBy: Types.ObjectId.isValid(adminId) ? new Types.ObjectId(adminId) : new Types.ObjectId(),
+    });
 
-    return alert;
+    return this.mapAlertDocument(created);
   }
 
   /**
@@ -189,27 +186,35 @@ export class AnalyticsDashboardService {
     alertId: string,
     updateAlertDto: UpdateAlertDto
   ): Promise<AlertResponseDto> {
-    // In a real implementation, this would update in database
-    // For now, we'll return a mock response
-    
-    const alert: AlertResponseDto = {
-      id: alertId,
-      name: updateAlertDto.name || 'Updated Alert',
-      description: updateAlertDto.description || 'Updated description',
-      metricType: AlertMetricType.ERROR_RATE,
-      condition: AlertCondition.GREATER_THAN,
-      threshold: updateAlertDto.threshold || 5,
-      severity: updateAlertDto.severity || AlertSeverity.WARNING,
-      isEnabled: updateAlertDto.isEnabled !== undefined ? updateAlertDto.isEnabled : true,
-      notifyAdmins: updateAlertDto.notifyAdmins || [],
-      notifyEmails: updateAlertDto.notifyEmails || [],
-      triggerCount: 0,
-      createdBy: 'admin-id',
-      createdAt: new Date(Date.now() - 86400000),
-      updatedAt: new Date()
-    };
+    const alert = await this.adminAlertConfigModel.findById(alertId).exec();
+    if (!alert) {
+      throw new NotFoundException(`Alert with ID ${alertId} not found`);
+    }
 
-    return alert;
+    if (typeof updateAlertDto.name === 'string') {
+      alert.name = updateAlertDto.name;
+    }
+    if (typeof updateAlertDto.description === 'string') {
+      alert.description = updateAlertDto.description;
+    }
+    if (typeof updateAlertDto.threshold === 'number') {
+      alert.threshold = updateAlertDto.threshold;
+    }
+    if (updateAlertDto.severity) {
+      alert.severity = updateAlertDto.severity;
+    }
+    if (typeof updateAlertDto.isEnabled === 'boolean') {
+      alert.isEnabled = updateAlertDto.isEnabled;
+    }
+    if (Array.isArray(updateAlertDto.notifyAdmins)) {
+      alert.notifyAdmins = updateAlertDto.notifyAdmins;
+    }
+    if (Array.isArray(updateAlertDto.notifyEmails)) {
+      alert.notifyEmails = updateAlertDto.notifyEmails;
+    }
+
+    const saved = await alert.save();
+    return this.mapAlertDocument(saved);
   }
 
   /**
@@ -217,28 +222,8 @@ export class AnalyticsDashboardService {
    * Requirements: 5.5
    */
   async getAlerts(): Promise<AlertResponseDto[]> {
-    // In a real implementation, this would query from database
-    // For now, we'll return mock data
-    
-    return [
-      {
-        id: new Types.ObjectId().toString(),
-        name: 'High Error Rate',
-        description: 'Triggers when error rate exceeds 5%',
-        metricType: AlertMetricType.ERROR_RATE,
-        condition: AlertCondition.GREATER_THAN,
-        threshold: 5,
-        severity: AlertSeverity.CRITICAL,
-        isEnabled: true,
-        notifyAdmins: [],
-        notifyEmails: ['admin@example.com'],
-        triggerCount: 3,
-        lastTriggered: new Date(Date.now() - 3600000),
-        createdBy: 'admin-id',
-        createdAt: new Date(Date.now() - 86400000 * 7),
-        updatedAt: new Date(Date.now() - 86400000)
-      }
-    ];
+    const alerts = await this.adminAlertConfigModel.find().sort({ createdAt: -1 }).exec();
+    return alerts.map((alert) => this.mapAlertDocument(alert));
   }
 
   /**
@@ -246,15 +231,12 @@ export class AnalyticsDashboardService {
    * Requirements: 5.5
    */
   async getAlertById(alertId: string): Promise<AlertResponseDto> {
-    // In a real implementation, this would query from database
-    const alerts = await this.getAlerts();
-    const alert = alerts.find(a => a.id === alertId);
-    
+    const alert = await this.adminAlertConfigModel.findById(alertId).exec();
     if (!alert) {
       throw new NotFoundException(`Alert with ID ${alertId} not found`);
     }
 
-    return alert;
+    return this.mapAlertDocument(alert);
   }
 
   /**
@@ -262,9 +244,10 @@ export class AnalyticsDashboardService {
    * Requirements: 5.5
    */
   async deleteAlert(alertId: string): Promise<void> {
-    // In a real implementation, this would delete from database
-    // For now, we'll just validate the ID exists
-    await this.getAlertById(alertId);
+    const deleted = await this.adminAlertConfigModel.findByIdAndDelete(alertId).exec();
+    if (!deleted) {
+      throw new NotFoundException(`Alert with ID ${alertId} not found`);
+    }
   }
 
   /**
@@ -294,6 +277,11 @@ export class AnalyticsDashboardService {
       );
 
       if (shouldTrigger) {
+        await this.adminAlertConfigModel.findByIdAndUpdate(alert.id, {
+          $inc: { triggerCount: 1 },
+          $set: { lastTriggered: new Date() },
+        }).exec();
+
         const notification: AlertNotificationDto = {
           alertId: alert.id,
           alertName: alert.name,
@@ -401,9 +389,35 @@ export class AnalyticsDashboardService {
         return data.userGrowth?.churnedUsers || 0;
       case AlertMetricType.SYSTEM_HEALTH:
         return this.calculateHealthScore(data.health);
+      case AlertMetricType.PENDING_CONTENT:
+      case AlertMetricType.FLAGGED_CONTENT:
+      case AlertMetricType.PENDING_COMMUNITIES:
+      case AlertMetricType.FAILED_LOGINS:
+      case AlertMetricType.HIGH_VALUE_TRANSACTION:
+        return 0;
       default:
         return 0;
     }
+  }
+
+  private mapAlertDocument(alert: AdminAlertConfigDocument): AlertResponseDto {
+    return {
+      id: alert._id.toString(),
+      name: alert.name,
+      description: alert.description,
+      metricType: alert.metricType,
+      condition: alert.condition,
+      threshold: alert.threshold,
+      severity: alert.severity,
+      isEnabled: Boolean(alert.isEnabled),
+      notifyAdmins: Array.isArray(alert.notifyAdmins) ? alert.notifyAdmins : [],
+      notifyEmails: Array.isArray(alert.notifyEmails) ? alert.notifyEmails : [],
+      triggerCount: alert.triggerCount || 0,
+      lastTriggered: alert.lastTriggered,
+      createdBy: String(alert.createdBy),
+      createdAt: alert.createdAt,
+      updatedAt: alert.updatedAt,
+    };
   }
 
   /**

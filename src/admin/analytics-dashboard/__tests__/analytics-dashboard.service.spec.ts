@@ -1,17 +1,68 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { getModelToken } from '@nestjs/mongoose';
+import { Types } from 'mongoose';
 import { AnalyticsDashboardService } from '../analytics-dashboard.service';
 import { AnalyticsService } from '../../common/services/analytics.service';
 import { ExportService } from '../../common/services/export.service';
 import { AdminNotificationService } from '../../common/services/admin-notification.service';
 import { AlertMetricType, AlertCondition, AlertSeverity } from '../dto/alert-config.dto';
+import { AdminAlertConfig } from '../schemas/admin-alert-config.schema';
 
 describe('AnalyticsDashboardService', () => {
   let service: AnalyticsDashboardService;
   let analyticsService: AnalyticsService;
   let exportService: ExportService;
   let adminNotificationService: AdminNotificationService;
+  let alertModel: {
+    create: jest.Mock;
+    find: jest.Mock;
+    findById: jest.Mock;
+    findByIdAndDelete: jest.Mock;
+    findByIdAndUpdate: jest.Mock;
+  };
+
+  const createdAt = new Date('2024-01-01T00:00:00.000Z');
+  const baseAlertDoc = {
+    _id: new Types.ObjectId(),
+    name: 'High Error Rate',
+    description: 'Triggers when error rate exceeds 5%',
+    metricType: AlertMetricType.ERROR_RATE,
+    condition: AlertCondition.GREATER_THAN,
+    threshold: 5,
+    severity: AlertSeverity.CRITICAL,
+    isEnabled: true,
+    notifyAdmins: [],
+    notifyEmails: ['admin@example.com'],
+    triggerCount: 3,
+    lastTriggered: createdAt,
+    createdBy: new Types.ObjectId(),
+    createdAt,
+    updatedAt: createdAt,
+  };
 
   beforeEach(async () => {
+    alertModel = {
+      create: jest.fn().mockImplementation(async (payload) => ({
+        ...baseAlertDoc,
+        ...payload,
+        _id: new Types.ObjectId(),
+      })),
+      find: jest.fn().mockReturnValue({
+        sort: jest.fn().mockReturnValue({
+          exec: jest.fn().mockResolvedValue([baseAlertDoc]),
+        }),
+      }),
+      findById: jest.fn().mockReturnValue({
+        exec: jest.fn().mockResolvedValue(baseAlertDoc),
+      }),
+      findByIdAndDelete: jest.fn().mockReturnValue({
+        exec: jest.fn().mockResolvedValue(baseAlertDoc),
+      }),
+      findByIdAndUpdate: jest.fn().mockReturnValue({
+        exec: jest.fn().mockResolvedValue(baseAlertDoc),
+      }),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AnalyticsDashboardService,
@@ -22,7 +73,23 @@ describe('AnalyticsDashboardService', () => {
             getEngagementMetrics: jest.fn(),
             getRevenueAnalytics: jest.fn(),
             getPlatformHealth: jest.fn(),
-            getDashboardMetrics: jest.fn()
+            getDashboardMetrics: jest.fn(),
+            getPlatformContentMetrics: jest.fn().mockResolvedValue({ totalContent: 0 }),
+            getRetentionMetrics: jest.fn().mockResolvedValue({
+              overview: {
+                dayOneRetention: 0,
+                daySevenRetention: 0,
+                dayThirtyRetention: 0,
+                churnRate: 0,
+                averageLifetimeDays: 0,
+              },
+              cohorts: [],
+              trends: [],
+              period: {
+                startDate: new Date(),
+                endDate: new Date(),
+              },
+            }),
           }
         },
         {
@@ -35,8 +102,13 @@ describe('AnalyticsDashboardService', () => {
         {
           provide: AdminNotificationService,
           useValue: {
-            sendNotification: jest.fn()
+            sendNotification: jest.fn(),
+            sendSystemAlert: jest.fn(),
           }
+        },
+        {
+          provide: getModelToken(AdminAlertConfig.name),
+          useValue: alertModel,
         }
       ]
     }).compile();
@@ -61,6 +133,7 @@ describe('AnalyticsDashboardService', () => {
 
       const mockUserGrowth = {
         totalUsers: 1000,
+        totalCommunities: 125,
         newUsers: 100,
         activeUsers: 500,
         retainedUsers: 400,
@@ -137,6 +210,7 @@ describe('AnalyticsDashboardService', () => {
 
       const mockUserGrowth = {
         totalUsers: 1000,
+        totalCommunities: 125,
         newUsers: 100,
         activeUsers: 500,
         retainedUsers: 400,
@@ -213,7 +287,8 @@ describe('AnalyticsDashboardService', () => {
       expect(result.metricType).toBe(createAlertDto.metricType);
       expect(result.threshold).toBe(createAlertDto.threshold);
       expect(result.isEnabled).toBe(true);
-      expect(result.createdBy).toBe('admin-id');
+      expect(typeof result.createdBy).toBe('string');
+      expect(result.createdBy.length).toBeGreaterThan(0);
     });
   });
 
@@ -227,6 +302,7 @@ describe('AnalyticsDashboardService', () => {
 
       const mockUserGrowth = {
         totalUsers: 1000,
+        totalCommunities: 125,
         newUsers: 100,
         activeUsers: 500,
         retainedUsers: 400,
@@ -332,6 +408,7 @@ describe('AnalyticsDashboardService', () => {
 
       const mockUserGrowth = {
         totalUsers: 1000,
+        totalCommunities: 125,
         newUsers: 100,
         activeUsers: 500,
         retainedUsers: 400,

@@ -46,7 +46,7 @@ export class DataManagementService {
     });
 
     // Build sort configuration
-    let sort = FilterBuilder.buildSort(filterDto.sort);
+    const sort = FilterBuilder.buildSort(filterDto.sort);
 
     // Apply default sort if no sort specified
     if (Object.keys(sort).length === 0 && options?.defaultSort) {

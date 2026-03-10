@@ -1038,7 +1038,7 @@ export class CommunicationManagementService {
    * Helper: Get target audience for email campaign
    */
   private async getTargetAudience(dto: CreateEmailCampaignDto): Promise<any[]> {
-    let query: any = {};
+    const query: any = {};
 
     switch (dto.audienceTarget) {
       case AudienceTargetType.ALL_USERS:
@@ -1096,7 +1096,7 @@ export class CommunicationManagementService {
    * Helper: Get target audience for bulk message
    */
   private async getTargetAudienceForBulkMessage(dto: BulkMessageDto): Promise<any[]> {
-    let query: any = {};
+    const query: any = {};
 
     switch (dto.audienceTarget) {
       case AudienceTargetType.ALL_USERS:

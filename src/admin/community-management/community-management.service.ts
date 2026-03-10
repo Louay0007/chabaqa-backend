@@ -875,7 +875,7 @@ export class CommunityManagementService {
     try {
       // Calculate date range based on period
       const endDate = new Date();
-      let startDate = new Date();
+      const startDate = new Date();
       
       switch (period) {
         case TimePeriod.LAST_7_DAYS:
@@ -1042,12 +1042,13 @@ export class CommunityManagementService {
     const creator = community.createur as any;
     const communityAny = community as any;
     
-    // Determine status based on isActive and approvalStatus
-    let status = 'active';
+    // Derive admin status from runtime visibility first, then moderation metadata.
+    // Many legacy communities were published (isActive=true) while approvalStatus remained "pending".
+    let status = 'inactive';
     if (communityAny.isSuspended) status = 'suspended';
-    else if (communityAny.approvalStatus === 'pending') status = 'pending';
     else if (communityAny.approvalStatus === 'rejected') status = 'rejected';
-    else if (!community.isActive) status = 'inactive';
+    else if (community.isActive) status = 'active';
+    else if (communityAny.approvalStatus === 'pending' || !communityAny.approvalStatus) status = 'pending';
 
     return {
       _id: community._id.toString(),
@@ -1290,7 +1291,7 @@ export class CommunityManagementService {
     customEndDate?: Date
   ): { startDate: Date; endDate: Date } {
     const endDate = customEndDate || new Date();
-    let startDate = customStartDate || new Date();
+    const startDate = customStartDate || new Date();
     
     if (!customStartDate) {
       switch (period) {

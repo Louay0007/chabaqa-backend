@@ -1,6 +1,7 @@
-import { Controller, Post, Body, HttpStatus, Res, ConflictException, HttpCode, Response as ExpressResponse, Req, UseGuards, Delete, ForbiddenException, Get } from '@nestjs/common';
+import { Controller, Post, Body, HttpStatus, Res, ConflictException, HttpCode, Req, UseGuards, Delete, ForbiddenException, Get, Put } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBody, ApiExtraModels } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
+import { Response } from 'express';
 import { AdminService } from './admin.service';
 import { CreateAdminDto } from '../dto-admin/create-admin.dto';
 import { AdminLoginDto } from '../dto-admin/login.dto';
@@ -12,12 +13,28 @@ import { AdminForgotPasswordDto } from '../dto-admin/forgot-password.dto';
 import { AdminResetPasswordDto } from '../dto-admin/reset-password.dto';
 import { AdminGuard } from '../auth/guards/admin.guard';
 import { AdminAuthGuard } from './common/guards/admin-auth.guard';
+import { UpdateAdminProfileDto } from '../dto-admin/update-admin-profile.dto';
+import { ChangeAdminPasswordDto } from '../dto-admin/change-admin-password.dto';
+import { UpdateAdminPreferencesDto } from '../dto-admin/update-admin-preferences.dto';
+import { AdminNotificationsService } from './admin-notifications.service';
 
 @ApiTags('Admin')
-@ApiExtraModels(AdminLoginDto, AdminVerify2FADto, AdminForgotPasswordDto, AdminResetPasswordDto, AdminLoginResponseDto)
+@ApiExtraModels(
+  AdminLoginDto,
+  AdminVerify2FADto,
+  AdminForgotPasswordDto,
+  AdminResetPasswordDto,
+  AdminLoginResponseDto,
+  UpdateAdminProfileDto,
+  ChangeAdminPasswordDto,
+  UpdateAdminPreferencesDto,
+)
 @Controller('admin')
 export class AdminController {
-  constructor(private readonly adminService: AdminService) {}
+  constructor(
+    private readonly adminService: AdminService,
+    private readonly adminNotificationsService: AdminNotificationsService,
+  ) {}
 
   @Post('bootstrap')
   @HttpCode(HttpStatus.CREATED)
@@ -313,6 +330,106 @@ export class AdminController {
   })
   async getAdminSession(@Req() req) {
     return req.adminSession || this.adminService.getAdminSessionForRequestUser(req.user);
+  }
+
+  @Put('profile')
+  @UseGuards(AdminAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Update admin profile',
+    description: 'Update the current authenticated admin name/email and return refreshed session payload.',
+    tags: ['Admin'],
+  })
+  async updateAdminProfile(@Req() req, @Body() updateProfileDto: UpdateAdminProfileDto) {
+    const session = await this.adminService.updateAdminProfile(req.user, updateProfileDto);
+    return {
+      success: true,
+      message: 'Profile updated successfully',
+      data: session,
+    };
+  }
+
+  @Post('change-password')
+  @UseGuards(AdminAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Change admin password',
+    description: 'Update password for the current authenticated admin account.',
+    tags: ['Admin'],
+  })
+  async changeAdminPassword(@Req() req, @Body() changePasswordDto: ChangeAdminPasswordDto) {
+    const result = await this.adminService.changeAdminPassword(req.user, changePasswordDto);
+    return {
+      success: true,
+      ...result,
+    };
+  }
+
+  @Get('settings/preferences')
+  @UseGuards(AdminAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Get admin preferences',
+    description: 'Get personal settings/preferences for the current authenticated admin.',
+    tags: ['Admin'],
+  })
+  async getAdminPreferences(@Req() req) {
+    const preferences = await this.adminService.getAdminPreferences(req.user);
+    return {
+      success: true,
+      data: preferences,
+    };
+  }
+
+  @Put('settings/preferences')
+  @UseGuards(AdminAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Update admin preferences',
+    description: 'Persist personal settings/preferences for the current authenticated admin.',
+    tags: ['Admin'],
+  })
+  async updateAdminPreferences(@Req() req, @Body() updatePreferencesDto: UpdateAdminPreferencesDto) {
+    const preferences = await this.adminService.updateAdminPreferences(req.user, updatePreferencesDto);
+    return {
+      success: true,
+      message: 'Preferences updated successfully',
+      data: preferences,
+    };
+  }
+
+  @Get('notifications/summary')
+  @UseGuards(AdminAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Get admin notification summary',
+    description: 'Returns aggregate counts for actionable admin notifications shown in the header.',
+    tags: ['Admin'],
+  })
+  async getAdminNotificationSummary() {
+    const summary = await this.adminNotificationsService.getSummary();
+    return {
+      success: true,
+      data: summary,
+    };
+  }
+
+  @Get('notifications/feed')
+  @UseGuards(AdminAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Get admin notification feed',
+    description: 'Returns the latest actionable admin notifications for the header panel.',
+    tags: ['Admin'],
+  })
+  async getAdminNotificationFeed(@Req() req) {
+    const requestedLimit = Number(req?.query?.limit);
+    const limit = Number.isFinite(requestedLimit) ? requestedLimit : 8;
+    const feed = await this.adminNotificationsService.getFeed(limit);
+    return {
+      success: true,
+      data: feed,
+    };
   }
 
   // refresh token

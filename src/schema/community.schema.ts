@@ -950,7 +950,7 @@ CommunitySchema.methods.removeTag = function (tag: string): void {
 
 // Méthode pour générer un slug unique
 CommunitySchema.methods.generateSlug = function (baseName: string): string {
-  let slug = baseName
+  const slug = baseName
     .toLowerCase()
     .replace(/[^a-z0-9]/g, '-')
     .replace(/-+/g, '-')

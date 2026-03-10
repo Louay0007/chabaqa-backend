@@ -1,7 +1,8 @@
-import { Module, forwardRef } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AnalyticsDashboardController } from './analytics-dashboard.controller';
 import { AnalyticsDashboardService } from './analytics-dashboard.service';
+import { AdminAlertConfig, AdminAlertConfigSchema } from './schemas/admin-alert-config.schema';
 
 /**
  * AnalyticsDashboardModule provides comprehensive analytics dashboard functionality
@@ -12,7 +13,9 @@ import { AnalyticsDashboardService } from './analytics-dashboard.service';
  */
 @Module({
   imports: [
-    // Add any required schema imports here if needed
+    MongooseModule.forFeature([
+      { name: AdminAlertConfig.name, schema: AdminAlertConfigSchema },
+    ]),
   ],
   controllers: [AnalyticsDashboardController],
   providers: [

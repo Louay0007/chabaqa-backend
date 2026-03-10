@@ -17,6 +17,10 @@ import { TokenBlacklistService } from '../common/services/token-blacklist.servic
 import { AdminForgotPasswordDto } from '../dto-admin/forgot-password.dto';
 import { AdminResetPasswordDto } from '../dto-admin/reset-password.dto';
 import { getJwtRefreshSecret, getJwtSecret, isProductionEnvironment } from '../common/utils/security-config.util';
+import { User, UserDocument } from '../schema/user.schema';
+import { UpdateAdminProfileDto } from '../dto-admin/update-admin-profile.dto';
+import { ChangeAdminPasswordDto } from '../dto-admin/change-admin-password.dto';
+import { UpdateAdminPreferencesDto } from '../dto-admin/update-admin-preferences.dto';
 
 // Import new admin-specific schemas and interfaces
 import { AdminUser, AdminUserDocument, AdminRole, AdminPermission } from './schemas/admin-user.schema';
@@ -49,6 +53,20 @@ export interface AdminSessionPayload {
   capabilities: AdminCapabilities;
 }
 
+export interface AdminPreferences {
+  theme: 'light' | 'dark' | 'system';
+  locale: string;
+  timezone: string;
+  emailNotifications: boolean;
+}
+
+const DEFAULT_ADMIN_PREFERENCES: AdminPreferences = {
+  theme: 'system',
+  locale: 'en',
+  timezone: 'UTC',
+  emailNotifications: true,
+};
+
 const FULL_ADMIN_CAPABILITIES: AdminCapabilities = {
   dashboard: true,
   users: true,
@@ -66,6 +84,7 @@ const FULL_ADMIN_CAPABILITIES: AdminCapabilities = {
 export class AdminService {
   constructor(
     @InjectModel(Admin.name) private adminModel: Model<AdminDocument>,
+    @InjectModel(User.name) private userModel: Model<UserDocument>,
     @InjectModel(AdminUser.name) private adminUserModel: Model<AdminUserDocument>,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
@@ -363,6 +382,141 @@ export class AdminService {
         (adminUser.permissions || []).map((permission) => String(permission)),
       ),
     };
+  }
+
+  async updateAdminProfile(user: any, updateProfileDto: UpdateAdminProfileDto): Promise<AdminSessionPayload> {
+    const nextName = updateProfileDto.name?.trim();
+    const nextEmail = updateProfileDto.email?.trim().toLowerCase();
+
+    if (!nextName && !nextEmail) {
+      throw new BadRequestException('At least one field (name or email) must be provided');
+    }
+
+    const adminContext = await this.getAdminContextForRequestUser(user);
+
+    if (nextEmail) {
+      if (adminContext.authSource === 'legacy_admin') {
+        const existingLegacyAdmin = await this.adminModel.findOne({
+          email: nextEmail,
+          _id: { $ne: adminContext._id },
+        });
+        if (existingLegacyAdmin) {
+          throw new ConflictException(`L'email '${nextEmail}' est déjà utilisé par un autre compte`);
+        }
+      } else {
+        const existingUser = await this.userModel.findOne({
+          email: nextEmail,
+          _id: { $ne: adminContext.userId },
+        });
+        if (existingUser) {
+          throw new ConflictException(`L'email '${nextEmail}' est déjà utilisé par un autre compte`);
+        }
+      }
+    }
+
+    if (adminContext.authSource === 'legacy_admin') {
+      const updateData: Partial<AdminDocument> = {};
+      if (nextName) updateData.name = nextName;
+      if (nextEmail) updateData.email = nextEmail;
+
+      await this.adminModel.findByIdAndUpdate(adminContext._id, updateData, { new: true }).exec();
+    } else {
+      const updateData: Partial<UserDocument> = {};
+      if (nextName) updateData.name = nextName;
+      if (nextEmail) updateData.email = nextEmail;
+
+      await this.userModel.findByIdAndUpdate(adminContext.userId, updateData, { new: true }).exec();
+    }
+
+    return this.getAdminSessionForRequestUser(user);
+  }
+
+  async changeAdminPassword(user: any, changePasswordDto: ChangeAdminPasswordDto): Promise<{ message: string }> {
+    const { currentPassword, newPassword } = changePasswordDto;
+    const adminContext = await this.getAdminContextForRequestUser(user);
+
+    if (currentPassword === newPassword) {
+      throw new BadRequestException('New password must be different from current password');
+    }
+
+    if (adminContext.authSource === 'legacy_admin') {
+      const admin = await this.adminModel.findById(adminContext._id).select('+password').exec();
+      if (!admin) {
+        throw new UnauthorizedException('Administrateur non trouvé');
+      }
+
+      const isPasswordValid = await bcrypt.compare(currentPassword, admin.password);
+      if (!isPasswordValid) {
+        throw new UnauthorizedException('Current password is incorrect');
+      }
+
+      admin.password = await this.hashPassword(newPassword);
+      await admin.save();
+      return { message: 'Password updated successfully' };
+    }
+
+    const account = await this.userModel.findById(adminContext.userId).select('+password').exec();
+    if (!account) {
+      throw new UnauthorizedException('Admin account not found');
+    }
+
+    const isPasswordValid = await bcrypt.compare(currentPassword, account.password);
+    if (!isPasswordValid) {
+      throw new UnauthorizedException('Current password is incorrect');
+    }
+
+    account.password = await this.hashPassword(newPassword);
+    await account.save();
+
+    return { message: 'Password updated successfully' };
+  }
+
+  async getAdminPreferences(user: any): Promise<AdminPreferences> {
+    const adminContext = await this.getAdminContextForRequestUser(user);
+
+    if (adminContext.authSource === 'legacy_admin') {
+      const admin = await this.adminModel.findById(adminContext._id).lean().exec();
+      const saved = admin?.adminPreferences || {};
+      return {
+        ...DEFAULT_ADMIN_PREFERENCES,
+        ...saved,
+      };
+    }
+
+    const adminUser = await this.adminUserModel.findById(adminContext._id).lean().exec();
+    const saved = (adminUser?.metadata?.preferences || {}) as Partial<AdminPreferences>;
+    return {
+      ...DEFAULT_ADMIN_PREFERENCES,
+      ...saved,
+    };
+  }
+
+  async updateAdminPreferences(
+    user: any,
+    updatePreferencesDto: UpdateAdminPreferencesDto,
+  ): Promise<AdminPreferences> {
+    const adminContext = await this.getAdminContextForRequestUser(user);
+    const current = await this.getAdminPreferences(user);
+    const next: AdminPreferences = {
+      ...current,
+      ...updatePreferencesDto,
+    };
+
+    if (adminContext.authSource === 'legacy_admin') {
+      await this.adminModel.findByIdAndUpdate(
+        adminContext._id,
+        { adminPreferences: next },
+        { new: true },
+      ).exec();
+      return next;
+    }
+
+    await this.adminUserModel.findByIdAndUpdate(
+      adminContext._id,
+      { $set: { 'metadata.preferences': next } },
+      { new: true },
+    ).exec();
+    return next;
   }
 
   // login admin

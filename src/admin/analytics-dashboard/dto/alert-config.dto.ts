@@ -8,7 +8,12 @@ export enum AlertMetricType {
   ERROR_RATE = 'error_rate',
   RESPONSE_TIME = 'response_time',
   CHURN_RATE = 'churn_rate',
-  SYSTEM_HEALTH = 'system_health'
+  SYSTEM_HEALTH = 'system_health',
+  PENDING_CONTENT = 'pending_content',
+  FLAGGED_CONTENT = 'flagged_content',
+  PENDING_COMMUNITIES = 'pending_communities',
+  FAILED_LOGINS = 'failed_logins',
+  HIGH_VALUE_TRANSACTION = 'high_value_transaction',
 }
 
 export enum AlertCondition {

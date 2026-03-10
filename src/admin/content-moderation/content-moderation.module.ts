@@ -8,6 +8,12 @@ import {
 } from '../schemas/content-moderation-queue.schema';
 import { AuditLog, AuditLogSchema } from '../schemas/audit-log.schema';
 
+// Import content schemas for moderation integration
+import { Post, PostSchema } from '../../schema/post.schema';
+import { Cours, CoursSchema } from '../../schema/course.schema';
+import { Event, EventSchema } from '../../schema/event.schema';
+import { Product, ProductSchema } from '../../schema/product.schema';
+
 /**
  * Content Moderation Module
  * 
@@ -29,7 +35,11 @@ import { AuditLog, AuditLogSchema } from '../schemas/audit-log.schema';
   imports: [
     MongooseModule.forFeature([
       { name: ContentModerationQueue.name, schema: ContentModerationQueueSchema },
-      { name: AuditLog.name, schema: AuditLogSchema }
+      { name: AuditLog.name, schema: AuditLogSchema },
+      { name: Post.name, schema: PostSchema },
+      { name: Cours.name, schema: CoursSchema },
+      { name: Event.name, schema: EventSchema },
+      { name: Product.name, schema: ProductSchema },
     ])
   ],
   controllers: [ContentModerationController],

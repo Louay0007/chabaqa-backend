@@ -37,7 +37,7 @@ async function run() {
     contentId: { $type: 'string', $ne: '' },
   });
 
-  // eslint-disable-next-line no-constant-condition
+   
   while (true) {
     const order = await cursor.next();
     if (!order) break;

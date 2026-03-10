@@ -19,8 +19,8 @@ Use this checklist when campaign emails fail with SMTP auth errors (for example 
 
 ## Production Deploy Note
 
-`docker-compose.prod.yml` loads backend env from:
-1. `chabaqa-backend/.env` (base defaults)
-2. `BACKEND_ENV_FILE` (defaults to `./.env.prod`)
+Supervisor-native deploy reads env from:
+1. your deploy env file argument (for example `./.env.prod`)
+2. `chabaqa-backend/.env` (must not conflict with shared runtime values)
 
-During `scripts/deploy-prod.sh`, `BACKEND_ENV_FILE` is set from the env file argument so SMTP credentials in that file are applied to the backend container.
+During `scripts/deploy-native-apps.sh`, shared env variables are loaded from the env file argument so SMTP credentials and related settings are applied during build/runtime sync.

@@ -717,7 +717,7 @@ export class PostController {
       })));
 
       // Step 5: Manual lookup test
-      let manualLookupResults: any[] = [];
+      const manualLookupResults: any[] = [];
       for (const post of rawPosts.slice(0, 2)) {
         try {
           const user = await this.postService['userModel']

@@ -96,7 +96,7 @@ async function run() {
   const paidChapterOrdersCache = new Map<string, Set<string>>();
 
   const cursor = enrollments.find({ isActive: true });
-  // eslint-disable-next-line no-constant-condition
+   
   while (true) {
     const enrollment = await cursor.next();
     if (!enrollment) break;

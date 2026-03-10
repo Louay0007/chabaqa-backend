@@ -187,15 +187,63 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
     return Boolean(isCreator || isAdmin);
   }
 
+  private extractId(value: any): string {
+    if (!value) return '';
+    if (typeof value === 'string') return value.trim();
+    if (typeof value === 'number') return String(value);
+
+    if (value instanceof Types.ObjectId) {
+      return value.toString();
+    }
+
+    if (typeof value === 'object') {
+      const nested = value._id ?? value.id ?? value.userId;
+      if (nested && nested !== value) {
+        return this.extractId(nested);
+      }
+    }
+
+    if (typeof value.toString === 'function') {
+      const text = value.toString().trim();
+      if (text && text !== '[object Object]') {
+        return text;
+      }
+    }
+
+    return '';
+  }
+
+  private sameId(value: any, targetId: string): boolean {
+    if (!targetId) return false;
+
+    if (value && typeof value.equals === 'function') {
+      return value.equals(targetId);
+    }
+
+    const left = this.extractId(value);
+    const right = this.extractId(targetId);
+    if (!left || !right) return false;
+    return left === right;
+  }
+
   private hasObjectId(items: any[] | undefined, targetId: string): boolean {
     if (!Array.isArray(items)) return false;
-    return items.some((item: any) => {
-      if (!item) return false;
-      if (typeof item.equals === 'function') {
-        return item.equals(targetId);
-      }
-      return String(item) === String(targetId);
-    });
+    return items.some((item: any) => this.sameId(item, targetId));
+  }
+
+  private excludeUserId(items: any[] | undefined, userId: string): any[] {
+    if (!Array.isArray(items)) return [];
+    return items.filter((item: any) => !this.sameId(item, userId));
+  }
+
+  private isCommunityCreator(community: any, userId: string): boolean {
+    const creatorCandidates = [
+      community?.createur,
+      community?.creator,
+      community?.creatorId,
+      community?.createurId,
+    ];
+    return creatorCandidates.some((candidate) => this.sameId(candidate, userId));
   }
 
   private resolveMemberDisplayName(user: any): string {
@@ -1960,23 +2008,22 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
         throw new NotFoundException('Communauté non trouvée');
       }
 
+      // Empêcher le créateur de quitter sa propre communauté
+      if (this.isCommunityCreator(community, userId)) {
+        throw new ForbiddenException('Le créateur ne peut pas quitter sa propre communauté');
+      }
+
       // Vérifier si l'utilisateur est membre
-      const userObjectId = new Types.ObjectId(userId);
-      const isMember = community.members.some(memberId => memberId.equals(userObjectId));
+      const isMember = this.hasObjectId(community.members as any[], userId);
 
       if (!isMember) {
         throw new BadRequestException('Vous n\'êtes pas membre de cette communauté');
       }
 
-      // Empêcher le créateur de quitter sa propre communauté
-      if (community.createur.equals(new Types.ObjectId(userId))) {
-        throw new ForbiddenException('Le créateur ne peut pas quitter sa propre communauté');
-      }
-
       // Retirer l'utilisateur de la communauté
-      community.members = community.members.filter(member => !member.equals(new Types.ObjectId(userId)));
-      community.admins = community.admins.filter(admin => !admin.equals(new Types.ObjectId(userId)));
-      community.moderateurs = community.moderateurs.filter(moderator => !moderator.equals(new Types.ObjectId(userId)));
+      community.members = this.excludeUserId(community.members as any[], userId) as any;
+      community.admins = this.excludeUserId(community.admins as any[], userId) as any;
+      community.moderateurs = this.excludeUserId(community.moderateurs as any[], userId) as any;
       community.membersCount = community.members.length;
       await community.save();
 
