@@ -31,6 +31,7 @@ export interface AdminCapabilities {
   users: boolean;
   communities: boolean;
   contentModeration: boolean;
+  contentManagement: boolean;
   financial: boolean;
   analytics: boolean;
   security: boolean;
@@ -72,6 +73,7 @@ const FULL_ADMIN_CAPABILITIES: AdminCapabilities = {
   users: true,
   communities: true,
   contentModeration: true,
+  contentManagement: true,
   financial: true,
   analytics: true,
   security: true,
@@ -185,7 +187,12 @@ export class AdminService {
     roles: string[] = [],
     permissions: string[] = [],
   ): AdminCapabilities {
-    if (roles.includes(AdminRole.SUPER_ADMIN) || permissions.includes('*')) {
+    if (
+      roles.includes(AdminRole.SUPER_ADMIN) ||
+      roles.includes('admin') ||
+      roles.includes('super_admin') ||
+      permissions.includes('*')
+    ) {
       return { ...FULL_ADMIN_CAPABILITIES };
     }
 
@@ -212,6 +219,15 @@ export class AdminService {
       },
       contentModeration: {
         roles: [AdminRole.SUPER_ADMIN, AdminRole.CONTENT_MODERATOR, AdminRole.ANALYTICS_VIEWER],
+        permissions: [
+          AdminPermission.VIEW_CONTENT_QUEUE,
+          AdminPermission.APPROVE_CONTENT,
+          AdminPermission.REJECT_CONTENT,
+          AdminPermission.BULK_MODERATE_CONTENT,
+        ],
+      },
+      contentManagement: {
+        roles: [AdminRole.SUPER_ADMIN, AdminRole.CONTENT_MODERATOR],
         permissions: [
           AdminPermission.VIEW_CONTENT_QUEUE,
           AdminPermission.APPROVE_CONTENT,
@@ -269,6 +285,7 @@ export class AdminService {
       users: hasAny([...(capabilityRules.users.roles || []), ...(capabilityRules.users.permissions || [])]),
       communities: hasAny([...(capabilityRules.communities.roles || []), ...(capabilityRules.communities.permissions || [])]),
       contentModeration: hasAny([...(capabilityRules.contentModeration.roles || []), ...(capabilityRules.contentModeration.permissions || [])]),
+      contentManagement: hasAny([...(capabilityRules.contentManagement.roles || []), ...(capabilityRules.contentManagement.permissions || [])]),
       financial: hasAny([...(capabilityRules.financial.roles || []), ...(capabilityRules.financial.permissions || [])]),
       analytics: hasAny([...(capabilityRules.analytics.roles || []), ...(capabilityRules.analytics.permissions || [])]),
       security: hasAny([...(capabilityRules.security.roles || []), ...(capabilityRules.security.permissions || [])]),

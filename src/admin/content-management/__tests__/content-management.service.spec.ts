@@ -35,6 +35,8 @@ describe('ContentManagementService', () => {
   let testCommunityId: string;
 
   beforeEach(async () => {
+    jest.clearAllMocks();
+    
     testAdminId = new Types.ObjectId().toString();
     testCourseId = new Types.ObjectId().toString();
     testChallengeId = new Types.ObjectId().toString();
@@ -43,58 +45,76 @@ describe('ContentManagementService', () => {
     testUserId = new Types.ObjectId().toString();
     testCommunityId = new Types.ObjectId().toString();
 
+    // Helper to create chainable query mocks
+    const createQueryMock = (finalValue: any = null) => {
+      const query: any = {
+        sort: jest.fn().mockReturnThis(),
+        skip: jest.fn().mockReturnThis(),
+        limit: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue(finalValue),
+        populate: jest.fn().mockReturnThis(),
+        select: jest.fn().mockReturnThis(),
+        exec: jest.fn().mockResolvedValue(finalValue),
+      };
+      
+      // Also make the query object thenable so it can be awaited directly
+      query.then = (resolve: any) => Promise.resolve(finalValue).then(resolve);
+      
+      return jest.fn().mockReturnValue(query);
+    };
+
     // Mock Course Model
     mockCourseModel = {
-      find: jest.fn(),
-      findOne: jest.fn(),
-      findById: jest.fn(),
-      countDocuments: jest.fn(),
-      findByIdAndUpdate: jest.fn(),
+      find: createQueryMock([]),
+      findOne: createQueryMock(null),
+      findById: createQueryMock(null),
+      countDocuments: jest.fn().mockResolvedValue(0),
+      findByIdAndUpdate: jest.fn().mockResolvedValue(null),
     };
 
     // Mock Challenge Model
     mockChallengeModel = {
-      find: jest.fn(),
-      findById: jest.fn(),
-      countDocuments: jest.fn(),
+      find: createQueryMock([]),
+      findById: createQueryMock(null),
+      countDocuments: jest.fn().mockResolvedValue(0),
     };
 
     // Mock Submission Model
     mockSubmissionModel = {
-      find: jest.fn(),
-      findById: jest.fn(),
-      countDocuments: jest.fn(),
+      find: createQueryMock([]),
+      findById: createQueryMock(null),
+      countDocuments: jest.fn().mockResolvedValue(0),
     };
 
     // Mock Event Model
     mockEventModel = {
-      find: jest.fn(),
-      findById: jest.fn(),
-      countDocuments: jest.fn(),
+      find: createQueryMock([]),
+      findById: createQueryMock(null),
+      countDocuments: jest.fn().mockResolvedValue(0),
     };
 
     // Mock Post Model
     mockPostModel = {
-      find: jest.fn(),
-      findOne: jest.fn(),
-      countDocuments: jest.fn(),
-      deleteOne: jest.fn(),
+      find: createQueryMock([]),
+      findOne: createQueryMock(null),
+      countDocuments: jest.fn().mockResolvedValue(0),
+      deleteOne: jest.fn().mockResolvedValue({ deletedCount: 1 }),
     };
 
     // Mock Community Model
     mockCommunityModel = {
-      findOne: jest.fn(),
+      findOne: createQueryMock(null),
     };
 
     // Mock User Model
     mockUserModel = {
-      findById: jest.fn(),
+      findById: createQueryMock(null),
     };
 
     // Mock Enrollment Model
     mockEnrollmentModel = {
-      find: jest.fn(),
-      countDocuments: jest.fn(),
+      find: createQueryMock([]),
+      countDocuments: jest.fn().mockResolvedValue(0),
     };
 
     // Mock AuditLogService
@@ -157,7 +177,7 @@ describe('ContentManagementService', () => {
       const mockCourses = [
         {
           _id: testCourseId,
-          id: 'course-1',
+          id: testCourseId,
           titre: 'Test Course',
           description: 'Test Description',
           creatorId: new Types.ObjectId(testUserId),
@@ -184,15 +204,23 @@ describe('ContentManagementService', () => {
       });
 
       mockCourseModel.countDocuments.mockResolvedValue(1);
-      mockUserModel.findById.mockResolvedValue({
-        _id: testUserId,
-        name: 'Test User',
-        email: 'test@example.com',
+      mockUserModel.findById.mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue({
+            _id: testUserId,
+            name: 'Test User',
+            email: 'test@example.com',
+          }),
+        }),
       });
-      mockCommunityModel.findOne.mockResolvedValue({
-        id: testCommunityId,
-        name: 'Test Community',
-        slug: 'test-community',
+      mockCommunityModel.findOne.mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue({
+            id: testCommunityId,
+            name: 'Test Community',
+            slug: 'test-community',
+          }),
+        }),
       });
       mockEnrollmentModel.countDocuments.mockResolvedValue(5);
 
@@ -265,7 +293,7 @@ describe('ContentManagementService', () => {
     it('should approve a course and log action', async () => {
       const mockCourse = {
         _id: testCourseId,
-        id: 'course-1',
+        id: testCourseId,
         isPublished: false,
         approvalStatus: ContentStatus.PENDING,
         save: jest.fn().mockResolvedValue(true),
@@ -273,7 +301,7 @@ describe('ContentManagementService', () => {
 
       mockCourseModel.findOne.mockResolvedValue(mockCourse);
 
-      await service.approveCourse('course-1', testAdminId);
+      await service.approveCourse(testCourseId, testAdminId);
 
       expect(mockCourse.isPublished).toBe(true);
       expect(mockCourse.save).toHaveBeenCalled();
@@ -288,7 +316,8 @@ describe('ContentManagementService', () => {
     it('should throw NotFoundException when course not found', async () => {
       mockCourseModel.findOne.mockResolvedValue(null);
 
-      await expect(service.approveCourse('invalid-id', testAdminId)).rejects.toThrow(
+      const invalidId = new Types.ObjectId().toString();
+      await expect(service.approveCourse(invalidId, testAdminId)).rejects.toThrow(
         'Course not found',
       );
     });
@@ -298,14 +327,14 @@ describe('ContentManagementService', () => {
     it('should feature a course', async () => {
       const mockCourse = {
         _id: testCourseId,
-        id: 'course-1',
+        id: testCourseId,
         isFeatured: false,
         save: jest.fn().mockResolvedValue(true),
       };
 
       mockCourseModel.findOne.mockResolvedValue(mockCourse);
 
-      await service.featureCourse('course-1', true, testAdminId);
+      await service.featureCourse(testCourseId, true, testAdminId);
 
       expect(mockAuditLogService.logAction).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -318,14 +347,14 @@ describe('ContentManagementService', () => {
     it('should unfeature a course', async () => {
       const mockCourse = {
         _id: testCourseId,
-        id: 'course-1',
+        id: testCourseId,
         isFeatured: true,
         save: jest.fn().mockResolvedValue(true),
       };
 
       mockCourseModel.findOne.mockResolvedValue(mockCourse);
 
-      await service.featureCourse('course-1', false, testAdminId);
+      await service.featureCourse(testCourseId, false, testAdminId);
 
       expect(mockAuditLogService.logAction).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -340,7 +369,7 @@ describe('ContentManagementService', () => {
     it('should return paginated enrollments', async () => {
       const mockCourse = {
         _id: testCourseId,
-        id: 'course-1',
+        id: testCourseId,
       };
 
       const mockEnrollments = [
@@ -373,7 +402,7 @@ describe('ContentManagementService', () => {
       });
       mockEnrollmentModel.countDocuments.mockResolvedValue(1);
 
-      const result = await service.getCourseEnrollments('course-1', { page: 1, limit: 20 });
+      const result = await service.getCourseEnrollments(testCourseId, { page: 1, limit: 20 });
 
       expect(result.data).toHaveLength(1);
       expect(result.data[0].user.name).toBe('Test User');
@@ -415,15 +444,23 @@ describe('ContentManagementService', () => {
         }),
       });
       mockChallengeModel.countDocuments.mockResolvedValue(1);
-      mockUserModel.findById.mockResolvedValue({
-        _id: testUserId,
-        name: 'Test User',
-        email: 'test@example.com',
+      mockUserModel.findById.mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue({
+            _id: testUserId,
+            name: 'Test User',
+            email: 'test@example.com',
+          }),
+        }),
       });
-      mockCommunityModel.findOne.mockResolvedValue({
-        id: testCommunityId,
-        name: 'Test Community',
-        slug: 'test-community',
+      mockCommunityModel.findOne.mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue({
+            id: testCommunityId,
+            name: 'Test Community',
+            slug: 'test-community',
+          }),
+        }),
       });
       mockSubmissionModel.countDocuments.mockResolvedValue(0);
 
@@ -457,15 +494,23 @@ describe('ContentManagementService', () => {
         }),
       });
       mockChallengeModel.countDocuments.mockResolvedValue(1);
-      mockUserModel.findById.mockResolvedValue({
-        _id: testUserId,
-        name: 'Test User',
-        email: 'test@example.com',
+      mockUserModel.findById.mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue({
+            _id: testUserId,
+            name: 'Test User',
+            email: 'test@example.com',
+          }),
+        }),
       });
-      mockCommunityModel.findOne.mockResolvedValue({
-        id: testCommunityId,
-        name: 'Test Community',
-        slug: 'test-community',
+      mockCommunityModel.findOne.mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue({
+            id: testCommunityId,
+            name: 'Test Community',
+            slug: 'test-community',
+          }),
+        }),
       });
       mockSubmissionModel.countDocuments.mockResolvedValue(0);
 
@@ -557,15 +602,23 @@ describe('ContentManagementService', () => {
         }),
       });
       mockEventModel.countDocuments.mockResolvedValue(1);
-      mockUserModel.findById.mockResolvedValue({
-        _id: testUserId,
-        name: 'Test User',
-        email: 'test@example.com',
+      mockUserModel.findById.mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue({
+            _id: testUserId,
+            name: 'Test User',
+            email: 'test@example.com',
+          }),
+        }),
       });
-      mockCommunityModel.findOne.mockResolvedValue({
-        id: testCommunityId,
-        name: 'Test Community',
-        slug: 'test-community',
+      mockCommunityModel.findOne.mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue({
+            id: testCommunityId,
+            name: 'Test Community',
+            slug: 'test-community',
+          }),
+        }),
       });
 
       const result = await service.getEvents({ page: 1, limit: 20 }, testAdminId);
@@ -599,15 +652,23 @@ describe('ContentManagementService', () => {
         }),
       });
       mockEventModel.countDocuments.mockResolvedValue(1);
-      mockUserModel.findById.mockResolvedValue({
-        _id: testUserId,
-        name: 'Test User',
-        email: 'test@example.com',
+      mockUserModel.findById.mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue({
+            _id: testUserId,
+            name: 'Test User',
+            email: 'test@example.com',
+          }),
+        }),
       });
-      mockCommunityModel.findOne.mockResolvedValue({
-        id: testCommunityId,
-        name: 'Test Community',
-        slug: 'test-community',
+      mockCommunityModel.findOne.mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue({
+            id: testCommunityId,
+            name: 'Test Community',
+            slug: 'test-community',
+          }),
+        }),
       });
 
       const result = await service.getEvents({ page: 1, limit: 20 }, testAdminId);
@@ -673,7 +734,7 @@ describe('ContentManagementService', () => {
       const mockPosts = [
         {
           _id: testPostId,
-          id: 'post-1',
+          id: testPostId,
           title: 'Test Post',
           content: 'Test content here',
           authorId: new Types.ObjectId(testUserId),
@@ -697,15 +758,23 @@ describe('ContentManagementService', () => {
         }),
       });
       mockPostModel.countDocuments.mockResolvedValue(1);
-      mockUserModel.findById.mockResolvedValue({
-        _id: testUserId,
-        name: 'Test User',
-        email: 'test@example.com',
+      mockUserModel.findById.mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue({
+            _id: testUserId,
+            name: 'Test User',
+            email: 'test@example.com',
+          }),
+        }),
       });
-      mockCommunityModel.findOne.mockResolvedValue({
-        id: testCommunityId,
-        name: 'Test Community',
-        slug: 'test-community',
+      mockCommunityModel.findOne.mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue({
+            id: testCommunityId,
+            name: 'Test Community',
+            slug: 'test-community',
+          }),
+        }),
       });
 
       const result = await service.getPosts({ page: 1, limit: 20 }, testAdminId);
@@ -743,14 +812,14 @@ describe('ContentManagementService', () => {
     it('should hide a post', async () => {
       const mockPost = {
         _id: testPostId,
-        id: 'post-1',
+        id: testPostId,
         isPublished: true,
         save: jest.fn().mockResolvedValue(true),
       };
 
       mockPostModel.findOne.mockResolvedValue(mockPost);
 
-      await service.moderatePost('post-1', 'hide', testAdminId);
+      await service.moderatePost(testPostId, 'hide', testAdminId);
 
       expect(mockPost.isPublished).toBe(false);
       expect(mockPost.save).toHaveBeenCalled();
@@ -765,13 +834,13 @@ describe('ContentManagementService', () => {
     it('should delete a post', async () => {
       mockPostModel.findOne.mockResolvedValue({
         _id: testPostId,
-        id: 'post-1',
+        id: testPostId,
       });
       mockPostModel.deleteOne.mockResolvedValue({ deletedCount: 1 });
 
-      await service.moderatePost('post-1', 'delete', testAdminId);
+      await service.moderatePost(testPostId, 'delete', testAdminId);
 
-      expect(mockPostModel.deleteOne).toHaveBeenCalledWith({ id: 'post-1' });
+      expect(mockPostModel.deleteOne).toHaveBeenCalledWith({ id: testPostId });
       expect(mockAuditLogService.logAction).toHaveBeenCalledWith(
         expect.objectContaining({
           action: AdminAction.CONTENT_DELETE,
@@ -783,14 +852,14 @@ describe('ContentManagementService', () => {
     it('should restore a post', async () => {
       const mockPost = {
         _id: testPostId,
-        id: 'post-1',
+        id: testPostId,
         isPublished: false,
         save: jest.fn().mockResolvedValue(true),
       };
 
       mockPostModel.findOne.mockResolvedValue(mockPost);
 
-      await service.moderatePost('post-1', 'restore', testAdminId);
+      await service.moderatePost(testPostId, 'restore', testAdminId);
 
       expect(mockPost.isPublished).toBe(true);
       expect(mockAuditLogService.logAction).toHaveBeenCalledWith(
@@ -806,14 +875,14 @@ describe('ContentManagementService', () => {
     it('should feature a post', async () => {
       const mockPost = {
         _id: testPostId,
-        id: 'post-1',
+        id: testPostId,
         isFeatured: false,
         save: jest.fn().mockResolvedValue(true),
       };
 
       mockPostModel.findOne.mockResolvedValue(mockPost);
 
-      await service.featurePost('post-1', true, testAdminId);
+      await service.featurePost(testPostId, true, testAdminId);
 
       expect(mockAuditLogService.logAction).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -826,11 +895,12 @@ describe('ContentManagementService', () => {
 
   describe('deleteComment', () => {
     it('should delete a comment from a post', async () => {
+      const testCommentId = new Types.ObjectId().toString();
       const mockPost = {
         _id: testPostId,
-        id: 'post-1',
+        id: testPostId,
         comments: [
-          { id: 'comment-1', content: 'Test comment' },
+          { id: testCommentId, content: 'Test comment' },
           { id: 'comment-2', content: 'Another comment' },
         ],
         commentCount: 2,
@@ -839,7 +909,8 @@ describe('ContentManagementService', () => {
 
       mockPostModel.findOne.mockResolvedValue(mockPost);
 
-      await service.deleteComment('post-1', 'comment-1', testAdminId);
+      // Use a valid ObjectId string so logAction(new ObjectId(entityId)) does not throw
+      await service.deleteComment(testPostId, testCommentId, testAdminId);
 
       expect(mockPost.comments).toHaveLength(1);
       expect(mockPost.save).toHaveBeenCalled();
@@ -847,7 +918,7 @@ describe('ContentManagementService', () => {
         expect.objectContaining({
           action: AdminAction.CONTENT_DELETE,
           entityType: 'comment',
-          metadata: expect.objectContaining({ postId: 'post-1' }),
+          metadata: expect.objectContaining({ postId: testPostId }),
         }),
       );
     });
@@ -906,13 +977,13 @@ describe('ContentManagementService', () => {
     it('should approve multiple courses successfully', async () => {
       const mockCourse1 = {
         _id: new Types.ObjectId(),
-        id: 'course-1',
+        id: new Types.ObjectId().toString(),
         isPublished: false,
         save: jest.fn().mockResolvedValue(true),
       };
       const mockCourse2 = {
         _id: new Types.ObjectId(),
-        id: 'course-2',
+        id: new Types.ObjectId().toString(),
         isPublished: false,
         save: jest.fn().mockResolvedValue(true),
       };
@@ -922,7 +993,7 @@ describe('ContentManagementService', () => {
         .mockResolvedValueOnce(mockCourse2);
 
       const result = await service.bulkApproveCourses(
-        { ids: ['course-1', 'course-2'] },
+        { ids: [mockCourse1.id, mockCourse2.id], action: ContentStatus.APPROVED },
         testAdminId,
       );
 
@@ -935,7 +1006,7 @@ describe('ContentManagementService', () => {
     it('should handle partial failures in bulk operation', async () => {
       const mockCourse1 = {
         _id: new Types.ObjectId(),
-        id: 'course-1',
+        id: new Types.ObjectId().toString(),
         save: jest.fn().mockResolvedValue(true),
       };
 
@@ -944,7 +1015,7 @@ describe('ContentManagementService', () => {
         .mockResolvedValueOnce(null); // Second course not found
 
       const result = await service.bulkApproveCourses(
-        { ids: ['course-1', 'course-2'] },
+        { ids: [mockCourse1.id, new Types.ObjectId().toString()], action: ContentStatus.APPROVED },
         testAdminId,
       );
 
@@ -959,25 +1030,33 @@ describe('ContentManagementService', () => {
   // ==================== ERROR HANDLING TESTS ====================
   describe('error handling', () => {
     it('should throw NotFoundException when getting non-existent course', async () => {
-      mockCourseModel.findOne.mockResolvedValue(null);
+      mockCourseModel.findOne.mockReturnValue({
+        lean: jest.fn().mockResolvedValue(null),
+      });
 
       await expect(service.getCourseById('invalid-id')).rejects.toThrow('Course not found');
     });
 
     it('should throw NotFoundException when getting non-existent challenge', async () => {
-      mockChallengeModel.findById.mockResolvedValue(null);
+      mockChallengeModel.findById.mockReturnValue({
+        lean: jest.fn().mockResolvedValue(null),
+      });
 
       await expect(service.getChallengeById('invalid-id')).rejects.toThrow('Challenge not found');
     });
 
     it('should throw NotFoundException when getting non-existent event', async () => {
-      mockEventModel.findById.mockResolvedValue(null);
+      mockEventModel.findById.mockReturnValue({
+        lean: jest.fn().mockResolvedValue(null),
+      });
 
       await expect(service.getEventById('invalid-id')).rejects.toThrow('Event not found');
     });
 
     it('should throw NotFoundException when getting non-existent post', async () => {
-      mockPostModel.findOne.mockResolvedValue(null);
+      mockPostModel.findOne.mockReturnValue({
+        lean: jest.fn().mockResolvedValue(null),
+      });
 
       await expect(service.getPostById('invalid-id')).rejects.toThrow('Post not found');
     });
@@ -1011,15 +1090,23 @@ describe('ContentManagementService', () => {
         }),
       });
       mockCourseModel.countDocuments.mockResolvedValue(25);
-      mockUserModel.findById.mockResolvedValue({
-        _id: testUserId,
-        name: 'Test User',
-        email: 'test@example.com',
+      mockUserModel.findById.mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue({
+            _id: testUserId,
+            name: 'Test User',
+            email: 'test@example.com',
+          }),
+        }),
       });
-      mockCommunityModel.findOne.mockResolvedValue({
-        id: testCommunityId,
-        name: 'Test Community',
-        slug: 'test-community',
+      mockCommunityModel.findOne.mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue({
+            id: testCommunityId,
+            name: 'Test Community',
+            slug: 'test-community',
+          }),
+        }),
       });
       mockEnrollmentModel.countDocuments.mockResolvedValue(0);
 

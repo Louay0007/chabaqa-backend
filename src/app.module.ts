@@ -55,6 +55,7 @@ import { Ga4Module } from './ga4/ga4.module';
 import { LearningDomainModule } from './domains/learning-domain.module';
 import { CommerceDomainModule } from './domains/commerce-domain.module';
 import { CommunityDomainModule } from './domains/community-domain.module';
+import { LearningPathModule } from './learning-path/learning-path.module';
 
 // Import new admin schemas
 import { AdminUser, AdminUserSchema } from './admin/schemas/admin-user.schema';
@@ -157,6 +158,7 @@ import { PaymentAuditLog, PaymentAuditLogSchema } from './schema/payment-audit-l
     MonitoringModule,
     CacheModule,
     AiModule,
+    LearningPathModule,
     Ga4Module,
   ],
   controllers: [AppController, UserController, TrackingController, PaymentController],

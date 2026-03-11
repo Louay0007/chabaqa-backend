@@ -1,4 +1,3 @@
-import { Test, TestingModule } from '@nestjs/testing';
 import { ContentManagementController } from '../content-management.controller';
 import { ContentManagementService } from '../content-management.service';
 import { ContentStatus } from '../enums/content-status.enum';
@@ -15,8 +14,10 @@ describe('ContentManagementController', () => {
     email: 'admin@test.com',
   };
 
-  const mockRequest = {
-    user: testAdmin,
+  const mockReq = {
+    user: {
+      id: testAdminId,
+    },
   };
 
   beforeEach(async () => {
@@ -52,17 +53,8 @@ describe('ContentManagementController', () => {
       deleteComment: jest.fn(),
     };
 
-    const module: TestingModule = await Test.createTestingModule({
-      controllers: [ContentManagementController],
-      providers: [
-        {
-          provide: ContentManagementService,
-          useValue: mockService,
-        },
-      ],
-    }).compile();
-
-    controller = module.get<ContentManagementController>(ContentManagementController);
+    // Unit-test style: instantiate controller directly to avoid resolving guards/providers
+    controller = new ContentManagementController(mockService as unknown as ContentManagementService);
   });
 
   it('should be defined', () => {
@@ -81,7 +73,7 @@ describe('ContentManagementController', () => {
 
       mockService.getContentSummary.mockResolvedValue(mockSummary);
 
-      const result = await controller.getSummary(testAdmin);
+      const result = await controller.getContentSummary(mockReq as any);
 
       expect(result.success).toBe(true);
       expect(result.data).toEqual(mockSummary);
@@ -98,7 +90,7 @@ describe('ContentManagementController', () => {
 
       mockService.getContentSummary.mockResolvedValue(mockSummary);
 
-      const result = await controller.getSummary(testAdmin);
+      const result = await controller.getContentSummary(mockReq as any);
 
       expect(result.data.courses.total).toBe(0);
       expect(result.data.challenges.total).toBe(0);
@@ -131,7 +123,7 @@ describe('ContentManagementController', () => {
 
       mockService.getCourses.mockResolvedValue(mockCourses);
 
-      const result = await controller.getCourses({}, testAdmin);
+      const result = await controller.getCourses({}, mockReq as any);
 
       expect(result.success).toBe(true);
       expect(result.data).toEqual(mockCourses);
@@ -157,7 +149,7 @@ describe('ContentManagementController', () => {
         hasPrevPage: false,
       });
 
-      await controller.getCourses(filters, testAdmin);
+      await controller.getCourses(filters, mockReq as any);
 
       expect(mockService.getCourses).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -199,8 +191,9 @@ describe('ContentManagementController', () => {
   describe('PUT /admin/content/courses/:id/approve', () => {
     it('should approve a course', async () => {
       mockService.approveCourse.mockResolvedValue(undefined);
+      const approveDto = {};
 
-      const result = await controller.approveCourse('course-1', testAdmin);
+      const result = await controller.approveCourse('course-1', approveDto, mockReq as any);
 
       expect(result.success).toBe(true);
       expect(result.message).toBe('Course approved successfully');
@@ -213,7 +206,7 @@ describe('ContentManagementController', () => {
       mockService.rejectCourse.mockResolvedValue(undefined);
       const rejectDto = { reason: 'Inappropriate content', notes: 'Violates guidelines' };
 
-      const result = await controller.rejectCourse('course-1', rejectDto, testAdmin);
+      const result = await controller.rejectCourse('course-1', rejectDto, mockReq as any);
 
       expect(result.success).toBe(true);
       expect(result.message).toBe('Course rejected successfully');
@@ -224,9 +217,8 @@ describe('ContentManagementController', () => {
   describe('PUT /admin/content/courses/:id/feature', () => {
     it('should feature a course', async () => {
       mockService.featureCourse.mockResolvedValue(undefined);
-      const featureDto = { featured: true };
 
-      const result = await controller.featureCourse('course-1', featureDto, testAdmin);
+      const result = await controller.featureCourse('course-1', true, mockReq as any);
 
       expect(result.success).toBe(true);
       expect(result.message).toBe('Course featured successfully');
@@ -235,9 +227,8 @@ describe('ContentManagementController', () => {
 
     it('should unfeature a course', async () => {
       mockService.featureCourse.mockResolvedValue(undefined);
-      const featureDto = { featured: false };
 
-      const result = await controller.featureCourse('course-1', featureDto, testAdmin);
+      const result = await controller.featureCourse('course-1', false, mockReq as any);
 
       expect(result.success).toBe(true);
       expect(result.message).toBe('Course unfeatured successfully');
@@ -284,13 +275,15 @@ describe('ContentManagementController', () => {
       };
 
       mockService.bulkApproveCourses.mockResolvedValue(bulkResult);
-      const bulkDto = { ids: ['course-1', 'course-2', 'course-3'] };
 
-      const result = await controller.bulkApproveCourses(bulkDto, testAdmin);
+      const result = await controller.bulkApproveCourses(
+        { ids: ['course-1', 'course-2', 'course-3'], action: ContentStatus.APPROVED },
+        mockReq as any
+      );
 
       expect(result.success).toBe(true);
       expect(result.data).toEqual(bulkResult);
-      expect(result.message).toBe('3 courses approved successfully');
+      expect(result.message).toBe('Processed 3 courses: 3 succeeded, 0 failed');
     });
 
     it('should handle partial failures in bulk operation', async () => {
@@ -303,9 +296,11 @@ describe('ContentManagementController', () => {
       };
 
       mockService.bulkApproveCourses.mockResolvedValue(bulkResult);
-      const bulkDto = { ids: ['course-1', 'course-2', 'course-3'] };
 
-      const result = await controller.bulkApproveCourses(bulkDto, testAdmin);
+      const result = await controller.bulkApproveCourses(
+        { ids: ['course-1', 'course-2', 'course-3'], action: ContentStatus.APPROVED },
+        mockReq as any
+      );
 
       expect(result.success).toBe(false);
       expect(result.data.succeeded).toBe(2);
@@ -337,7 +332,7 @@ describe('ContentManagementController', () => {
 
       mockService.getChallenges.mockResolvedValue(mockChallenges);
 
-      const result = await controller.getChallenges({}, testAdmin);
+      const result = await controller.getChallenges({}, mockReq as any);
 
       expect(result.success).toBe(true);
       expect(result.data).toEqual(mockChallenges);
@@ -399,7 +394,7 @@ describe('ContentManagementController', () => {
     it('should approve a challenge', async () => {
       mockService.approveChallenge.mockResolvedValue(undefined);
 
-      const result = await controller.approveChallenge('challenge-1', testAdmin);
+      const result = await controller.approveChallenge('challenge-1', mockReq as any);
 
       expect(result.success).toBe(true);
       expect(result.message).toBe('Challenge approved successfully');
@@ -410,7 +405,7 @@ describe('ContentManagementController', () => {
     it('should end challenge early', async () => {
       mockService.endChallengeEarly.mockResolvedValue(undefined);
 
-      const result = await controller.endChallengeEarly('challenge-1', testAdmin);
+      const result = await controller.endChallengeEarly('challenge-1', mockReq as any);
 
       expect(result.success).toBe(true);
       expect(result.message).toBe('Challenge ended successfully');
@@ -422,7 +417,7 @@ describe('ContentManagementController', () => {
       mockService.approveSubmission.mockResolvedValue(undefined);
       const approveDto = { feedback: 'Great work!', markAsWinner: true };
 
-      const result = await controller.approveSubmission('submission-1', approveDto, testAdmin);
+      const result = await controller.approveSubmission('submission-1', approveDto, mockReq as any);
 
       expect(result.success).toBe(true);
       expect(result.message).toBe('Submission approved successfully');
@@ -434,7 +429,7 @@ describe('ContentManagementController', () => {
       mockService.rejectSubmission.mockResolvedValue(undefined);
       const rejectDto = { reason: 'Incomplete work', feedback: 'Please complete all tasks' };
 
-      const result = await controller.rejectSubmission('submission-1', rejectDto, testAdmin);
+      const result = await controller.rejectSubmission('submission-1', rejectDto, mockReq as any);
 
       expect(result.success).toBe(true);
       expect(result.message).toBe('Submission rejected successfully');
@@ -467,7 +462,7 @@ describe('ContentManagementController', () => {
 
       mockService.getEvents.mockResolvedValue(mockEvents);
 
-      const result = await controller.getEvents({}, testAdmin);
+      const result = await controller.getEvents({}, mockReq as any);
 
       expect(result.success).toBe(true);
       expect(result.data).toEqual(mockEvents);
@@ -528,7 +523,7 @@ describe('ContentManagementController', () => {
     it('should approve an event', async () => {
       mockService.approveEvent.mockResolvedValue(undefined);
 
-      const result = await controller.approveEvent('event-1', testAdmin);
+      const result = await controller.approveEvent('event-1', mockReq as any);
 
       expect(result.success).toBe(true);
       expect(result.message).toBe('Event approved successfully');
@@ -538,9 +533,8 @@ describe('ContentManagementController', () => {
   describe('PUT /admin/content/events/:id/cancel', () => {
     it('should cancel an event with reason', async () => {
       mockService.cancelEvent.mockResolvedValue(undefined);
-      const cancelDto = { reason: 'Weather emergency' };
 
-      const result = await controller.cancelEvent('event-1', cancelDto, testAdmin);
+      const result = await controller.cancelEvent('event-1', 'Weather emergency', mockReq as any);
 
       expect(result.success).toBe(true);
       expect(result.message).toBe('Event cancelled successfully');
@@ -552,10 +546,10 @@ describe('ContentManagementController', () => {
       mockService.messageAttendees.mockResolvedValue(undefined);
       const messageDto = { message: 'Event starting in 30 minutes!', sendEmail: true };
 
-      const result = await controller.messageAttendees('event-1', messageDto, testAdmin);
+      const result = await controller.messageAttendees('event-1', messageDto, mockReq as any);
 
       expect(result.success).toBe(true);
-      expect(result.message).toBe('Message sent to attendees successfully');
+      expect(result.message).toBe('Message sent to attendees');
     });
   });
 
@@ -584,7 +578,7 @@ describe('ContentManagementController', () => {
 
       mockService.getPosts.mockResolvedValue(mockPosts);
 
-      const result = await controller.getPosts({}, testAdmin);
+      const result = await controller.getPosts({}, mockReq as any);
 
       expect(result.success).toBe(true);
       expect(result.data).toEqual(mockPosts);
@@ -618,20 +612,18 @@ describe('ContentManagementController', () => {
   describe('PUT /admin/content/posts/:id/moderate', () => {
     it('should hide a post', async () => {
       mockService.moderatePost.mockResolvedValue(undefined);
-      const moderateDto = { action: 'hide' as const };
 
-      const result = await controller.moderatePost('post-1', moderateDto, testAdmin);
+      const result = await controller.moderatePost('post-1', 'hide', mockReq as any);
 
       expect(result.success).toBe(true);
-      expect(result.message).toBe('Post moderated successfully');
+      expect(result.message).toBe('Post hidden successfully');
       expect(mockService.moderatePost).toHaveBeenCalledWith('post-1', 'hide', testAdminId);
     });
 
     it('should delete a post', async () => {
       mockService.moderatePost.mockResolvedValue(undefined);
-      const moderateDto = { action: 'delete' as const };
 
-      const result = await controller.moderatePost('post-1', moderateDto, testAdmin);
+      const result = await controller.moderatePost('post-1', 'delete', mockReq as any);
 
       expect(result.success).toBe(true);
       expect(mockService.moderatePost).toHaveBeenCalledWith('post-1', 'delete', testAdminId);
@@ -639,9 +631,8 @@ describe('ContentManagementController', () => {
 
     it('should restore a post', async () => {
       mockService.moderatePost.mockResolvedValue(undefined);
-      const moderateDto = { action: 'restore' as const };
 
-      const result = await controller.moderatePost('post-1', moderateDto, testAdmin);
+      const result = await controller.moderatePost('post-1', 'restore', mockReq as any);
 
       expect(result.success).toBe(true);
       expect(mockService.moderatePost).toHaveBeenCalledWith('post-1', 'restore', testAdminId);
@@ -651,9 +642,8 @@ describe('ContentManagementController', () => {
   describe('PUT /admin/content/posts/:id/feature', () => {
     it('should feature a post', async () => {
       mockService.featurePost.mockResolvedValue(undefined);
-      const featureDto = { featured: true };
 
-      const result = await controller.featurePost('post-1', featureDto, testAdmin);
+      const result = await controller.featurePost('post-1', true, mockReq as any);
 
       expect(result.success).toBe(true);
       expect(result.message).toBe('Post featured successfully');
@@ -661,9 +651,8 @@ describe('ContentManagementController', () => {
 
     it('should unfeature a post', async () => {
       mockService.featurePost.mockResolvedValue(undefined);
-      const featureDto = { featured: false };
 
-      const result = await controller.featurePost('post-1', featureDto, testAdmin);
+      const result = await controller.featurePost('post-1', false, mockReq as any);
 
       expect(result.success).toBe(true);
       expect(result.message).toBe('Post unfeatured successfully');
@@ -674,7 +663,7 @@ describe('ContentManagementController', () => {
     it('should delete a post', async () => {
       mockService.deletePost.mockResolvedValue(undefined);
 
-      const result = await controller.deletePost('post-1', testAdmin as any);
+      const result = await controller.deletePost('post-1', mockReq as any);
 
       expect(result.success).toBe(true);
       expect(result.message).toBe('Post deleted successfully');
@@ -685,7 +674,7 @@ describe('ContentManagementController', () => {
     it('should delete a comment', async () => {
       mockService.deleteComment.mockResolvedValue(undefined);
 
-      const result = await controller.deleteComment('post-1', 'comment-1', testAdmin as any);
+      const result = await controller.deleteComment('post-1', 'comment-1', mockReq as any);
 
       expect(result.success).toBe(true);
       expect(result.message).toBe('Comment deleted successfully');
@@ -697,7 +686,7 @@ describe('ContentManagementController', () => {
     it('should handle service errors gracefully for summary', async () => {
       mockService.getContentSummary.mockRejectedValue(new Error('Database error'));
 
-      await expect(controller.getContentSummary(testAdmin as any)).rejects.toThrow('Database error');
+      await expect(controller.getContentSummary(mockReq as any)).rejects.toThrow('Database error');
     });
 
     it('should handle not found errors for course details', async () => {
@@ -728,7 +717,7 @@ describe('ContentManagementController', () => {
   // ==================== ADMIN USER EXTRACTION TESTS ====================
   describe('admin user extraction', () => {
     it('should correctly extract admin user ID from request', async () => {
-      const customAdmin = { _id: 'custom-admin-456', name: 'Custom Admin' };
+      const customReq = { user: { id: 'custom-admin-456' } };
       mockService.getCourses.mockResolvedValue({
         data: [],
         total: 0,
@@ -739,7 +728,7 @@ describe('ContentManagementController', () => {
         hasPrevPage: false,
       });
 
-      await controller.getCourses({}, customAdmin as any);
+      await controller.getCourses({}, customReq as any);
 
       expect(mockService.getCourses).toHaveBeenCalledWith(expect.anything(), 'custom-admin-456');
     });
