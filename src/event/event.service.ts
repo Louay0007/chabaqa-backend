@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, ForbiddenException, BadRequestException, HttpException, HttpStatus } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
+import { JwtService } from '@nestjs/jwt';
 import { Event, EventDocument } from '../schema/event.schema';
 import { Community, CommunityDocument } from '../schema/community.schema';
 import { User, UserDocument } from '../schema/user.schema';
@@ -22,6 +23,7 @@ export class EventService {
     @InjectModel(Community.name) private communityModel: Model<CommunityDocument>,
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     @InjectModel('Order') private orderModel: Model<any>,
+    private readonly jwtService: JwtService,
     private readonly feeService: FeeService,
     private readonly promoService: PromoService,
     private readonly policyService: PolicyService,
@@ -176,6 +178,47 @@ export class EventService {
     await Promise.allSettled(
       patterns.map((pattern) => this.cacheService.deletePattern(pattern)),
     );
+  }
+
+  private getEventQrSecret(): string {
+    const secret = String(process.env.EVENT_QR_JWT_SECRET || '').trim();
+    if (!secret) {
+      throw new BadRequestException('EVENT_QR_JWT_SECRET is not configured');
+    }
+    return secret;
+  }
+
+  private getEventQrTtl(): string {
+    const ttl = String(process.env.EVENT_QR_JWT_TTL || '').trim();
+    return ttl || '30d';
+  }
+
+  async buildEventQrToken(eventId: string, userId: string): Promise<{ token: string; payload: any; expiresIn: string }> {
+    const event = await this.findEventByIdentifier(eventId);
+    if (!event) {
+      throw new NotFoundException('Événement non trouvé');
+    }
+
+    const attendee = event.attendees.find(att => att.userId?.toString() === userId);
+    if (!attendee) {
+      throw new NotFoundException('Inscription non trouvée');
+    }
+
+    const eventIdentifier = event.id || event._id?.toString() || eventId;
+    const attendeeId = attendee.id || `${eventIdentifier}:${userId}`;
+    const payload = {
+      sub: userId,
+      eventId: eventIdentifier,
+      attendeeId,
+      ticketType: attendee.ticketType || 'general',
+      issuedAt: new Date().toISOString(),
+    };
+
+    const secret = this.getEventQrSecret();
+    const expiresIn = this.getEventQrTtl() as any;
+    const token = this.jwtService.sign(payload as Record<string, any>, { secret, expiresIn });
+
+    return { token, payload, expiresIn };
   }
 
   /**

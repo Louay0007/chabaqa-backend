@@ -18,6 +18,7 @@ import { EventService } from './event.service';
 import { CreateEventDto, CreateEventSessionDto, CreateEventTicketDto, CreateEventSpeakerDto } from '../dto-event/create-event.dto';
 import { UpdateEventDto } from '../dto-event/update-event.dto';
 import { EventResponseDto, EventListResponseDto, EventStatsResponseDto } from '../dto-event/event-response.dto';
+import { EventQrTokenResponseDto } from '../dto-event/event-qr-token.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { HttpCacheInterceptor } from '../common/interceptors/cache.interceptor';
 
@@ -105,6 +106,22 @@ export class EventController {
   ): Promise<{ success: boolean; data: EventStatsResponseDto }> {
     const stats = await this.eventService.getStats(communityId);
     return { success: true, data: stats };
+  }
+
+  @Get(':id/qr')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Générer un QR code pour un billet d\'événement' })
+  @ApiResponse({ status: 200, description: 'QR token généré', type: EventQrTokenResponseDto })
+  @ApiResponse({ status: 401, description: 'Non autorisé' })
+  @ApiResponse({ status: 404, description: 'Événement ou inscription non trouvé' })
+  async getEventQr(
+    @Param('id') eventId: string,
+    @Request() req
+  ): Promise<{ success: boolean; data: EventQrTokenResponseDto }> {
+    const userId = req.user._id || req.user.userId || req.user.id;
+    const result = await this.eventService.buildEventQrToken(eventId, userId);
+    return { success: true, data: result };
   }
 
   @Get(':id')
