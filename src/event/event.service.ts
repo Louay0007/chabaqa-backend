@@ -199,15 +199,16 @@ export class EventService {
       throw new NotFoundException('Événement non trouvé');
     }
 
-    const attendee = event.attendees.find(att => att.userId?.toString() === userId);
+    const normalizedUserId = String(userId);
+    const attendee = event.attendees.find(att => att.userId?.toString() === normalizedUserId);
     if (!attendee) {
       throw new NotFoundException('Inscription non trouvée');
     }
 
     const eventIdentifier = event.id || event._id?.toString() || eventId;
-    const attendeeId = attendee.id || `${eventIdentifier}:${userId}`;
+    const attendeeId = attendee.id || `${eventIdentifier}:${normalizedUserId}`;
     const payload = {
-      sub: userId,
+      sub: normalizedUserId,
       eventId: eventIdentifier,
       attendeeId,
       ticketType: attendee.ticketType || 'general',
