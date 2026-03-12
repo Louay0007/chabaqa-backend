@@ -34,6 +34,7 @@ jobs:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
           VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_SSH_KEY_B64: ${{ secrets.VPS_SSH_KEY_B64 }}
         run: |
           set -euo pipefail
           if [ -z "${VPS_HOST:-}" ]; then
@@ -44,8 +45,8 @@ jobs:
             echo "Missing secret: VPS_USER"
             exit 1
           fi
-          if [ -z "${VPS_SSH_KEY:-}" ]; then
-            echo "Missing secret: VPS_SSH_KEY"
+          if [ -z "${VPS_SSH_KEY:-}" ] && [ -z "${VPS_SSH_KEY_B64:-}" ]; then
+            echo "Missing secret: VPS_SSH_KEY or VPS_SSH_KEY_B64"
             exit 1
           fi
 
@@ -55,6 +56,7 @@ jobs:
           VPS_USER: ${{ secrets.VPS_USER }}
           VPS_PORT: ${{ secrets.VPS_PORT }}
           VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_SSH_KEY_B64: ${{ secrets.VPS_SSH_KEY_B64 }}
         run: |
           set -euo pipefail
           if [ ! -d dist ]; then
@@ -62,7 +64,11 @@ jobs:
             exit 1
           fi
           mkdir -p ~/.ssh
-          printf '%s' "$VPS_SSH_KEY" > ~/.ssh/id_rsa
+          if [ -n "${VPS_SSH_KEY_B64:-}" ]; then
+            printf '%s' "$VPS_SSH_KEY_B64" | base64 -d > ~/.ssh/id_rsa
+          else
+            printf '%s' "$VPS_SSH_KEY" > ~/.ssh/id_rsa
+          fi
           chmod 600 ~/.ssh/id_rsa
           if [ -z "${VPS_PORT:-}" ]; then VPS_PORT=22; fi
           ssh-keyscan -p "$VPS_PORT" "$VPS_HOST" >> ~/.ssh/known_hosts
