@@ -13,7 +13,7 @@ import {
   DefaultValuePipe,
   UseInterceptors
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiBody, ApiQuery } from '@nestjs/swagger';
 import { EventService } from './event.service';
 import { CreateEventDto, CreateEventSessionDto, CreateEventTicketDto, CreateEventSpeakerDto } from '../dto-event/create-event.dto';
 import { UpdateEventDto } from '../dto-event/update-event.dto';
@@ -122,6 +122,44 @@ export class EventController {
     const userId = req.user._id || req.user.userId || req.user.id;
     const result = await this.eventService.buildEventQrToken(eventId, userId);
     return { success: true, data: result };
+  }
+
+  @Post(':id/check-in')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Check-in un participant via QR token (creator/admin)' })
+  @ApiResponse({ status: 200, description: 'Check-in réussi' })
+  @ApiResponse({ status: 400, description: 'Token invalide' })
+  @ApiResponse({ status: 401, description: 'Non autorisé' })
+  @ApiResponse({ status: 403, description: 'Pas autorisé' })
+  @ApiResponse({ status: 404, description: 'Événement ou inscription non trouvé' })
+  @ApiBody({ schema: { type: 'object', properties: { token: { type: 'string' } } } })
+  async checkInByQrToken(
+    @Param('id') eventId: string,
+    @Body('token') token: string,
+    @Request() req,
+  ): Promise<{ success: boolean; data: any }> {
+    const userId = req.user._id || req.user.userId || req.user.id;
+    const data = await this.eventService.checkInAttendeeByQrToken(eventId, token, userId);
+    return { success: true, data };
+  }
+
+  @Patch(':id/attendees/:attendeeId/check-in')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Check-in un participant (manual) (creator/admin)' })
+  @ApiResponse({ status: 200, description: 'Check-in réussi' })
+  @ApiResponse({ status: 401, description: 'Non autorisé' })
+  @ApiResponse({ status: 403, description: 'Pas autorisé' })
+  @ApiResponse({ status: 404, description: 'Événement ou inscription non trouvé' })
+  async checkInAttendee(
+    @Param('id') eventId: string,
+    @Param('attendeeId') attendeeId: string,
+    @Request() req,
+  ): Promise<{ success: boolean; data: any }> {
+    const userId = req.user._id || req.user.userId || req.user.id;
+    const data = await this.eventService.checkInAttendee(eventId, attendeeId, userId);
+    return { success: true, data };
   }
 
   @Get(':id')

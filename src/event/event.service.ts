@@ -222,6 +222,140 @@ export class EventService {
     return { token, payload, expiresIn };
   }
 
+  private verifyEventQrToken(token: string): any {
+    const raw = String(token || '').trim();
+    if (!raw) {
+      throw new BadRequestException('QR token is required');
+    }
+
+    try {
+      return this.jwtService.verify(raw, { secret: this.getEventQrSecret() });
+    } catch (error: any) {
+      throw new BadRequestException(`Invalid QR token: ${error?.message || 'invalid_token'}`);
+    }
+  }
+
+  async checkInAttendeeByQrToken(
+    eventId: string,
+    qrToken: string,
+    requesterId: string,
+  ): Promise<{ message: string; attendeeId: string; checkedInAt: string }> {
+    const event = await this.findEventByIdentifier(eventId);
+    if (!event) {
+      throw new NotFoundException('Événement non trouvé');
+    }
+
+    await this.verifyCanModifyEvent(event, requesterId);
+
+    const payload = this.verifyEventQrToken(qrToken);
+    const tokenEventId = String(payload?.eventId || '').trim();
+    if (!tokenEventId) {
+      throw new BadRequestException('Invalid QR token payload (missing eventId)');
+    }
+
+    const matchesEvent =
+      tokenEventId === String(event.id || '').trim() ||
+      tokenEventId === String(event._id || '').trim() ||
+      tokenEventId === String(eventId || '').trim();
+    if (!matchesEvent) {
+      throw new BadRequestException('QR token does not belong to this event');
+    }
+
+    const attendeeIdFromToken = String(payload?.attendeeId || '').trim();
+    const userIdFromToken = String(payload?.sub || '').trim();
+    if (!attendeeIdFromToken && !userIdFromToken) {
+      throw new BadRequestException('Invalid QR token payload (missing attendeeId/sub)');
+    }
+
+    const attendee = (event.attendees || []).find((a: any) => {
+      if (attendeeIdFromToken && String(a?.id) === attendeeIdFromToken) return true;
+      if (userIdFromToken && String(a?.userId) === userIdFromToken) return true;
+      return false;
+    });
+    if (!attendee) {
+      throw new NotFoundException('Inscription non trouvée');
+    }
+
+    if (attendee.checkedIn) {
+      return {
+        message: 'Déjà check-in',
+        attendeeId: attendee.id,
+        checkedInAt: new Date(attendee.checkedInAt || Date.now()).toISOString(),
+      };
+    }
+
+    attendee.checkedIn = true;
+    attendee.checkedInAt = new Date();
+    event.markModified('attendees');
+    await event.save();
+    await this.invalidateEventCaches(event.id || event._id?.toString());
+
+    try {
+      const attendeeUserId = attendee.userId?.toString?.() || userIdFromToken;
+      if (attendeeUserId) {
+        await this.trackingService.trackComplete(attendeeUserId, event._id.toString(), TrackableContentType.EVENT, {
+          source: 'event_check_in',
+          attendeeId: attendee.id,
+          ticketType: attendee.ticketType,
+        });
+      }
+    } catch (error: any) {
+      // Never break check-in flow because of tracking
+      console.warn(`⚠️ [EVENT-SERVICE] Failed to track event check-in completion:`, error?.message || error);
+    }
+
+    return {
+      message: 'Check-in réussi',
+      attendeeId: attendee.id,
+      checkedInAt: attendee.checkedInAt.toISOString(),
+    };
+  }
+
+  async checkInAttendee(
+    eventId: string,
+    attendeeId: string,
+    requesterId: string,
+  ): Promise<{ message: string; attendeeId: string; checkedInAt: string }> {
+    const event = await this.findEventByIdentifier(eventId);
+    if (!event) {
+      throw new NotFoundException('Événement non trouvé');
+    }
+
+    await this.verifyCanModifyEvent(event, requesterId);
+
+    const attendee = (event.attendees || []).find((a: any) => String(a?.id) === String(attendeeId));
+    if (!attendee) {
+      throw new NotFoundException('Inscription non trouvée');
+    }
+
+    if (!attendee.checkedIn) {
+      attendee.checkedIn = true;
+      attendee.checkedInAt = new Date();
+      event.markModified('attendees');
+      await event.save();
+      await this.invalidateEventCaches(event.id || event._id?.toString());
+
+      try {
+        const attendeeUserId = attendee.userId?.toString?.();
+        if (attendeeUserId) {
+          await this.trackingService.trackComplete(attendeeUserId, event._id.toString(), TrackableContentType.EVENT, {
+            source: 'event_check_in_manual',
+            attendeeId: attendee.id,
+            ticketType: attendee.ticketType,
+          });
+        }
+      } catch (error: any) {
+        console.warn(`⚠️ [EVENT-SERVICE] Failed to track manual event check-in completion:`, error?.message || error);
+      }
+    }
+
+    return {
+      message: 'Check-in réussi',
+      attendeeId: attendee.id,
+      checkedInAt: new Date(attendee.checkedInAt || Date.now()).toISOString(),
+    };
+  }
+
   /**
    * Créer un nouvel événement
    */
@@ -737,18 +871,6 @@ export class EventService {
       throw new NotFoundException('Événement non trouvé');
     }
 
-    // Unified Progression Tracking: Track the start of event participation
-    try {
-      await this.trackingService.trackStart(
-        userId,
-        event._id.toString(),
-        TrackableContentType.EVENT
-      );
-      console.log(`✅ [EVENT-SERVICE] Tracked registration for user ${userId} in event ${event._id}`);
-    } catch (error) {
-      console.error(`⚠️ [EVENT-SERVICE] Failed to track event registration:`, error.message);
-    }
-
     if (!event.isActive || !event.isPublished) {
       throw new BadRequestException('L\'événement n\'est pas disponible pour les inscriptions');
     }
@@ -869,6 +991,19 @@ export class EventService {
     
     await event.save();
     await this.invalidateEventCaches(event.id || event._id?.toString());
+
+    // Unified Progression Tracking: Track the start of event participation (successful registration)
+    try {
+      await this.trackingService.trackStart(
+        userId,
+        event._id.toString(),
+        TrackableContentType.EVENT,
+        { source: 'event_register', ticketType },
+      );
+      console.log(`✅ [EVENT-SERVICE] Tracked registration for user ${userId} in event ${event._id}`);
+    } catch (error: any) {
+      console.error(`⚠️ [EVENT-SERVICE] Failed to track event registration:`, error?.message || error);
+    }
 
     return { message: 'Inscription réussie' };
   }

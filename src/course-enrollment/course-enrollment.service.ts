@@ -321,7 +321,6 @@ export class CourseEnrollmentService {
     const existingProgress = enrollment.progression.find(
       (p) => p.chapterId === chapterId,
     );
-    const hadWatchBefore = Number(existingProgress?.watchTime ?? 0) > 0;
     const wasCompletedBefore = Boolean(existingProgress?.isCompleted);
     let progress = existingProgress;
 
@@ -363,23 +362,20 @@ export class CourseEnrollmentService {
     await enrollment.save();
 
     const trackingCourseId = this.getCourseTrackingId(course);
-    const chapterWatchTime = Number(progress?.watchTime ?? 0);
     const chapterJustCompleted = !wasCompletedBefore && Boolean(progress?.isCompleted);
 
-    if (!hadWatchBefore && chapterWatchTime > 0) {
-      try {
-        await this.trackingService.trackChapterStart(
-          userId,
-          trackingCourseId,
-          chapterId,
-          { source: 'chapter_start_endpoint' },
-        );
-      } catch (error) {
-        console.error(
-          `⚠️ [CourseEnrollmentService] Failed to track chapter start for ${chapterId}:`,
-          (error as any)?.message || error,
-        );
-      }
+    try {
+      await this.trackingService.trackChapterStartOnce(
+        userId,
+        trackingCourseId,
+        chapterId,
+        { metadata: { source: 'chapter_start_endpoint' }, dedupeMinutes: 30 },
+      );
+    } catch (error) {
+      console.error(
+        `⚠️ [CourseEnrollmentService] Failed to track chapter start for ${chapterId}:`,
+        (error as any)?.message || error,
+      );
     }
 
     if (chapterJustCompleted) {
@@ -659,11 +655,11 @@ export class CourseEnrollmentService {
 
     if (!hadWatchBefore && chapterJustCompleted) {
       try {
-        await this.trackingService.trackChapterStart(
+        await this.trackingService.trackChapterStartOnce(
           userId,
           trackingCourseId,
           chapterId,
-          { source: 'manual_chapter_complete' },
+          { metadata: { source: 'manual_chapter_complete' }, dedupeMinutes: 30 },
         );
       } catch (error) {
         console.error(
@@ -913,11 +909,11 @@ export class CourseEnrollmentService {
 
     if (!hadWatchBefore && Number(progress.watchTime ?? 0) > 0) {
       try {
-        await this.trackingService.trackChapterStart(
+        await this.trackingService.trackChapterStartOnce(
           userId,
           trackingCourseId,
           chapterId,
-          { source: 'watch_time_update' },
+          { metadata: { source: 'watch_time_update' }, dedupeMinutes: 30 },
         );
       } catch (error) {
         console.error(
@@ -1133,11 +1129,11 @@ export class CourseEnrollmentService {
 
       if (!before || Number(before.watchTime || 0) <= 0) {
         try {
-          await this.trackingService.trackChapterStart(
+          await this.trackingService.trackChapterStartOnce(
             userId,
             trackingCourseId,
             chapter.id,
-            { source: 'section_complete' },
+            { metadata: { source: 'section_complete' }, dedupeMinutes: 30 },
           );
         } catch (error) {
           console.error(

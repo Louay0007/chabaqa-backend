@@ -453,6 +453,31 @@ export class ContentTrackingService {
     );
   }
 
+  async trackChapterStartOnce(
+    userId: string,
+    courseId: string,
+    chapterId: string,
+    options: { dedupeMinutes?: number; metadata?: Record<string, any> } = {},
+  ): Promise<TrackingActionDocument | null> {
+    const dedupeMinutes = Math.max(1, Math.floor(Number(options.dedupeMinutes ?? 30)));
+    const since = new Date(Date.now() - dedupeMinutes * 60_000);
+
+    const existing = await this.trackingActionModel
+      .findOne({
+        userId: new Types.ObjectId(userId),
+        contentId: courseId,
+        contentType: TrackableContentType.COURSE,
+        actionType: TrackingActionType.CHAPTER_START,
+        'metadata.chapterId': chapterId,
+        timestamp: { $gte: since },
+      })
+      .select('_id')
+      .lean();
+
+    if (existing) return null;
+    return this.trackChapterStart(userId, courseId, chapterId, options.metadata || {});
+  }
+
   async trackChapterComplete(
     userId: string,
     courseId: string,

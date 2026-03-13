@@ -7,6 +7,7 @@ import { SubscriptionModule } from '../subscription/subscription.module';
 import { CoursSchema, CourseEnrollmentSchema } from '../schema/course.schema';
 import { Subscription, SubscriptionSchema } from '../schema/subscription.schema';
 import { AnalyticsScheduler } from './analytics.scheduler';
+import { CreatorInsightsService } from './creator-insights.service';
 
 @Global()
 @Module({
@@ -20,7 +21,7 @@ import { AnalyticsScheduler } from './analytics.scheduler';
     ]),
   ],
   controllers: [AnalyticsController],
-  providers: [AnalyticsService, AnalyticsScheduler],
+  providers: [AnalyticsService, AnalyticsScheduler, CreatorInsightsService],
   exports: [AnalyticsService],
 })
 export class AnalyticsModule { }

@@ -13,6 +13,7 @@ import { AvailableSlotsResponseDto, AvailableHoursResponseDto } from '../dto-ses
 import { PromoService } from '../common/services/promo.service';
 import { PolicyService } from '../common/services/policy.service';
 import { FeeService } from '../common/services/fee.service';
+import { ContentTrackingService } from '../common/services/content-tracking.service';
 import { TrackableContentType } from '../schema/content-tracking.schema';
 import { GoogleCalendarService } from '../google-calendar/google-calendar.service';
 import { EmailService, SessionBookingEmailData } from '../email/email.service';
@@ -35,6 +36,7 @@ export class SessionService {
     private readonly feeService: FeeService,
     private readonly promoService: PromoService,
     private readonly policyService: PolicyService,
+    private readonly trackingService: ContentTrackingService,
     private readonly googleCalendarService: GoogleCalendarService,
     private readonly emailService: EmailService,
     private readonly cacheService: CacheService,
@@ -787,6 +789,22 @@ export class SessionService {
     await sessionDoc.save({ session });
     await this.invalidateSessionCaches(sessionDoc.creatorId.toString());
 
+    try {
+      await this.trackingService.trackStart(
+        userId,
+        sessionDoc._id.toString(),
+        TrackableContentType.SESSION,
+        {
+          source: 'session_booking',
+          bookingId: booking.id,
+          bookingStatus: booking.status,
+          scheduledAt: scheduledAt.toISOString(),
+        },
+      );
+    } catch (error: any) {
+      this.logger.warn(`[bookSession] Failed to track session start: ${error?.message || error}`);
+    }
+
     if (initialStatus === 'confirmed') {
       await this.provisionMeetForBooking({
         sessionDoc,
@@ -946,6 +964,20 @@ export class SessionService {
 
     await session.save();
     await this.invalidateSessionCaches(session.creatorId.toString());
+
+    try {
+      await this.trackingService.trackComplete(
+        booking.userId.toString(),
+        session._id.toString(),
+        TrackableContentType.SESSION,
+        {
+          source: 'session_booking_complete',
+          bookingId,
+        },
+      );
+    } catch (error: any) {
+      this.logger.warn(`[completeSession] Failed to track session complete: ${error?.message || error}`);
+    }
 
     const community = await this.communityModel.findOne({ id: session.communityId });
     return this.transformToResponseDto(session, community || undefined);

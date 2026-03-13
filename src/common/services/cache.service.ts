@@ -252,6 +252,37 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * Increment with a fixed TTL (best-effort).
+   * - Redis: atomic INCRBY + set EXPIRE only if the key is new.
+   * - Memory fallback: get+set (TTL may behave like a sliding window).
+   */
+  async incrementWithTtl(key: string, amount = 1, ttlSeconds?: number): Promise<number | undefined> {
+    const ttl = Math.max(1, Math.floor(ttlSeconds ?? this.defaultTtlSeconds));
+    try {
+      if (await this.ensureRedisConnected()) {
+        const script =
+          "local v = redis.call('INCRBY', KEYS[1], ARGV[1]); if v == tonumber(ARGV[1]) then redis.call('EXPIRE', KEYS[1], ARGV[2]); end; return v;";
+        const result = await this.redisClient!.eval(script, {
+          keys: [key],
+          arguments: [String(amount), String(ttl)],
+        });
+
+        if (typeof result === 'number') return result;
+        const parsed = Number(result);
+        return Number.isFinite(parsed) ? parsed : undefined;
+      }
+
+      const current = (await this.get<number>(key)) || 0;
+      const newValue = current + amount;
+      await this.set(key, newValue, ttl);
+      return newValue;
+    } catch (error) {
+      this.logger.error(`Cache incrementWithTtl error for key ${key}:`, error);
+      return undefined;
+    }
+  }
+
+  /**
    * Decrement a numeric value in cache
    */
   async decrement(key: string, amount = 1): Promise<number | undefined> {

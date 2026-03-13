@@ -14,7 +14,7 @@ import { CreatePostDto } from '../dto-post/create-post.dto';
 import { UpdatePostDto } from '../dto-post/update-post.dto';
 import { CreatePostCommentDto } from '../dto-post/create-post.dto';
 import { ContentTrackingService } from '../common/services/content-tracking.service';
-import { TrackableContentType } from '../schema/content-tracking.schema';
+import { TrackableContentType, TrackingActionType } from '../schema/content-tracking.schema';
 import {
   PostResponseDto,
   PostListResponseDto,
@@ -530,6 +530,18 @@ export class PostService {
 
     post.addComment(comment);
     await post.save();
+
+    try {
+      await this.contentTrackingService.trackAction(
+        userId,
+        post.id || post._id.toString(),
+        TrackableContentType.POST,
+        TrackingActionType.COMMENT,
+        { source: 'post_comment', commentId: comment.id, communityId: post.communityId },
+      );
+    } catch (error: any) {
+      this.logWarn(`⚠️ [POST-SERVICE] Failed to track comment: ${error?.message || error}`);
+    }
 
     // Récupérer les informations de l'utilisateur
     const user = await this.userModel

@@ -10,11 +10,12 @@ import { UploadService } from '../upload/upload.service';
 import { PolicyService } from '../common/services/policy.service';
 import { PromoService } from '../common/services/promo.service';
 import { FeeService } from '../common/services/fee.service';
-import { TrackableContentType, ContentProgressDocument } from '../schema/content-tracking.schema';
+import { TrackableContentType, ContentProgressDocument, TrackingActionType } from '../schema/content-tracking.schema';
 import { NotificationService } from '../notification/notification.service';
 import { ContentTrackingService } from '../common/services/content-tracking.service';
 import { PaginatedResponseDto } from '../common/dto/paginated-response.dto';
 import { CacheService } from '../common/services/cache.service';
+import { Post, PostDocument } from '../schema/post.schema';
 
 @Injectable()
 export class CommunityAffCreaJoinService implements OnModuleInit {
@@ -23,6 +24,8 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     @InjectModel('Order') private orderModel: Model<any>,
     @InjectModel('ContentProgress') private contentProgressModel: Model<ContentProgressDocument>,
+    @InjectModel('TrackingAction') private trackingActionModel: Model<any>,
+    @InjectModel(Post.name) private postModel: Model<PostDocument>,
     private readonly uploadService: UploadService,
     private readonly policyService: PolicyService,
     private readonly promoService: PromoService,
@@ -1415,6 +1418,20 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
       await community.save();
       await this.userModel.findByIdAndUpdate(userId, { $addToSet: { joinedCommunities: community._id } });
       await this.notifyCreatorMemberJoined(community, userId);
+      try {
+        await this.trackingService.trackStart(userId, community._id.toString(), TrackableContentType.COMMUNITY, {
+          source: 'community_membership_checkout',
+          isPaid: false,
+          inviteCode: normalizedInviteCode || undefined,
+        });
+        await this.trackingService.trackComplete(userId, community._id.toString(), TrackableContentType.COMMUNITY, {
+          source: 'community_membership_checkout',
+          isPaid: false,
+          inviteCode: normalizedInviteCode || undefined,
+        });
+      } catch (error: any) {
+        console.warn(`⚠️ [COMMUNITY-CHECKOUT] Failed to track free membership:`, error?.message || error);
+      }
       return { message: 'Adhésion gratuite réussie' };
     }
 
@@ -1454,6 +1471,20 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
       await community.save();
       await this.userModel.findByIdAndUpdate(userId, { $addToSet: { joinedCommunities: community._id } });
       await this.notifyCreatorMemberJoined(community, userId);
+      try {
+        await this.trackingService.trackStart(userId, community._id.toString(), TrackableContentType.COMMUNITY, {
+          source: 'community_membership_checkout_paid_order_required',
+          isPaid: true,
+          inviteCode: normalizedInviteCode || undefined,
+        });
+        await this.trackingService.trackComplete(userId, community._id.toString(), TrackableContentType.COMMUNITY, {
+          source: 'community_membership_checkout_paid_order_required',
+          isPaid: true,
+          inviteCode: normalizedInviteCode || undefined,
+        });
+      } catch (error: any) {
+        console.warn(`⚠️ [COMMUNITY-CHECKOUT] Failed to track paid membership (paid-order-required):`, error?.message || error);
+      }
       return { message: 'Adhésion confirmée avec succès' };
     }
 
@@ -1482,6 +1513,20 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
     await community.save();
     await this.userModel.findByIdAndUpdate(userId, { $addToSet: { joinedCommunities: community._id } });
     await this.notifyCreatorMemberJoined(community, userId);
+    try {
+      await this.trackingService.trackStart(userId, community._id.toString(), TrackableContentType.COMMUNITY, {
+        source: 'community_membership_checkout_paid',
+        isPaid: true,
+        inviteCode: normalizedInviteCode || undefined,
+      });
+      await this.trackingService.trackComplete(userId, community._id.toString(), TrackableContentType.COMMUNITY, {
+        source: 'community_membership_checkout_paid',
+        isPaid: true,
+        inviteCode: normalizedInviteCode || undefined,
+      });
+    } catch (error: any) {
+      console.warn(`⚠️ [COMMUNITY-CHECKOUT] Failed to track paid membership:`, error?.message || error);
+    }
 
     return { message: 'Adhésion achetée avec succès' };
   }
@@ -1705,6 +1750,23 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
         { new: true }
       );
 
+      try {
+        await this.trackingService.trackStart(
+          userId,
+          community._id.toString(),
+          TrackableContentType.COMMUNITY,
+          { source: 'community_join' },
+        );
+        await this.trackingService.trackComplete(
+          userId,
+          community._id.toString(),
+          TrackableContentType.COMMUNITY,
+          { source: 'community_join', isPaid: Boolean(community.fees_of_join && community.fees_of_join > 0) },
+        );
+      } catch (error: any) {
+        console.warn(`⚠️ [COMMUNITY-JOIN] Failed to track join:`, error?.message || error);
+      }
+
       // Recalculer les rangs
       await this.updateCommunityRanks();
       await this.invalidateCommunityAndProfileCaches({
@@ -1800,6 +1862,27 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
         { $addToSet: { joinedCommunities: community._id } },
         { new: true }
       );
+
+      try {
+        await this.trackingService.trackStart(
+          userId,
+          community._id.toString(),
+          TrackableContentType.COMMUNITY,
+          { source: 'community_join_invite', inviteCode: normalizedInviteCode },
+        );
+        await this.trackingService.trackComplete(
+          userId,
+          community._id.toString(),
+          TrackableContentType.COMMUNITY,
+          {
+            source: 'community_join_invite',
+            inviteCode: normalizedInviteCode,
+            isPaid: Boolean(community.fees_of_join && community.fees_of_join > 0),
+          },
+        );
+      } catch (error: any) {
+        console.warn(`⚠️ [COMMUNITY-JOIN] Failed to track join (invite):`, error?.message || error);
+      }
 
       // Recalculer les rangs
       await this.updateCommunityRanks();
@@ -2173,13 +2256,69 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
       // Real members count from the database
       const membersCount = community.membersCount || community.members?.length || 0;
 
-      // Calculate engagement rate (mock for now - in real app would be based on posts, comments, etc.)
-      // For now, we'll use a simple formula based on members count
-      const engagementRate = Math.min(Math.round(membersCount * 0.15 + Math.random() * 10), 100);
+      const now = new Date();
+      const last30Start = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+      const prev30Start = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
+      const communityIdString = community._id.toString();
 
-      // Calculate monthly growth (mock for now - in real app would compare with previous month)
-      // For now, we'll use a random growth between -5% and +15%
-      const monthlyGrowth = Math.round((Math.random() - 0.3) * 20);
+      // Monthly growth based on unique join (START) users over 30d windows
+      let monthlyGrowth = 0;
+      try {
+        const matchBase = {
+          contentType: TrackableContentType.COMMUNITY,
+          contentId: communityIdString,
+          actionType: TrackingActionType.START,
+        };
+
+        const currentJoinUsers = await this.trackingActionModel.distinct('userId', {
+          ...matchBase,
+          timestamp: { $gte: last30Start, $lt: now },
+        });
+        const prevJoinUsers = await this.trackingActionModel.distinct('userId', {
+          ...matchBase,
+          timestamp: { $gte: prev30Start, $lt: last30Start },
+        });
+
+        const current = Array.isArray(currentJoinUsers) ? currentJoinUsers.length : 0;
+        const previous = Array.isArray(prevJoinUsers) ? prevJoinUsers.length : 0;
+        if (previous <= 0) {
+          monthlyGrowth = current > 0 ? 100 : 0;
+        } else {
+          monthlyGrowth = Math.round(((current - previous) / previous) * 100);
+        }
+      } catch (error: any) {
+        console.warn(`⚠️ [COMMUNITY-STATS] Failed to compute monthlyGrowth:`, error?.message || error);
+        monthlyGrowth = 0;
+      }
+
+      // Engagement rate: % of members active in the last 30d (posts + comments)
+      let engagementRate = 0;
+      try {
+        const authors = await this.postModel.distinct('authorId', {
+          communityId: communityIdString,
+          createdAt: { $gte: last30Start, $lt: now },
+        });
+
+        const commentersAgg = await this.postModel.aggregate([
+          { $match: { communityId: communityIdString } },
+          { $unwind: '$comments' },
+          { $match: { 'comments.createdAt': { $gte: last30Start, $lt: now } } },
+          { $group: { _id: '$comments.userId' } },
+        ]);
+
+        const commenters = (commentersAgg || []).map((row: any) => row?._id).filter(Boolean);
+        const uniqueActive = new Set<string>([
+          ...(authors || []).map((id: any) => id?.toString?.() || String(id)),
+          ...commenters.map((id: any) => id?.toString?.() || String(id)),
+        ]);
+
+        if (membersCount > 0) {
+          engagementRate = Math.min(100, Math.round((uniqueActive.size / membersCount) * 100));
+        }
+      } catch (error: any) {
+        console.warn(`⚠️ [COMMUNITY-STATS] Failed to compute engagementRate:`, error?.message || error);
+        engagementRate = 0;
+      }
 
       // Is public status
       const isPublic = !community.isPrivate;

@@ -2543,6 +2543,877 @@ export class AnalyticsService {
     };
   }
 
+  private getFunnelMinStarts(): number {
+    const raw = Number(process.env.ANALYTICS_FUNNEL_MIN_STARTS || 30);
+    if (!Number.isFinite(raw)) return 30;
+    return Math.max(1, Math.min(100000, Math.floor(raw)));
+  }
+
+  private round4(value: number): number {
+    return Math.round(value * 10000) / 10000;
+  }
+
+  private buildDropOffSummary(params: {
+    steps: Array<{ stepKey: string; stepLabel: string; uniqueUsers?: number; events?: number }>;
+    minStarts: number;
+    sampleSizeKey?: string;
+  }): {
+    worstStep: { stepKey: string; stepLabel: string; dropOffRate: number; fromUsers: number; toUsers: number } | null;
+    dropOffRate: number;
+    sampleSizeWarnings: string[];
+  } {
+    const { steps, minStarts } = params;
+    const sampleSizeWarnings: string[] = [];
+
+    // compute per-step drop-off against previous step
+    const candidates: Array<{ idx: number; fromUsers: number; toUsers: number; dropOffRate: number }> = [];
+    for (let i = 1; i < steps.length; i++) {
+      const prev = Number(steps[i - 1]?.uniqueUsers ?? 0);
+      const curr = Number(steps[i]?.uniqueUsers ?? 0);
+      if (!Number.isFinite(prev) || !Number.isFinite(curr)) continue;
+      if (prev <= 0) continue;
+      const drop = Math.max(0, Math.min(1, 1 - curr / prev));
+      candidates.push({ idx: i, fromUsers: prev, toUsers: curr, dropOffRate: drop });
+    }
+
+    const eligible = candidates.filter((c) => c.fromUsers >= minStarts);
+    if (eligible.length === 0 && candidates.length > 0) {
+      const maxFrom = Math.max(...candidates.map((c) => c.fromUsers));
+      if (maxFrom > 0 && maxFrom < minStarts) {
+        sampleSizeWarnings.push(
+          `Low sample size: max step volume is ${maxFrom} (< ${minStarts}). Drop-off ranking may be noisy.`,
+        );
+      }
+    }
+
+    const toRank = eligible.length > 0 ? eligible : candidates;
+    if (toRank.length === 0) {
+      return { worstStep: null, dropOffRate: 0, sampleSizeWarnings };
+    }
+
+    toRank.sort((a, b) => {
+      if (b.dropOffRate !== a.dropOffRate) return b.dropOffRate - a.dropOffRate;
+      return b.fromUsers - a.fromUsers;
+    });
+    const worst = toRank[0];
+    const step = steps[worst.idx];
+    const prev = steps[worst.idx - 1];
+    const worstStep = {
+      stepKey: String(step.stepKey),
+      stepLabel: String(step.stepLabel),
+      dropOffRate: this.round4(worst.dropOffRate),
+      fromUsers: worst.fromUsers,
+      toUsers: worst.toUsers,
+    };
+
+    const first = Number(steps[0]?.uniqueUsers ?? 0);
+    const last = Number(steps[steps.length - 1]?.uniqueUsers ?? 0);
+    const overallDrop = first > 0 ? Math.max(0, Math.min(1, 1 - last / first)) : 0;
+    return {
+      worstStep,
+      dropOffRate: this.round4(overallDrop),
+      sampleSizeWarnings,
+    };
+  }
+
+  private async aggregateUniqueActionCounts(params: {
+    creatorId: string;
+    contentType: string;
+    contentIds: string[];
+    from: Date;
+    to: Date;
+    includeActionTypes: TrackingActionType[];
+    excludeTaskScoped?: boolean;
+    excludeChapterScoped?: boolean;
+  }): Promise<Record<string, { uniqueUsers: number; events: number }>> {
+    const tracking = this.dbConnection.collection('trackingactions');
+    const contentIds = Array.from(new Set(params.contentIds.map((id) => String(id || '').trim()).filter(Boolean)));
+    if (contentIds.length === 0) return {};
+
+    const match: any = {
+      timestamp: { $gte: params.from, $lte: params.to },
+      contentType: params.contentType,
+      contentId: { $in: contentIds },
+      actionType: { $in: params.includeActionTypes },
+    };
+
+    const chapterIdExpr = { $ifNull: ['$metadata.chapterId', ''] };
+    const taskIdExpr = { $ifNull: ['$metadata.taskId', ''] };
+
+    const scopedFilters: any[] = [];
+    if (params.excludeChapterScoped) {
+      scopedFilters.push({
+        $or: [
+          { $ne: ['$actionType', TrackingActionType.START] },
+          { $eq: [chapterIdExpr, ''] },
+        ],
+      });
+      scopedFilters.push({
+        $or: [
+          { $ne: ['$actionType', TrackingActionType.COMPLETE] },
+          { $eq: [chapterIdExpr, ''] },
+        ],
+      });
+    }
+    if (params.excludeTaskScoped) {
+      scopedFilters.push({
+        $or: [
+          { $ne: ['$actionType', TrackingActionType.START] },
+          { $eq: [taskIdExpr, ''] },
+        ],
+      });
+      scopedFilters.push({
+        $or: [
+          { $ne: ['$actionType', TrackingActionType.COMPLETE] },
+          { $eq: [taskIdExpr, ''] },
+        ],
+      });
+    }
+
+    const pipeline: any[] = [{ $match: match }];
+    if (scopedFilters.length > 0) {
+      pipeline.push(
+        {
+          $addFields: {
+            chapterIdNormalized: chapterIdExpr,
+            taskIdNormalized: taskIdExpr,
+          },
+        },
+        {
+          $match: {
+            $expr: scopedFilters.length === 1 ? scopedFilters[0] : { $and: scopedFilters },
+          },
+        },
+      );
+    }
+    pipeline.push(
+      {
+        $group: {
+          _id: { actionType: '$actionType', userId: '$userId' },
+          events: { $sum: 1 },
+        },
+      },
+      {
+        $group: {
+          _id: '$_id.actionType',
+          uniqueUsers: { $sum: 1 },
+          events: { $sum: '$events' },
+        },
+      },
+      { $project: { _id: 0, actionType: '$_id', uniqueUsers: 1, events: 1 } },
+    );
+
+    const rows = await tracking.aggregate(pipeline).toArray();
+    const result: Record<string, { uniqueUsers: number; events: number }> = {};
+    for (const row of rows) {
+      const key = String(row?.actionType || '');
+      if (!key) continue;
+      result[key] = {
+        uniqueUsers: Number(row?.uniqueUsers || 0) || 0,
+        events: Number(row?.events || 0) || 0,
+      };
+    }
+    return result;
+  }
+
+  private async resolveContentMeta(params: {
+    creatorId: string;
+    contentType: string;
+    contentId: string;
+    communityScope: {
+      hasFilter: boolean;
+      lookupCommunityValues: Array<string | Types.ObjectId>;
+      communityIdStrings: string[];
+    };
+  }): Promise<{
+    title: string;
+    communityId?: string;
+    currency?: string;
+    price?: number;
+    trackingIds: string[];
+    orderIds: string[];
+    enrollmentCourseObjectId?: Types.ObjectId;
+  }> {
+    const { contentType, contentId } = params;
+
+    const findOneByIdOrObjectId = async (collectionName: string) => {
+      const col = this.dbConnection.db?.collection(collectionName);
+      if (!col) return null;
+      const match: any[] = [{ id: contentId }];
+      if (Types.ObjectId.isValid(contentId)) match.push({ _id: new Types.ObjectId(contentId) });
+      if (contentType === 'community') match.push({ slug: contentId });
+      return col.findOne({ $or: match });
+    };
+
+    if (contentType === 'course') {
+      const doc = await findOneByIdOrObjectId('cours');
+      if (!doc) throw new NotFoundException('Course not found');
+      const creatorOk = String(doc?.creatorId || '') === String(params.creatorId);
+      if (!creatorOk) throw new ForbiddenException('Access denied');
+      const communityId = doc?.communityId ? String(doc.communityId) : undefined;
+      if (params.communityScope.hasFilter && communityId) {
+        const ok = params.communityScope.communityIdStrings.includes(String(communityId));
+        if (!ok) throw new ForbiddenException('Content not in requested community scope');
+      }
+      const trackingIds = Array.from(new Set([String(doc?.id || ''), String(doc?._id || '')].filter(Boolean)));
+      const orderIds = Array.from(new Set([String(doc?._id || ''), String(doc?.id || '')].filter(Boolean)));
+      return {
+        title: String(doc?.titre || doc?.title || doc?.name || doc?.id || contentId),
+        communityId,
+        currency: String(doc?.devise || 'TND'),
+        price: Number(doc?.prix || 0) || 0,
+        trackingIds,
+        orderIds,
+        enrollmentCourseObjectId: doc?._id ? new Types.ObjectId(String(doc._id)) : undefined,
+      };
+    }
+
+    if (contentType === 'challenge') {
+      const doc = await findOneByIdOrObjectId('challenges');
+      if (!doc) throw new NotFoundException('Challenge not found');
+      const creatorOk = String(doc?.creatorId || '') === String(params.creatorId);
+      if (!creatorOk) throw new ForbiddenException('Access denied');
+      const communityId = doc?.communityId ? String(doc.communityId) : undefined;
+      if (params.communityScope.hasFilter && communityId) {
+        const ok = params.communityScope.communityIdStrings.includes(String(communityId));
+        if (!ok) throw new ForbiddenException('Content not in requested community scope');
+      }
+      const trackingIds = Array.from(new Set([String(doc?.id || ''), String(doc?._id || '')].filter(Boolean)));
+      const orderIds = Array.from(new Set([String(doc?._id || ''), String(doc?.id || '')].filter(Boolean)));
+      return {
+        title: String(doc?.title || doc?.name || doc?.id || contentId),
+        communityId,
+        currency: 'TND',
+        price: Number(doc?.pricing?.participationFee || 0) || 0,
+        trackingIds,
+        orderIds,
+      };
+    }
+
+    if (contentType === 'session') {
+      const doc = await findOneByIdOrObjectId('sessions');
+      if (!doc) throw new NotFoundException('Session not found');
+      const creatorOk = String(doc?.creatorId || '') === String(params.creatorId);
+      if (!creatorOk) throw new ForbiddenException('Access denied');
+      const communityId = doc?.communityId ? String(doc.communityId) : undefined;
+      if (params.communityScope.hasFilter && communityId) {
+        const ok = params.communityScope.communityIdStrings.includes(String(communityId));
+        if (!ok) throw new ForbiddenException('Content not in requested community scope');
+      }
+      const trackingIds = Array.from(new Set([String(doc?.id || ''), String(doc?._id || '')].filter(Boolean)));
+      const orderIds = Array.from(new Set([String(doc?._id || ''), String(doc?.id || '')].filter(Boolean)));
+      return {
+        title: String(doc?.title || doc?.name || doc?.id || contentId),
+        communityId,
+        currency: String(doc?.currency || 'TND'),
+        price: Number(doc?.price || 0) || 0,
+        trackingIds,
+        orderIds,
+      };
+    }
+
+    if (contentType === 'event') {
+      const doc = await findOneByIdOrObjectId('events');
+      if (!doc) throw new NotFoundException('Event not found');
+      const creatorOk = String(doc?.creatorId || '') === String(params.creatorId);
+      if (!creatorOk) throw new ForbiddenException('Access denied');
+      const communityId = doc?.communityId ? String(doc.communityId) : undefined;
+      if (params.communityScope.hasFilter && communityId) {
+        const ok = params.communityScope.communityIdStrings.includes(String(communityId));
+        if (!ok) throw new ForbiddenException('Content not in requested community scope');
+      }
+      const trackingIds = Array.from(new Set([String(doc?.id || ''), String(doc?._id || '')].filter(Boolean)));
+      const orderIds = Array.from(new Set([String(doc?._id || ''), String(doc?.id || '')].filter(Boolean)));
+      return {
+        title: String(doc?.title || doc?.name || doc?.id || contentId),
+        communityId,
+        currency: 'TND',
+        price: Number(doc?.price || 0) || 0,
+        trackingIds,
+        orderIds,
+      };
+    }
+
+    if (contentType === 'product') {
+      const doc = await findOneByIdOrObjectId('products');
+      if (!doc) throw new NotFoundException('Product not found');
+      const creatorOk = String(doc?.creatorId || '') === String(params.creatorId);
+      if (!creatorOk) throw new ForbiddenException('Access denied');
+      const communityId = doc?.communityId ? String(doc.communityId) : undefined;
+      if (params.communityScope.hasFilter && communityId) {
+        const ok = params.communityScope.communityIdStrings.includes(String(communityId));
+        if (!ok) throw new ForbiddenException('Content not in requested community scope');
+      }
+      const trackingIds = Array.from(new Set([String(doc?.id || ''), String(doc?._id || '')].filter(Boolean)));
+      const orderIds = Array.from(new Set([String(doc?._id || ''), String(doc?.id || '')].filter(Boolean)));
+      return {
+        title: String(doc?.title || doc?.name || doc?.id || contentId),
+        communityId,
+        currency: String(doc?.currency || 'TND'),
+        price: Number(doc?.price || 0) || 0,
+        trackingIds,
+        orderIds,
+      };
+    }
+
+    if (contentType === 'post') {
+      const doc = await findOneByIdOrObjectId('posts');
+      if (!doc) throw new NotFoundException('Post not found');
+      const authorOk = String(doc?.authorId || '') === String(params.creatorId);
+      if (!authorOk) throw new ForbiddenException('Access denied');
+      const communityId = doc?.communityId ? String(doc.communityId) : undefined;
+      if (params.communityScope.hasFilter && communityId) {
+        const ok = params.communityScope.communityIdStrings.includes(String(communityId));
+        if (!ok) throw new ForbiddenException('Content not in requested community scope');
+      }
+      const trackingIds = Array.from(new Set([String(doc?.id || ''), String(doc?._id || '')].filter(Boolean)));
+      return {
+        title: String(doc?.title || doc?.id || contentId),
+        communityId,
+        trackingIds,
+        orderIds: [],
+      };
+    }
+
+    // community
+    const doc = await findOneByIdOrObjectId('communities');
+    if (!doc) throw new NotFoundException('Community not found');
+    const creatorOk = String(doc?.createur || doc?.creatorId || '') === String(params.creatorId);
+    if (!creatorOk) throw new ForbiddenException('Access denied');
+    const communityId = doc?._id ? String(doc._id) : undefined;
+    if (params.communityScope.hasFilter && communityId) {
+      const ok = params.communityScope.lookupCommunityValues.some((value) => String(value) === String(communityId));
+      if (!ok) throw new ForbiddenException('Content not in requested community scope');
+    }
+    const trackingIds = Array.from(
+      new Set([String(doc?._id || ''), String(doc?.id || ''), String(doc?.slug || '')].filter(Boolean)),
+    );
+    const orderIds = Array.from(new Set([String(doc?._id || ''), String(doc?.id || '')].filter(Boolean)));
+    return {
+      title: String(doc?.name || doc?.slug || contentId),
+      communityId,
+      currency: 'TND',
+      price: Number(doc?.fees_of_join || doc?.price || 0) || 0,
+      trackingIds,
+      orderIds,
+    };
+  }
+
+  async getFunnel(
+    creatorId: string,
+    contentType: string,
+    contentId: string,
+    from: Date,
+    to: Date,
+    communityId?: string,
+    communitySlug?: string,
+  ) {
+    const normalizedType = String(contentType || '').trim().toLowerCase();
+    const allowed = new Set(['course', 'challenge', 'session', 'event', 'product', 'post', 'community']);
+    if (!allowed.has(normalizedType)) {
+      throw new NotFoundException('Unsupported content type');
+    }
+
+    const communityScope = await this.resolveCommunityScope(creatorId, communityId, communitySlug);
+    const key = this.cacheKey(
+      creatorId,
+      from.toISOString(),
+      to.toISOString(),
+      `funnel:${normalizedType}:${contentId}:${communityScope.cacheKeyPart}`,
+    );
+    const cached = await this.getCache<any>(key);
+    if (cached) return cached;
+
+    const meta = await this.resolveContentMeta({
+      creatorId,
+      contentType: normalizedType,
+      contentId,
+      communityScope,
+    });
+
+    const warnings: string[] = [];
+    const actionsToInclude =
+      normalizedType === 'post'
+        ? [
+            TrackingActionType.VIEW,
+            TrackingActionType.LIKE,
+            TrackingActionType.SHARE,
+            TrackingActionType.BOOKMARK,
+            TrackingActionType.COMMENT,
+          ]
+        : normalizedType === 'product'
+          ? [TrackingActionType.VIEW]
+          : [TrackingActionType.VIEW, TrackingActionType.START, TrackingActionType.COMPLETE];
+
+    const actionCounts = await this.aggregateUniqueActionCounts({
+      creatorId,
+      contentType: normalizedType,
+      contentIds: meta.trackingIds,
+      from,
+      to,
+      includeActionTypes: actionsToInclude,
+      excludeChapterScoped: normalizedType === 'course',
+      excludeTaskScoped: normalizedType === 'challenge',
+    });
+
+    const step = (actionType: TrackingActionType, label: string) => ({
+      stepKey: actionType,
+      stepLabel: label,
+      uniqueUsers: Number(actionCounts?.[actionType]?.uniqueUsers || 0) || 0,
+      events: Number(actionCounts?.[actionType]?.events || 0) || 0,
+      rateFromPrev: null as number | null,
+    });
+
+    const steps: Array<any> = [];
+    if (normalizedType === 'post') {
+      steps.push(step(TrackingActionType.VIEW, 'Views'));
+      steps.push(step(TrackingActionType.LIKE, 'Likes'));
+      steps.push(step(TrackingActionType.SHARE, 'Shares'));
+      steps.push(step(TrackingActionType.BOOKMARK, 'Bookmarks'));
+      steps.push(step(TrackingActionType.COMMENT, 'Comments'));
+    } else if (normalizedType === 'product') {
+      steps.push(step(TrackingActionType.VIEW, 'Views'));
+    } else {
+      steps.push(step(TrackingActionType.VIEW, 'Views'));
+      steps.push(step(TrackingActionType.START, 'Starts'));
+      steps.push(step(TrackingActionType.COMPLETE, 'Completes'));
+    }
+
+    // Compute revenue/purchases when applicable (orders use mongo _id string in many flows; resolveContentMeta provides both).
+    let revenueTotal = 0;
+    let purchaseCount = 0;
+    let uniqueBuyers = 0;
+    if (normalizedType !== 'post') {
+      const ordersCollection = this.dbConnection.db?.collection('orders');
+      if (ordersCollection) {
+        const orderMatch: any = {
+          creatorId: this.getCreatorObjectId(creatorId),
+          status: 'paid',
+          contentType: normalizedType,
+          contentId: { $in: meta.orderIds },
+          createdAt: { $gte: from, $lte: to },
+        };
+
+        // Prefer explicit order communityId when filtering.
+        if (communityScope.hasFilter) {
+          orderMatch.communityId = { $in: communityScope.lookupCommunityValues };
+        }
+
+        const rows = await ordersCollection
+          .aggregate([
+            { $match: orderMatch },
+            {
+              $group: {
+                _id: null,
+                revenue: { $sum: '$creatorNetDT' },
+                count: { $sum: 1 },
+                buyers: { $addToSet: '$buyerId' },
+              },
+            },
+            { $project: { _id: 0, revenue: 1, count: 1, uniqueBuyers: { $size: '$buyers' } } },
+          ])
+          .toArray();
+        revenueTotal = Number(rows?.[0]?.revenue || 0) || 0;
+        purchaseCount = Number(rows?.[0]?.count || 0) || 0;
+        uniqueBuyers = Number(rows?.[0]?.uniqueBuyers || 0) || 0;
+      } else {
+        warnings.push('Orders collection is unavailable; revenue metrics omitted.');
+      }
+    }
+
+    // Course enrollments (true conversion) for course funnel.
+    let enrollments = 0;
+    let enrollmentUsers = 0;
+    if (normalizedType === 'course' && meta.enrollmentCourseObjectId) {
+      const enrollmentsCollection = this.dbConnection.db?.collection('courseenrollments');
+      if (enrollmentsCollection) {
+        const allEnrollments =
+          (await enrollmentsCollection
+            .find({ courseId: new Types.ObjectId(String(meta.enrollmentCourseObjectId)) })
+            .project({ userId: 1, enrolledAt: 1, createdAt: 1 })
+            .toArray()) || [];
+
+        const inRange = (value: any): boolean => {
+          const date = value instanceof Date ? value : new Date(value);
+          return !Number.isNaN(date.getTime()) && date >= from && date <= to;
+        };
+
+        const getEnrollmentDate = (enrollment: any): Date | null => {
+          const candidate = enrollment?.enrolledAt || enrollment?.createdAt;
+          if (!candidate) return null;
+          const parsed = candidate instanceof Date ? candidate : new Date(candidate);
+          return Number.isNaN(parsed.getTime()) ? null : parsed;
+        };
+
+        const periodEnrollments = allEnrollments.filter((entry: any) => {
+          const dt = getEnrollmentDate(entry);
+          return dt ? inRange(dt) : false;
+        });
+
+        enrollments = periodEnrollments.length;
+        const distinctUsers = new Set(periodEnrollments.map((e: any) => String(e?.userId || '')).filter(Boolean));
+        enrollmentUsers = distinctUsers.size;
+      }
+    }
+
+    // Add purchases/revenue steps for commerce items.
+    if (normalizedType !== 'post') {
+      steps.push({
+        stepKey: 'purchases',
+        stepLabel: 'Purchases',
+        uniqueUsers: uniqueBuyers,
+        events: purchaseCount,
+        rateFromPrev: null,
+      });
+      if (normalizedType === 'course') {
+        steps.push({
+          stepKey: 'enrollments',
+          stepLabel: 'Enrollments',
+          uniqueUsers: enrollmentUsers,
+          events: enrollments,
+          rateFromPrev: null,
+        });
+      }
+      steps.push({
+        stepKey: 'revenue',
+        stepLabel: 'Revenue',
+        uniqueUsers: null,
+        events: Number(revenueTotal || 0),
+        rateFromPrev: null,
+      });
+    }
+
+    // compute step conversion rates
+    for (let i = 1; i < steps.length; i++) {
+      const prev = Number(steps[i - 1]?.uniqueUsers ?? 0);
+      const curr = Number(steps[i]?.uniqueUsers ?? 0);
+      if (!Number.isFinite(prev) || prev <= 0) {
+        steps[i].rateFromPrev = null;
+      } else {
+        steps[i].rateFromPrev = this.round4(curr / prev);
+      }
+    }
+
+    const minStarts = this.getFunnelMinStarts();
+    const dropOff = this.buildDropOffSummary({ steps, minStarts });
+    const payload = {
+      contentMeta: {
+        title: meta.title,
+        communityId: meta.communityId,
+        currency: meta.currency,
+        price: meta.price,
+        trackingIds: meta.trackingIds,
+        orderIds: meta.orderIds,
+      },
+      funnel: steps,
+      dropOff,
+      warnings: [...warnings, ...dropOff.sampleSizeWarnings],
+    };
+
+    this.setCache(key, payload, 5 * 60 * 1000);
+    return payload;
+  }
+
+  async getCourseChaptersFunnel(
+    creatorId: string,
+    courseId: string,
+    from: Date,
+    to: Date,
+    communityId?: string,
+    communitySlug?: string,
+  ) {
+    const communityScope = await this.resolveCommunityScope(creatorId, communityId, communitySlug);
+    const key = this.cacheKey(
+      creatorId,
+      from.toISOString(),
+      to.toISOString(),
+      `course-chapters-funnel:${courseId}:${communityScope.cacheKeyPart}`,
+    );
+    const cached = await this.getCache<any>(key);
+    if (cached) return cached;
+
+    const coursesCollection = this.dbConnection.db?.collection('cours');
+    if (!coursesCollection) {
+      throw new NotFoundException('Courses collection is unavailable');
+    }
+
+    const match: any[] = [{ id: courseId }];
+    if (Types.ObjectId.isValid(courseId)) match.push({ _id: new Types.ObjectId(courseId) });
+    const course = await coursesCollection.findOne({ $or: match, creatorId: this.getCreatorObjectId(creatorId) });
+    if (!course) throw new NotFoundException('Course not found');
+
+    const courseCommunityId = course?.communityId ? String(course.communityId) : undefined;
+    if (communityScope.hasFilter && courseCommunityId) {
+      const ok = communityScope.communityIdStrings.includes(courseCommunityId);
+      if (!ok) throw new ForbiddenException('Content not in requested community scope');
+    }
+
+    const trackingIds = Array.from(new Set([String(course?.id || ''), String(course?._id || '')].filter(Boolean)));
+    const canonicalCourseId = String(course?.id || courseId);
+
+    const sections = Array.isArray(course.sections) ? course.sections : [];
+    const orderedChapters: Array<{
+      stepId: string;
+      stepTitle: string;
+      sectionId: string;
+      order: number;
+      isPreview: boolean;
+      isPaidChapter: boolean;
+    }> = [];
+
+    for (const section of sections) {
+      const sectionId = String(section?.id || '');
+      const chapitres = Array.isArray(section?.chapitres) ? section.chapitres : [];
+      for (const chapitre of chapitres) {
+        orderedChapters.push({
+          stepId: String(chapitre?.id || ''),
+          stepTitle: String(chapitre?.titre || chapitre?.title || 'Chapter'),
+          sectionId,
+          order: Number(chapitre?.ordre ?? 0) || 0,
+          isPreview: Boolean(chapitre?.isPreview),
+          isPaidChapter: Boolean(chapitre?.isPaidChapter),
+        });
+      }
+    }
+
+    // Stable ordering: section order is not guaranteed, but chapter ordre is within section.
+    orderedChapters.sort((a, b) => a.order - b.order);
+
+    const tracking = this.dbConnection.collection('trackingactions');
+    const chapterIdExpr = { $ifNull: ['$metadata.chapterId', ''] };
+    const isChapterStartActionExpr = {
+      $or: [
+        { $eq: ['$actionType', TrackingActionType.CHAPTER_START] },
+        {
+          $and: [
+            { $eq: ['$actionType', TrackingActionType.START] },
+            { $ne: [chapterIdExpr, ''] },
+          ],
+        },
+      ],
+    };
+    const isChapterCompleteActionExpr = {
+      $or: [
+        { $eq: ['$actionType', TrackingActionType.CHAPTER_COMPLETE] },
+        {
+          $and: [
+            { $eq: ['$actionType', TrackingActionType.COMPLETE] },
+            { $ne: [chapterIdExpr, ''] },
+          ],
+        },
+      ],
+    };
+
+    const pipeline: any[] = [
+      { $match: { timestamp: { $gte: from, $lte: to }, contentType: 'course', contentId: { $in: trackingIds } } },
+      {
+        $project: {
+          userId: 1,
+          chapterId: '$metadata.chapterId',
+          chapterIdNormalized: chapterIdExpr,
+          isStart: { $cond: [isChapterStartActionExpr, 1, 0] },
+          isComplete: { $cond: [isChapterCompleteActionExpr, 1, 0] },
+        },
+      },
+      { $match: { chapterIdNormalized: { $ne: '' } } },
+      {
+        $group: {
+          _id: { chapterId: '$chapterIdNormalized', userId: '$userId' },
+          didStart: { $max: '$isStart' },
+          didComplete: { $max: '$isComplete' },
+        },
+      },
+      {
+        $group: {
+          _id: '$_id.chapterId',
+          uniqueStarts: { $sum: '$didStart' },
+          uniqueCompletes: { $sum: '$didComplete' },
+        },
+      },
+      { $project: { _id: 0, chapterId: '$_id', uniqueStarts: 1, uniqueCompletes: 1 } },
+    ];
+
+    const rows = await tracking.aggregate(pipeline).toArray();
+    const byChapter = new Map(rows.map((r: any) => [String(r.chapterId), r]));
+
+    const items = orderedChapters.map((chapter) => {
+      const row = byChapter.get(String(chapter.stepId)) || { uniqueStarts: 0, uniqueCompletes: 0 };
+      const uniqueStarts = Number(row.uniqueStarts || 0) || 0;
+      const uniqueCompletes = Number(row.uniqueCompletes || 0) || 0;
+      const completionRate = uniqueStarts > 0 ? uniqueCompletes / uniqueStarts : 0;
+      const dropOffRate = uniqueStarts > 0 ? 1 - completionRate : 0;
+      return {
+        ...chapter,
+        uniqueStarts,
+        uniqueCompletes,
+        completionRate: this.round4(completionRate),
+        dropOffRate: this.round4(dropOffRate),
+      };
+    });
+
+    const minStarts = this.getFunnelMinStarts();
+    const ranked = items
+      .filter((it) => it.uniqueStarts >= minStarts)
+      .sort((a, b) => {
+        if (b.dropOffRate !== a.dropOffRate) return b.dropOffRate - a.dropOffRate;
+        return b.uniqueStarts - a.uniqueStarts;
+      });
+    const maxStarts = Math.max(0, ...items.map((it) => it.uniqueStarts));
+    const warnings: string[] = [];
+    if (ranked.length === 0 && maxStarts > 0 && maxStarts < minStarts) {
+      warnings.push(`Low sample size: max chapter starts is ${maxStarts} (< ${minStarts}).`);
+    }
+
+    const payload = {
+      contentMeta: {
+        courseId: canonicalCourseId,
+        courseTitle: String(course?.titre || ''),
+        communityId: courseCommunityId,
+        totalChapters: items.length,
+      },
+      items,
+      dropOff: {
+        worstStep: ranked.length > 0
+          ? {
+              stepId: ranked[0].stepId,
+              stepTitle: ranked[0].stepTitle,
+              dropOffRate: ranked[0].dropOffRate,
+              uniqueStarts: ranked[0].uniqueStarts,
+              uniqueCompletes: ranked[0].uniqueCompletes,
+            }
+          : null,
+      },
+      warnings,
+    };
+
+    this.setCache(key, payload, 10 * 60 * 1000);
+    return payload;
+  }
+
+  async getChallengeTasksFunnel(
+    creatorId: string,
+    challengeId: string,
+    from: Date,
+    to: Date,
+    communityId?: string,
+    communitySlug?: string,
+  ) {
+    const communityScope = await this.resolveCommunityScope(creatorId, communityId, communitySlug);
+    const key = this.cacheKey(
+      creatorId,
+      from.toISOString(),
+      to.toISOString(),
+      `challenge-tasks-funnel:${challengeId}:${communityScope.cacheKeyPart}`,
+    );
+    const cached = await this.getCache<any>(key);
+    if (cached) return cached;
+
+    const challengesCollection = this.dbConnection.db?.collection('challenges');
+    if (!challengesCollection) throw new NotFoundException('Challenges collection is unavailable');
+
+    const match: any[] = [{ id: challengeId }];
+    if (Types.ObjectId.isValid(challengeId)) match.push({ _id: new Types.ObjectId(challengeId) });
+    const challenge = await challengesCollection.findOne({ $or: match, creatorId: this.getCreatorObjectId(creatorId) });
+    if (!challenge) throw new NotFoundException('Challenge not found');
+
+    const challengeCommunityId = challenge?.communityId ? String(challenge.communityId) : undefined;
+    if (communityScope.hasFilter && challengeCommunityId) {
+      const ok = communityScope.communityIdStrings.includes(challengeCommunityId);
+      if (!ok) throw new ForbiddenException('Content not in requested community scope');
+    }
+
+    const trackingIds = Array.from(new Set([String(challenge?.id || ''), String(challenge?._id || '')].filter(Boolean)));
+    const canonicalChallengeId = String(challenge?.id || challengeId);
+    const tasks = Array.isArray(challenge.tasks) ? challenge.tasks : [];
+    const orderedTasks = tasks
+      .map((task: any) => ({
+        stepId: String(task?.id || task?._id || task?.day || ''),
+        stepTitle: String(task?.title || `Task ${task?.day || ''}` || 'Task'),
+        day: Number(task?.day || 0) || 0,
+      }))
+      .filter((task: any) => task.stepId);
+    orderedTasks.sort((a, b) => a.day - b.day);
+
+    const tracking = this.dbConnection.collection('trackingactions');
+    const taskIdExpr = { $ifNull: ['$metadata.taskId', ''] };
+    const pipeline: any[] = [
+      { $match: { timestamp: { $gte: from, $lte: to }, contentType: 'challenge', contentId: { $in: trackingIds } } },
+      { $project: { userId: 1, actionType: 1, taskId: '$metadata.taskId', taskIdNormalized: taskIdExpr } },
+      { $match: { taskIdNormalized: { $ne: '' } } },
+      {
+        $group: {
+          _id: { taskId: '$taskIdNormalized', userId: '$userId' },
+          didStart: { $max: { $cond: [{ $eq: ['$actionType', TrackingActionType.START] }, 1, 0] } },
+          didComplete: { $max: { $cond: [{ $eq: ['$actionType', TrackingActionType.COMPLETE] }, 1, 0] } },
+        },
+      },
+      {
+        $group: {
+          _id: '$_id.taskId',
+          uniqueStarts: { $sum: '$didStart' },
+          uniqueCompletes: { $sum: '$didComplete' },
+        },
+      },
+      { $project: { _id: 0, taskId: '$_id', uniqueStarts: 1, uniqueCompletes: 1 } },
+    ];
+
+    const rows = await tracking.aggregate(pipeline).toArray();
+    const byTask = new Map(rows.map((r: any) => [String(r.taskId), r]));
+
+    const items = orderedTasks.map((task) => {
+      const row = byTask.get(String(task.stepId)) || { uniqueStarts: 0, uniqueCompletes: 0 };
+      const uniqueStarts = Number(row.uniqueStarts || 0) || 0;
+      const uniqueCompletes = Number(row.uniqueCompletes || 0) || 0;
+      const completionRate = uniqueStarts > 0 ? uniqueCompletes / uniqueStarts : 0;
+      const dropOffRate = uniqueStarts > 0 ? 1 - completionRate : 0;
+      return {
+        ...task,
+        uniqueStarts,
+        uniqueCompletes,
+        completionRate: this.round4(completionRate),
+        dropOffRate: this.round4(dropOffRate),
+      };
+    });
+
+    const minStarts = this.getFunnelMinStarts();
+    const ranked = items
+      .filter((it) => it.uniqueStarts >= minStarts)
+      .sort((a, b) => {
+        if (b.dropOffRate !== a.dropOffRate) return b.dropOffRate - a.dropOffRate;
+        return b.uniqueStarts - a.uniqueStarts;
+      });
+    const maxStarts = Math.max(0, ...items.map((it) => it.uniqueStarts));
+    const warnings: string[] = [];
+    if (ranked.length === 0 && maxStarts > 0 && maxStarts < minStarts) {
+      warnings.push(`Low sample size: max task starts is ${maxStarts} (< ${minStarts}).`);
+    }
+
+    const payload = {
+      contentMeta: {
+        challengeId: canonicalChallengeId,
+        challengeTitle: String(challenge?.title || ''),
+        communityId: challengeCommunityId,
+        totalTasks: items.length,
+      },
+      items,
+      dropOff: {
+        worstStep: ranked.length > 0
+          ? {
+              stepId: ranked[0].stepId,
+              stepTitle: ranked[0].stepTitle,
+              dropOffRate: ranked[0].dropOffRate,
+              uniqueStarts: ranked[0].uniqueStarts,
+              uniqueCompletes: ranked[0].uniqueCompletes,
+            }
+          : null,
+      },
+      warnings,
+    };
+
+    this.setCache(key, payload, 10 * 60 * 1000);
+    return payload;
+  }
+
   async getCourseAnalytics(creatorId: string, courseId: string, from: Date, to: Date) {
     const key = this.cacheKey(creatorId, `${courseId}:${from.toISOString()}`, to.toISOString(), 'course');
     const cached = await this.getCache<any>(key);

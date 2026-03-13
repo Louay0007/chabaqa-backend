@@ -1,15 +1,19 @@
-import { BadRequestException, Controller, Get, Post, Query, UseGuards, Req } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Post, Query, UseGuards, Req } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AnalyticsService } from './analytics.service';
 import { PlanTier } from '../schema/plan.schema';
+import { CreatorInsightsService } from './creator-insights.service';
 
 @ApiTags('Creator Analytics')
 @Controller('analytics/creator')
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth('JWT-auth')
 export class AnalyticsController {
-  constructor(private readonly analyticsService: AnalyticsService) {}
+  constructor(
+    private readonly analyticsService: AnalyticsService,
+    private readonly creatorInsightsService: CreatorInsightsService,
+  ) {}
 
   private parseDateRange(from?: string, to?: string) {
     const toDate = to ? new Date(to) : new Date();
@@ -41,6 +45,25 @@ export class AnalyticsController {
     }
 
     return { communityId: normalizedId, communitySlug: normalizedSlug };
+  }
+
+  private normalizeContentType(value?: string): string {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (!normalized) {
+      throw new BadRequestException('contentType is required');
+    }
+    return normalized;
+  }
+
+  private normalizeContentId(value?: string): string {
+    const normalized = String(value || '').trim();
+    if (!normalized) {
+      throw new BadRequestException('contentId is required');
+    }
+    if (normalized.length > 256) {
+      throw new BadRequestException('Invalid "contentId" parameter');
+    }
+    return normalized;
   }
 
   @Get('overview')
@@ -106,6 +129,131 @@ export class AnalyticsController {
     const { fromDate, toDate } = this.parseDateRange(from, to);
     const filters = this.parseCommunityFilters(communityId, communitySlug);
     return this.analyticsService.getReferrers(creatorId, fromDate, toDate, filters.communityId, filters.communitySlug);
+  }
+
+  @Get('funnel')
+  @ApiOperation({ summary: 'Content funnel for a specific content item' })
+  @ApiQuery({ name: 'contentType', required: true, description: 'course|challenge|session|event|product|post|community' })
+  @ApiQuery({ name: 'contentId', required: true, description: 'Content identifier (id or Mongo _id)' })
+  @ApiQuery({ name: 'from', required: false, description: 'ISO date (inclusive)' })
+  @ApiQuery({ name: 'to', required: false, description: 'ISO date (inclusive)' })
+  @ApiQuery({ name: 'communityId', required: false })
+  @ApiQuery({ name: 'communitySlug', required: false })
+  async getFunnel(
+    @Req() req,
+    @Query('contentType') contentType?: string,
+    @Query('contentId') contentId?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('communityId') communityId?: string,
+    @Query('communitySlug') communitySlug?: string,
+  ) {
+    const user = req.user;
+    const creatorId = user.sub || user._id || user.userId;
+    const normalizedContentType = this.normalizeContentType(contentType);
+    const normalizedContentId = this.normalizeContentId(contentId);
+    const { fromDate, toDate } = this.parseDateRange(from, to);
+    const filters = this.parseCommunityFilters(communityId, communitySlug);
+    return this.analyticsService.getFunnel(
+      creatorId,
+      normalizedContentType,
+      normalizedContentId,
+      fromDate,
+      toDate,
+      filters.communityId,
+      filters.communitySlug,
+    );
+  }
+
+  @Get('course/:courseId/chapters/funnel')
+  @ApiOperation({ summary: 'Course chapter funnel (ordered) with drop-off detection' })
+  @ApiQuery({ name: 'from', required: false, description: 'ISO date (inclusive)' })
+  @ApiQuery({ name: 'to', required: false, description: 'ISO date (inclusive)' })
+  @ApiQuery({ name: 'communityId', required: false })
+  @ApiQuery({ name: 'communitySlug', required: false })
+  async getCourseChaptersFunnel(
+    @Req() req,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('communityId') communityId?: string,
+    @Query('communitySlug') communitySlug?: string,
+  ) {
+    const user = req.user;
+    const creatorId = user.sub || user._id || user.userId;
+    const courseId = String(req.params.courseId || '').trim();
+    if (!courseId) {
+      throw new BadRequestException('courseId is required');
+    }
+    const { fromDate, toDate } = this.parseDateRange(from, to);
+    const filters = this.parseCommunityFilters(communityId, communitySlug);
+    return this.analyticsService.getCourseChaptersFunnel(
+      creatorId,
+      courseId,
+      fromDate,
+      toDate,
+      filters.communityId,
+      filters.communitySlug,
+    );
+  }
+
+  @Get('challenge/:challengeId/tasks/funnel')
+  @ApiOperation({ summary: 'Challenge task funnel (ordered) with drop-off detection' })
+  @ApiQuery({ name: 'from', required: false, description: 'ISO date (inclusive)' })
+  @ApiQuery({ name: 'to', required: false, description: 'ISO date (inclusive)' })
+  @ApiQuery({ name: 'communityId', required: false })
+  @ApiQuery({ name: 'communitySlug', required: false })
+  async getChallengeTasksFunnel(
+    @Req() req,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('communityId') communityId?: string,
+    @Query('communitySlug') communitySlug?: string,
+  ) {
+    const user = req.user;
+    const creatorId = user.sub || user._id || user.userId;
+    const challengeId = String(req.params.challengeId || '').trim();
+    if (!challengeId) {
+      throw new BadRequestException('challengeId is required');
+    }
+    const { fromDate, toDate } = this.parseDateRange(from, to);
+    const filters = this.parseCommunityFilters(communityId, communitySlug);
+    return this.analyticsService.getChallengeTasksFunnel(
+      creatorId,
+      challengeId,
+      fromDate,
+      toDate,
+      filters.communityId,
+      filters.communitySlug,
+    );
+  }
+
+  @Post('insights')
+  @ApiOperation({ summary: 'Generate AI drop-off & conversion insights for content (cached + rate-limited)' })
+  async generateInsights(
+    @Req() req,
+    @Body() body: any,
+    @Query('communityId') communityId?: string,
+    @Query('communitySlug') communitySlug?: string,
+  ) {
+    const user = req.user;
+    const creatorId = user.sub || user._id || user.userId;
+
+    const normalizedContentType = this.normalizeContentType(body?.contentType);
+    const normalizedContentId = this.normalizeContentId(body?.contentId);
+    const { fromDate, toDate } = this.parseDateRange(body?.from, body?.to);
+    const focusStepId = body?.focusStepId ? String(body.focusStepId).trim() : undefined;
+    const filters = this.parseCommunityFilters(communityId, communitySlug);
+
+    return this.creatorInsightsService.generateInsights(
+      creatorId,
+      normalizedContentType,
+      normalizedContentId,
+      fromDate,
+      toDate,
+      filters.communityId,
+      filters.communitySlug,
+      focusStepId,
+    );
   }
 
   @Get('export')
