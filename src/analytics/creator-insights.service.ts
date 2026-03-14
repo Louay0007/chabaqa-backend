@@ -261,7 +261,7 @@ export class CreatorInsightsService {
   ): Promise<{ success: true; data: CreatorInsightsResponse; cached: boolean; model?: string }> {
     const contentType = normalizeContentType(contentTypeRaw);
 
-    const promptVersion = String(this.configService.get<string>('CREATOR_INSIGHTS_PROMPT_VERSION') || 'v1');
+    const promptVersion = String(this.configService.get<string>('CREATOR_INSIGHTS_PROMPT_VERSION') || 'v2');
     const key = this.cacheKey({
       creatorId,
       contentType,
@@ -333,9 +333,27 @@ export class CreatorInsightsService {
 
     const systemPrompt = [
       'You are a creator analytics assistant for Chabaqa.',
-      'You translate funnel and drop-off metrics into practical, specific fixes that a creator can apply.',
-      'You must not invent data. If sample size is low or tracking is missing, say so in warnings.',
-      'Return ONLY valid JSON matching the required schema. No markdown.',
+      'Your job: translate real funnel + step drop-off metrics into clear explanations of WHAT is happening, WHY it is happening (root-cause hypotheses), and WHAT to do next.',
+      '',
+      'Hard rules:',
+      '- Do NOT invent metrics, features, or content. Only use what is in the provided JSON and snippet.',
+      '- If sample size is low, the signal is noisy, or tracking might be missing/incorrect, add a warning and lower confidence.',
+      '- Be honest about uncertainty. Prefer multiple plausible causes over a single confident guess.',
+      '- Output must be ONLY a single valid JSON object. No markdown, no backticks, no extra text.',
+      '- Use the exact schema and include ALL fields (arrays can be empty, but must exist). Do not add extra keys.',
+      '',
+      'Quality bar (make it actionable):',
+      '- "summary" must be a concise but detailed explanation in 2–4 short paragraphs:',
+      '  1) What the metrics show (with key numbers/rates).',
+      '  2) Why users may be dropping (2–4 hypotheses, ranked by likelihood).',
+      '  3) What to do next (the highest-impact next steps).',
+      '- Each item in "topIssues":',
+      '  - metricEvidence MUST include concrete numbers (counts, rates, step names).',
+      '  - hypothesis MUST explain the causal chain: evidence → interpretation → likely root cause → how to verify.',
+      '  - confidence depends on sample size + clarity of signal + tracking completeness.',
+      '- Each item in "fixes": make it specific (exact edits or actions), explain why it helps, estimate lift direction (e.g. "+5–15% starts→completes"), and include realistic risk/tradeoffs.',
+      '- "rewriteSuggestions": write improved text only (do not claim it has been applied). Keep it short, clear, and creator-tone. Prefer simpler prerequisites and clearer CTAs.',
+      '- "experiments": include A/B variants, a single success metric, and a reasonable duration.',
       '',
       'Required JSON schema:',
       '{',
@@ -346,25 +364,36 @@ export class CreatorInsightsService {
       '  "experiments": [{ "name": string, "variantA": string, "variantB": string, "successMetric": string, "runForDays": number }],',
       '  "warnings": string[]',
       '}',
+      '',
+      'Step alignment rules:',
+      '- If step-level data exists, anchor insights to the focus step id (or worst drop-off step).',
+      '- If stepTitle is unknown, use the best available title from the data; otherwise use "Step <id>".',
+      '',
+      'Common root-cause checklist (use only if supported by evidence/snippet):',
+      '- Unclear prerequisites, mismatch between promise and content, too much cognitive load, too long/complex, weak intro/CTA, confusing structure, missing examples, friction in the UI, pricing/checkout friction (paid content), tracking gaps (missing VIEW/START/COMPLETE).',
     ].join('\n');
 
     const userPrompt = [
       `Content type: ${contentType}`,
       `Content id: ${contentId}`,
-      `Range: ${from.toISOString()} .. ${to.toISOString()}`,
-      resolvedFocusStepId ? `Focus step id: ${resolvedFocusStepId}` : 'Focus step id: auto',
+      `Range (UTC): ${from.toISOString()} .. ${to.toISOString()}`,
+      resolvedFocusStepId ? `Focus step id: ${resolvedFocusStepId}` : 'Focus step id: auto (use worst drop-off)',
       '',
-      'Funnel metrics JSON:',
+      'Your task:',
+      '1) Identify the biggest drop-off points (overall funnel + step-level where available).',
+      '2) Explain likely causes ("why") with a clear chain and how the creator can verify each hypothesis.',
+      '3) Propose high-impact fixes, and include at least one experiment + one rewrite suggestion focused on the weakest step.',
+      '',
+      'Funnel metrics JSON (source of truth):',
       JSON.stringify(funnel, null, 2),
       '',
-      stepFunnel ? 'Step funnel JSON:' : 'Step funnel JSON: none',
+      stepFunnel ? 'Step funnel JSON (source of truth):' : 'Step funnel JSON: none',
       stepFunnel ? JSON.stringify(stepFunnel, null, 2) : '',
       '',
       snippet ? `Focus content title: ${snippet.title}` : 'Focus content title: N/A',
-      snippet ? `Focus content snippet:\n${snippet.snippet}` : 'Focus content snippet: N/A',
+      snippet ? `Focus content snippet (use for rewrite suggestions only):\n${snippet.snippet}` : 'Focus content snippet: N/A',
       '',
-      'Now generate insights and rewrite suggestions for the focus step (or the worst drop-off if focus is not provided).',
-      'Be specific and actionable.',
+      'Output: one JSON object that matches the required schema exactly.',
     ].join('\n');
 
     let lastError: any = null;
