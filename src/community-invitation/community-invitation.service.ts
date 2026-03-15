@@ -204,20 +204,17 @@ export class CommunityInvitationService {
 
     const email = dto.email.toLowerCase().trim();
 
-    // Check duplicate
-    const existing = await this.invitationModel.findOne({
+    // Check if already an accepted member — hard stop
+    const acceptedInvite = await this.invitationModel.findOne({
       communityId: new Types.ObjectId(dto.communityId),
       email,
-      status: { $in: [InvitationStatus.PENDING, InvitationStatus.ACCEPTED] },
+      status: InvitationStatus.ACCEPTED,
     });
-
-    if (existing) {
-      throw new ConflictException(
-        `An active invitation already exists for ${email}`,
-      );
+    if (acceptedInvite) {
+      throw new ConflictException(`${email} has already joined this community`);
     }
 
-    // Check if already a member
+    // Check if already a member via user record
     if (await this.isAlreadyMember(email, community)) {
       throw new ConflictException(
         `${email} is already a member of this community`,
@@ -227,6 +224,36 @@ export class CommunityInvitationService {
     const creatorUser = await this.userModel.findById(creatorId);
     const creatorName = creatorUser?.name || 'A creator';
     const communityName = (community as any).name || (community as any).nom || 'a community';
+
+    // If a pending / expired / revoked invitation already exists — upsert it
+    const existingPending = await this.invitationModel.findOne({
+      communityId: new Types.ObjectId(dto.communityId),
+      email,
+      status: { $in: [InvitationStatus.PENDING, InvitationStatus.EXPIRED, InvitationStatus.REVOKED] },
+    });
+
+    if (existingPending) {
+      // Reactivate: refresh token, expiry, optional new message / name
+      existingPending.token = uuidv4();
+      existingPending.status = InvitationStatus.PENDING;
+      existingPending.expiresAt = this.getExpiresAt();
+      existingPending.resendCount += 1;
+      existingPending.lastResentAt = new Date();
+      if (dto.name?.trim()) existingPending.name = dto.name.trim();
+      if (dto.personalMessage?.trim()) existingPending.personalMessage = dto.personalMessage.trim();
+      await existingPending.save();
+
+      await this.sendInvitationEmailSafe(
+        email,
+        existingPending.name,
+        communityName,
+        creatorName,
+        existingPending.personalMessage,
+        this.buildAcceptUrl(existingPending.token),
+      );
+
+      return existingPending;
+    }
 
     const token = uuidv4();
     const now = new Date();
@@ -624,6 +651,7 @@ export class CommunityInvitationService {
     acceptUrl: string,
   ): Promise<void> {
     try {
+      this.logger.log(`📧 Sending invitation email to ${to} (community: ${communityName})`);
       await this.emailService.sendCommunityInvitationEmail({
         to,
         name,
@@ -632,9 +660,11 @@ export class CommunityInvitationService {
         personalMessage,
         acceptUrl,
       });
+      this.logger.log(`✅ Invitation email sent to ${to}`);
     } catch (error: any) {
       this.logger.error(
-        `Failed to send invitation email to ${to}: ${error.message}`,
+        `❌ Failed to send invitation email to ${to}: ${error?.message || error}`,
+        error?.stack,
       );
     }
   }
