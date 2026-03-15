@@ -673,6 +673,93 @@ export class EmailService {
   }
 
   /**
+   * Send a community invitation email to an external contact.
+   */
+  async sendCommunityInvitationEmail(data: {
+    to: string;
+    name: string;
+    communityName: string;
+    creatorName: string;
+    personalMessage: string;
+    acceptUrl: string;
+  }): Promise<void> {
+    const safeName = this.escapeHtml(data.name || 'there');
+    const safeCommunityName = this.escapeHtml(data.communityName);
+    const safeCreatorName = this.escapeHtml(data.creatorName);
+    const safeAcceptUrl = data.acceptUrl;
+
+    let personalMessageBlock = '';
+    if (data.personalMessage && data.personalMessage.trim()) {
+      const safeMessage = this.escapeHtml(data.personalMessage);
+      personalMessageBlock = `
+        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:20px 0;">
+          <tr>
+            <td style="padding:16px 20px;background:#f8f7ff;border-left:4px solid #8e78fb;border-radius:0 8px 8px 0;font-size:14px;color:#444;line-height:1.6;font-style:italic;">
+              &ldquo;${safeMessage}&rdquo;
+            </td>
+          </tr>
+        </table>
+      `;
+    }
+
+    const htmlBody = `
+      <p style="font-size:15px;color:#444;line-height:1.7;margin:0 0 20px 0;">
+        Hey <strong style="color:#8e78fb;font-weight:700;">${safeName}</strong> 👋
+      </p>
+      <p style="font-size:15px;color:#444;line-height:1.7;margin:0 0 12px 0;">
+        <strong>${safeCreatorName}</strong> has invited you to join
+        <strong style="color:#8e78fb;">${safeCommunityName}</strong> on Chabaqa &mdash;
+        a platform where creators build thriving learning communities.
+      </p>
+      ${personalMessageBlock}
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:28px 0;">
+        <tr>
+          <td align="center">
+            <a href="${safeAcceptUrl}"
+               style="display:inline-block;background:linear-gradient(135deg,#8e78fb 0%,#6a9ef5 100%);color:#ffffff;text-decoration:none;padding:14px 40px;border-radius:12px;font-size:16px;font-weight:700;font-family:'Poppins',Arial,sans-serif;box-shadow:0 4px 16px rgba(142,120,251,0.3);">
+              Accept Invitation
+            </a>
+          </td>
+        </tr>
+      </table>
+      <p style="font-size:13px;color:#888;line-height:1.6;margin:0 0 8px 0;">
+        If the button doesn&#39;t work, copy and paste this link into your browser:
+      </p>
+      <p style="font-size:12px;color:#8e78fb;word-break:break-all;margin:0 0 20px 0;">
+        <a href="${safeAcceptUrl}" style="color:#8e78fb;text-decoration:underline;">${safeAcceptUrl}</a>
+      </p>
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 16px 0;">
+        <tr><td style="height:1px;background:#eee;font-size:0;line-height:0;">&nbsp;</td></tr>
+      </table>
+      <p style="font-size:12px;color:#aaa;line-height:1.6;margin:0;">
+        You received this email because <strong>${safeCreatorName}</strong> invited you.
+        If you believe this was sent in error, you can safely ignore it.
+      </p>
+    `;
+
+    const mailOptions = {
+      from: this.getFromHeader(),
+      replyTo: this.getReplyToAddress(),
+      to: data.to,
+      subject: `${data.creatorName} invited you to join ${data.communityName} on Chabaqa`,
+      text: `${data.creatorName} invited you to join ${data.communityName} on Chabaqa. Accept here: ${data.acceptUrl}`,
+      html: this.buildBrandedGenericEmailHtml(
+        `You're invited to join ${data.communityName}`,
+        htmlBody,
+      ),
+    };
+
+    try {
+      this.logger.log(`📧 Sending community invitation email to: ${data.to}`);
+      await this.sendWithAutoFallback(mailOptions, `sending invitation email to ${data.to}`);
+      this.logger.log('✅ Community invitation email sent successfully');
+    } catch (error: any) {
+      this.logger.error('❌ Failed to send community invitation email:', error.message);
+      throw new Error(`Failed to send community invitation email: ${error.message}`);
+    }
+  }
+
+  /**
    * Envoie un email générique (pour les notifications)
    */
   async sendGenericEmail(data: { to: string; subject: string; text: string; html?: string }): Promise<void> {
