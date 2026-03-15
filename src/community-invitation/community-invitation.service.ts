@@ -88,7 +88,8 @@ export class CommunityInvitationService {
     }
 
     const creatorId = community.createur?.toString?.() ?? '';
-    if (creatorId !== userId) {
+    const userIdStr = userId?.toString?.() ?? '';
+    if (creatorId !== userIdStr) {
       throw new ForbiddenException(
         'Only the community creator can manage invitations',
       );
@@ -552,14 +553,15 @@ export class CommunityInvitationService {
     }
 
     // Check if already a member
+    const userIdStr = userId?.toString?.() ?? '';
     const memberIds = (community.members as any[]).map((m: any) =>
       m?.toString?.() ?? m,
     );
-    const isAlreadyMember = memberIds.includes(userId);
+    const isAlreadyMember = memberIds.includes(userIdStr);
 
     if (!isAlreadyMember) {
       // Add user to community members
-      (community.members as any[]).push(new Types.ObjectId(userId));
+      (community.members as any[]).push(new Types.ObjectId(userIdStr));
       (community as any).membersCount =
         ((community as any).membersCount || 0) + 1;
       await community.save();
