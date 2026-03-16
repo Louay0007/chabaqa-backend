@@ -826,6 +826,18 @@ export class PostService {
     post.updateComment(commentId, content);
     await post.save();
 
+    const community = await this.communityModel.findById(post.communityId);
+    if (community) {
+      await this.notifyMentionedUsers({
+        actorUserId: userId,
+        postId: post.id,
+        commentId,
+        communityId: post.communityId,
+        content,
+        community,
+      });
+    }
+
     // Récupérer les informations de l'utilisateur
     const user = await this.userModel
       .findById(userId)
