@@ -6,6 +6,7 @@ import {
   HttpCode,
   HttpStatus,
   Param,
+  Patch,
   Post,
   Put,
   Query,
@@ -17,12 +18,18 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import {
   CampaignStatsDto,
   CreateContentReminderDto,
+  CreateCourseProgressCampaignDto,
   CreateEmailCampaignDto,
   CreateInactiveUserCampaignDto,
+  CreateInactivityAutomationDto,
+  CreateWelcomeTemplateDto,
   EmailCampaignQueryDto,
   InactiveUserQueryDto,
   InactiveUserStatsDto,
+  PreviewAudienceDto,
+  PreviewAudienceResponseDto,
   UpdateEmailCampaignDto,
+  UpdateWelcomeTemplateDto,
 } from '../dto-email-campaign/email-campaign.dto';
 import { EmailCampaignDocument, InactivityPeriod } from '../schema/email-campaign.schema';
 import { UserLoginActivityDocument } from '../schema/user-login-activity.schema';
@@ -214,5 +221,150 @@ export class EmailCampaignController {
   @ApiOperation({ summary: 'Delete campaign' })
   deleteCampaign(@Request() req, @Param('campaignId') campaignId: string): Promise<void> {
     return this.emailCampaignService.deleteCampaign(campaignId, req.user._id);
+  }
+
+  // ─── Course Progress Campaigns ──────────────────────────────────────────────
+
+  @Post('course-progress')
+  @ApiOperation({
+    summary: 'Create course-progress reminder campaign',
+    description:
+      'Target enrolled users whose completion % is below a threshold after N enrollment days. ' +
+      'Accepts {{userName}}, {{progressPct}}, {{enrolledDays}}, {{communityName}} template variables.',
+  })
+  createCourseProgressCampaign(
+    @Request() req,
+    @Body() dto: CreateCourseProgressCampaignDto,
+  ): Promise<EmailCampaignDocument> {
+    return this.emailCampaignService.createCourseProgressCampaign(req.user._id, dto);
+  }
+
+  // ─── Audience Preview ───────────────────────────────────────────────────────
+
+  @Post('preview-audience')
+  @ApiOperation({
+    summary: 'Preview the audience for a filter before sending',
+    description:
+      'Returns the total user count + a sample of up to 10 users that match the given filter (inactivity or course_progress). Use this before creating a campaign to validate the target audience.',
+  })
+  @ApiResponse({ status: 200, type: PreviewAudienceResponseDto })
+  previewAudience(
+    @Request() req,
+    @Body() dto: PreviewAudienceDto,
+  ): Promise<PreviewAudienceResponseDto> {
+    return this.emailCampaignService.previewCampaignAudience(req.user._id, dto);
+  }
+
+  // ─── Welcome / Automation Templates ────────────────────────────────────────
+
+  @Post('welcome-template/:communityId')
+  @ApiOperation({
+    summary: 'Create automated welcome email template',
+    description:
+      'Creates (or replaces) the automated welcome email that is sent to every new member who joins the community. ' +
+      'Supported template variables: {{userName}}, {{communityName}}.',
+  })
+  @ApiParam({ name: 'communityId' })
+  createWelcomeTemplate(
+    @Request() req,
+    @Param('communityId') communityId: string,
+    @Body() dto: CreateWelcomeTemplateDto,
+  ): Promise<EmailCampaignDocument> {
+    return this.emailCampaignService.createWelcomeTemplate(req.user._id, communityId, dto);
+  }
+
+  @Get('welcome-template/:communityId')
+  @ApiOperation({ summary: 'Get active welcome email template for a community' })
+  @ApiParam({ name: 'communityId' })
+  getWelcomeTemplate(
+    @Request() req,
+    @Param('communityId') communityId: string,
+  ): Promise<EmailCampaignDocument | null> {
+    return this.emailCampaignService.getWelcomeTemplate(req.user._id, communityId);
+  }
+
+  @Put('welcome-template/:communityId')
+  @ApiOperation({ summary: 'Update the welcome email template content' })
+  @ApiParam({ name: 'communityId' })
+  updateWelcomeTemplate(
+    @Request() req,
+    @Param('communityId') communityId: string,
+    @Body() dto: UpdateWelcomeTemplateDto,
+  ): Promise<EmailCampaignDocument> {
+    return this.emailCampaignService.updateWelcomeTemplate(req.user._id, communityId, dto);
+  }
+
+  @Delete('welcome-template/:communityId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Delete the welcome email template' })
+  @ApiParam({ name: 'communityId' })
+  deleteWelcomeTemplate(
+    @Request() req,
+    @Param('communityId') communityId: string,
+  ): Promise<void> {
+    return this.emailCampaignService.deleteWelcomeTemplate(req.user._id, communityId);
+  }
+
+  @Patch('welcome-template/:communityId/toggle')
+  @ApiOperation({ summary: 'Enable or disable the welcome email automation' })
+  @ApiParam({ name: 'communityId' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['active'],
+      properties: { active: { type: 'boolean', example: true } },
+    },
+  })
+  toggleWelcomeTemplate(
+    @Request() req,
+    @Param('communityId') communityId: string,
+    @Body('active') active: boolean,
+  ): Promise<EmailCampaignDocument> {
+    return this.emailCampaignService.toggleWelcomeTemplate(req.user._id, communityId, active);
+  }
+
+  // ─── Continuous Inactivity Automations ─────────────────────────────────────
+
+  @Post('inactivity-automation')
+  @ApiOperation({
+    summary: 'Create a continuous inactivity automation',
+    description:
+      'Set and forget: the system will automatically send this email to any community member who reaches `minInactiveDays` days of inactivity. ' +
+      'The check runs daily and respects a 30-day cooldown per user. ' +
+      'Variables: {{userName}}, {{communityName}}, {{daysThreshold}}.',
+  })
+  createInactivityAutomation(
+    @Request() req,
+    @Body() dto: CreateInactivityAutomationDto,
+  ): Promise<EmailCampaignDocument> {
+    return this.emailCampaignService.createInactivityAutomation(req.user._id, dto);
+  }
+
+  @Get('inactivity-automation/:communityId')
+  @ApiOperation({ summary: 'List all inactivity automations for a community' })
+  @ApiParam({ name: 'communityId' })
+  getInactivityAutomations(
+    @Request() req,
+    @Param('communityId') communityId: string,
+  ): Promise<EmailCampaignDocument[]> {
+    return this.emailCampaignService.getInactivityAutomations(req.user._id, communityId);
+  }
+
+  @Patch('inactivity-automation/:automationId/toggle')
+  @ApiOperation({ summary: 'Enable or disable an inactivity automation' })
+  @ApiParam({ name: 'automationId' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['active'],
+      properties: { active: { type: 'boolean', example: true } },
+    },
+  })
+  toggleInactivityAutomation(
+    @Request() req,
+    @Param('automationId') automationId: string,
+    @Body('active') active: boolean,
+  ): Promise<EmailCampaignDocument> {
+    return this.emailCampaignService.toggleInactivityAutomation(automationId, req.user._id, active);
   }
 }

@@ -12,6 +12,7 @@ import { OrderSchema } from '../schema/order.schema';
 import { TrackingModule } from '../common/modules/tracking.module';
 import { NotificationModule } from '../notification/notification.module';
 import { AuthModule } from '../auth/auth.module';
+import { EmailCampaignModule } from '../email-campaign/email-campaign.module';
 
 @Module({
   imports: [
@@ -26,7 +27,8 @@ import { AuthModule } from '../auth/auth.module';
     PromoModule,
     TrackingModule,
     NotificationModule,
-    AuthModule
+    AuthModule,
+    EmailCampaignModule,
   ],
   controllers: [CommunityAffCreaJoinController],
   providers: [CommunityAffCreaJoinService],

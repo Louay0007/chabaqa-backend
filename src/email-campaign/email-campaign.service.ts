@@ -11,16 +11,22 @@ import { Model, Types } from 'mongoose';
 import {
   CampaignStatsDto,
   CreateContentReminderDto,
+  CreateCourseProgressCampaignDto,
   CreateEmailCampaignDto,
   CreateInactiveUserCampaignDto,
+  CreateWelcomeTemplateDto,
   EmailCampaignQueryDto,
   InactiveUserQueryDto,
   InactiveUserStatsDto,
+  PreviewAudienceDto,
+  PreviewAudienceResponseDto,
   UpdateEmailCampaignDto,
+  UpdateWelcomeTemplateDto,
 } from '../dto-email-campaign/email-campaign.dto';
 import { EmailService } from '../common/services/email.service';
 import { Community, CommunityDocument } from '../schema/community.schema';
 import {
+  AutomationEventTrigger,
   EmailCampaign,
   EmailCampaignDocument,
   EmailCampaignStatus,
@@ -66,6 +72,10 @@ export class EmailCampaignService {
     private readonly userModel: Model<UserDocument>,
     @InjectModel(Community.name)
     private readonly communityModel: Model<CommunityDocument>,
+    @InjectModel('CourseEnrollment')
+    private readonly courseEnrollmentModel: Model<any>,
+    @InjectModel('UserLoginActivity')
+    private readonly userLoginActivityModel: Model<any>,
     private readonly emailService: EmailService,
     private readonly userLoginActivityService: UserLoginActivityService,
     private readonly emailCampaignQueueService: EmailCampaignQueueService,
@@ -202,6 +212,567 @@ export class EmailCampaignService {
     );
 
     return { campaignId: savedCampaign._id.toString(), queued: true };
+  }
+
+  // ─── Course Progress Campaign ───────────────────────────────────────────────
+
+  async createCourseProgressCampaign(
+    creatorId: string,
+    dto: CreateCourseProgressCampaignDto,
+  ): Promise<EmailCampaignDocument> {
+    const community = await this.verifyCommunityAccess(creatorId, dto.communityId);
+    if (!Types.ObjectId.isValid(dto.targetCourseId)) {
+      throw new BadRequestException('Invalid targetCourseId');
+    }
+
+    const recipients = await this.resolveCourseProgressAudience(
+      dto.communityId,
+      dto.targetCourseId,
+      dto.targetMaxProgressPct,
+      dto.targetMinEnrolledDays,
+      dto.maxRecipients || 5000,
+    );
+
+    const scheduledAt = this.normalizeScheduledAt(dto.scheduledAt);
+    const status = this.resolveCampaignStatus(scheduledAt);
+
+    const campaign = new this.emailCampaignModel({
+      title: dto.title,
+      subject: dto.subject,
+      content: dto.content,
+      communityId: new Types.ObjectId(dto.communityId),
+      creatorId: new Types.ObjectId(creatorId),
+      recipients,
+      totalRecipients: recipients.length,
+      isCourseProgressCampaign: true,
+      targetCourseId: new Types.ObjectId(dto.targetCourseId),
+      targetMaxProgressPct: dto.targetMaxProgressPct,
+      targetMinEnrolledDays: dto.targetMinEnrolledDays,
+      type: EmailCampaignType.COURSE_PROGRESS_REMINDER,
+      scheduledAt,
+      status,
+      isHtml: dto.isHtml || false,
+      trackOpens: dto.trackOpens !== false,
+      trackClicks: dto.trackClicks !== false,
+      metadata: {
+        communityName: community.name,
+        courseProgressReminder: true,
+        targetCourseId: dto.targetCourseId,
+        targetMaxProgressPct: dto.targetMaxProgressPct,
+        targetMinEnrolledDays: dto.targetMinEnrolledDays,
+      },
+    });
+
+    const savedCampaign = await campaign.save();
+    await this.enqueueIfScheduled(savedCampaign, creatorId, 'scheduled');
+
+    this.logger.log(
+      `Created course progress campaign ${savedCampaign._id.toString()} — ${recipients.length} recipients (progress < ${dto.targetMaxProgressPct}%, enrolled >= ${dto.targetMinEnrolledDays}d)`,
+    );
+    return savedCampaign;
+  }
+
+  // ─── Audience Preview ───────────────────────────────────────────────────────
+
+  async previewCampaignAudience(creatorId: string, dto: PreviewAudienceDto): Promise<PreviewAudienceResponseDto> {
+    await this.verifyCommunityAccess(creatorId, dto.communityId);
+
+    if (dto.filterType === 'inactivity') {
+      if (!dto.inactiveFilter) {
+        throw new BadRequestException('inactiveFilter is required for filterType=inactivity');
+      }
+      const cutoff = new Date(Date.now() - dto.inactiveFilter.minInactiveDays * 24 * 60 * 60 * 1000);
+      const activities = await this.userLoginActivityModel
+        .find({
+          communityId: new Types.ObjectId(dto.communityId),
+          lastLoginAt: { $lt: cutoff },
+        })
+        .populate('userId', 'email name')
+        .limit(1000)
+        .lean()
+        .exec();
+
+      const sample = activities.slice(0, 10).map((a: any) => ({
+        userId: String(a.userId?._id || a.userId),
+        email: a.userId?.email || '',
+        name: a.userId?.name || '',
+      }));
+
+      return { total: activities.length, sample, filterType: 'inactivity' };
+    }
+
+    if (dto.filterType === 'course_progress') {
+      if (!dto.courseProgressFilter) {
+        throw new BadRequestException('courseProgressFilter is required for filterType=course_progress');
+      }
+      const { courseId, maxProgressPct, minEnrolledDays } = dto.courseProgressFilter;
+      if (!Types.ObjectId.isValid(courseId)) {
+        throw new BadRequestException('Invalid courseId');
+      }
+      const recipients = await this.resolveCourseProgressAudience(
+        dto.communityId,
+        courseId,
+        maxProgressPct,
+        minEnrolledDays,
+        1000,
+      );
+
+      const sample = recipients.slice(0, 10).map((r) => ({
+        userId: String(r.userId),
+        email: r.email,
+        name: r.name,
+      }));
+
+      return { total: recipients.length, sample, filterType: 'course_progress' };
+    }
+
+    throw new BadRequestException('Unsupported filterType');
+  }
+
+  private async resolveCourseProgressAudience(
+    communityId: string,
+    courseId: string,
+    maxProgressPct: number,
+    minEnrolledDays: number,
+    limit: number,
+  ): Promise<EmailRecipient[]> {
+    const enrolledBefore = new Date(Date.now() - minEnrolledDays * 24 * 60 * 60 * 1000);
+
+    // Fetch enrollments for this course created before the threshold
+    const enrollments = await this.courseEnrollmentModel
+      .find({
+        courseId: new Types.ObjectId(courseId),
+        isActive: true,
+        createdAt: { $lte: enrolledBefore },
+      })
+      .populate('userId', '_id email name')
+      .limit(limit * 2) // over-fetch before filtering
+      .lean()
+      .exec();
+
+    // Get community member IDs for scoping
+    const community = await this.communityModel
+      .findById(communityId)
+      .select('members')
+      .lean()
+      .exec();
+
+    const memberIds = new Set((community?.members || []).map((m: any) => String(m)));
+
+    const qualifying: EmailRecipient[] = [];
+
+    for (const enrollment of enrollments) {
+      const user = enrollment.userId as any;
+      if (!user || !memberIds.has(String(user._id))) continue;
+
+      const progressEntries: Array<{ isCompleted: boolean }> = enrollment.progression || [];
+      const totalChapters = progressEntries.length;
+      const completedChapters = progressEntries.filter((p) => p.isCompleted).length;
+      const progressPct = totalChapters > 0 ? (completedChapters / totalChapters) * 100 : 0;
+
+      if (progressPct < maxProgressPct) {
+        qualifying.push({
+          userId: user._id,
+          email: user.email,
+          name: user.name || user.email,
+          status: 'pending',
+          opened: false,
+          clickCount: 0,
+        } as EmailRecipient);
+      }
+
+      if (qualifying.length >= limit) break;
+    }
+
+    return qualifying;
+  }
+
+  // ─── Welcome Automation Template ────────────────────────────────────────────
+
+  async createWelcomeTemplate(
+    creatorId: string,
+    communityId: string,
+    dto: CreateWelcomeTemplateDto,
+  ): Promise<EmailCampaignDocument> {
+    const community = await this.verifyCommunityAccess(creatorId, communityId);
+
+    // Deactivate any existing welcome template for this community
+    await this.emailCampaignModel
+      .updateMany(
+        {
+          communityId: new Types.ObjectId(communityId),
+          isAutomationTemplate: true,
+          eventTrigger: AutomationEventTrigger.COMMUNITY_JOIN,
+        },
+        { $set: { automationActive: false } },
+      )
+      .exec();
+
+    const template = new this.emailCampaignModel({
+      title: `Welcome Email — ${community.name}`,
+      subject: dto.subject,
+      content: dto.content,
+      communityId: new Types.ObjectId(communityId),
+      creatorId: new Types.ObjectId(creatorId),
+      type: EmailCampaignType.WELCOME,
+      status: EmailCampaignStatus.SENT, // templates are always "active", not in send queue
+      isHtml: dto.isHtml ?? false,
+      isAutomationTemplate: true,
+      eventTrigger: AutomationEventTrigger.COMMUNITY_JOIN,
+      automationActive: dto.automationActive ?? true,
+      recipients: [],
+      totalRecipients: 0,
+      trackOpens: true,
+      trackClicks: true,
+      metadata: { communityName: community.name, automationTemplateType: 'WELCOME' },
+    });
+
+    const saved = await template.save();
+    this.logger.log(`Created welcome template ${saved._id.toString()} for community ${communityId}`);
+    return saved;
+  }
+
+  async getWelcomeTemplate(
+    creatorId: string,
+    communityId: string,
+  ): Promise<EmailCampaignDocument | null> {
+    await this.verifyCommunityAccess(creatorId, communityId);
+    return this.emailCampaignModel
+      .findOne({
+        communityId: new Types.ObjectId(communityId),
+        isAutomationTemplate: true,
+        eventTrigger: AutomationEventTrigger.COMMUNITY_JOIN,
+        automationActive: true,
+      })
+      .exec();
+  }
+
+  async updateWelcomeTemplate(
+    creatorId: string,
+    communityId: string,
+    dto: UpdateWelcomeTemplateDto,
+  ): Promise<EmailCampaignDocument> {
+    await this.verifyCommunityAccess(creatorId, communityId);
+
+    const template = await this.emailCampaignModel
+      .findOne({
+        communityId: new Types.ObjectId(communityId),
+        isAutomationTemplate: true,
+        eventTrigger: AutomationEventTrigger.COMMUNITY_JOIN,
+      })
+      .exec();
+
+    if (!template) {
+      throw new NotFoundException('Welcome template not found. Create one first.');
+    }
+
+    if (dto.subject !== undefined) template.subject = dto.subject;
+    if (dto.content !== undefined) template.content = dto.content;
+    if (dto.isHtml !== undefined) template.isHtml = dto.isHtml;
+
+    return template.save();
+  }
+
+  async deleteWelcomeTemplate(creatorId: string, communityId: string): Promise<void> {
+    await this.verifyCommunityAccess(creatorId, communityId);
+    const result = await this.emailCampaignModel
+      .deleteOne({
+        communityId: new Types.ObjectId(communityId),
+        isAutomationTemplate: true,
+        eventTrigger: AutomationEventTrigger.COMMUNITY_JOIN,
+      })
+      .exec();
+
+    if (result.deletedCount === 0) {
+      throw new NotFoundException('Welcome template not found');
+    }
+  }
+
+  async toggleWelcomeTemplate(creatorId: string, communityId: string, active: boolean): Promise<EmailCampaignDocument> {
+    await this.verifyCommunityAccess(creatorId, communityId);
+
+    const template = await this.emailCampaignModel
+      .findOne({
+        communityId: new Types.ObjectId(communityId),
+        isAutomationTemplate: true,
+        eventTrigger: AutomationEventTrigger.COMMUNITY_JOIN,
+      })
+      .exec();
+
+    if (!template) {
+      throw new NotFoundException('Welcome template not found. Create one first.');
+    }
+
+    template.automationActive = active;
+    return template.save();
+  }
+
+  /**
+   * Called by the community-join service whenever a user successfully joins a community.
+   * Finds the community's active welcome template and sends it immediately.
+   */
+  async sendWelcomeEmailToNewMember(userId: string, communityId: string): Promise<void> {    try {
+      const template = await this.emailCampaignModel
+        .findOne({
+          communityId: new Types.ObjectId(communityId),
+          isAutomationTemplate: true,
+          eventTrigger: AutomationEventTrigger.COMMUNITY_JOIN,
+          automationActive: true,
+        })
+        .lean()
+        .exec();
+
+      if (!template) return; // no welcome email configured
+
+      const user = await this.userModel.findById(userId).select('email name').lean().exec();
+      if (!user?.email) return;
+
+      const community = await this.communityModel.findById(communityId).select('name').lean().exec();
+      const communityName = community?.name || '';
+
+      const variables = this.buildBaseVariables({
+        recipientName: user.name || user.email,
+        communityName,
+        targetDaysThreshold: undefined,
+        targetInactivityPeriod: undefined,
+        contentType: undefined,
+      });
+
+      const renderedSubject = renderTemplate(template.subject, variables);
+      const renderedContent = renderTemplate(template.content, variables);
+
+      await this.emailService.sendGenericEmail({
+        to: user.email,
+        subject: renderedSubject,
+        text: template.isHtml ? '' : renderedContent,
+        html: template.isHtml ? renderedContent : undefined,
+      });
+
+      // Track this delivery by adding the recipient to the template document
+      await this.emailCampaignModel
+        .updateOne(
+          { _id: template._id },
+          {
+            $push: {
+              recipients: {
+                userId: new Types.ObjectId(userId),
+                email: user.email,
+                name: user.name || user.email,
+                status: 'sent',
+                sentAt: new Date(),
+                opened: false,
+                clickCount: 0,
+              },
+            },
+            $inc: { sentCount: 1, totalRecipients: 1 },
+          },
+        )
+        .exec();
+
+      this.logger.log(`Welcome email sent to ${user.email} for community ${communityId}`);
+    } catch (err: any) {
+      // Never throw — welcome email failure must not break the join flow
+      this.logger.error(`Failed to send welcome email to user ${userId}: ${err?.message || err}`);
+    }
+  }
+
+  // ─── Daily Inactivity Automation ────────────────────────────────────────────
+
+  /**
+   * Creates a continuous inactivity automation — a "set-and-forget" campaign that
+   * automatically sends the provided email to any member who has been inactive for
+   * exactly `minInactiveDays` days (checked daily at 08:00 server time).
+   * The system prevents re-sending to the same user within 30 days.
+   */
+  async createInactivityAutomation(
+    creatorId: string,
+    dto: {
+      communityId: string;
+      title: string;
+      subject: string;
+      content: string;
+      minInactiveDays: number;
+      isHtml?: boolean;
+    },
+  ): Promise<EmailCampaignDocument> {
+    const community = await this.verifyCommunityAccess(creatorId, dto.communityId);
+
+    if (dto.minInactiveDays < 1) {
+      throw new BadRequestException('minInactiveDays must be at least 1');
+    }
+
+    // Deactivate existing automation for the same threshold in this community
+    await this.emailCampaignModel
+      .updateMany(
+        {
+          communityId: new Types.ObjectId(dto.communityId),
+          isInactiveUserCampaign: true,
+          'metadata.automationSource': 'daily_inactivity',
+          'metadata.minInactiveDays': dto.minInactiveDays,
+        },
+        { $set: { 'metadata.automationActive': false } },
+      )
+      .exec();
+
+    const automation = new this.emailCampaignModel({
+      title: dto.title,
+      subject: dto.subject,
+      content: dto.content,
+      communityId: new Types.ObjectId(dto.communityId),
+      creatorId: new Types.ObjectId(creatorId),
+      type: EmailCampaignType.INACTIVE_USER_REACTIVATION,
+      status: EmailCampaignStatus.DRAFT, // never enters the send queue — cron handles it
+      isHtml: dto.isHtml ?? false,
+      isInactiveUserCampaign: true,
+      targetDaysThreshold: dto.minInactiveDays,
+      recipients: [],
+      totalRecipients: 0,
+      sentCount: 0,
+      trackOpens: true,
+      trackClicks: true,
+      metadata: {
+        communityName: community.name,
+        automationSource: 'daily_inactivity',
+        automationActive: true,
+        minInactiveDays: dto.minInactiveDays,
+      },
+    });
+
+    const saved = await automation.save();
+    this.logger.log(
+      `Created inactivity automation ${saved._id.toString()} for community ${dto.communityId} — triggers at ${dto.minInactiveDays}d inactive`,
+    );
+    return saved;
+  }
+
+  async toggleInactivityAutomation(automationId: string, creatorId: string, active: boolean): Promise<EmailCampaignDocument> {
+    const automation = await this.emailCampaignModel.findById(automationId).exec();
+    if (!automation) throw new NotFoundException('Inactivity automation not found');
+    if (!automation.creatorId.equals(creatorId)) throw new ForbiddenException('Not your automation');
+    if (automation.metadata?.automationSource !== 'daily_inactivity') {
+      throw new BadRequestException('Not an inactivity automation');
+    }
+    automation.metadata = { ...automation.metadata, automationActive: active };
+    return automation.save();
+  }
+
+  async getInactivityAutomations(creatorId: string, communityId: string): Promise<EmailCampaignDocument[]> {
+    await this.verifyCommunityAccess(creatorId, communityId);
+    return this.emailCampaignModel
+      .find({
+        communityId: new Types.ObjectId(communityId),
+        isInactiveUserCampaign: true,
+        'metadata.automationSource': 'daily_inactivity',
+      })
+      .sort({ createdAt: -1 })
+      .exec();
+  }
+
+  /**
+   * Called once per day by the cron processor.
+   * Finds all communities where the creator has stored an automated inactivity
+   * campaign template (identified by metadata.automationSource === 'daily_inactivity'),
+   * resolves newly-qualifying inactive users that have NOT already been sent this
+   * email in the last 30 days, and sends them the email immediately.
+   */
+  async runDailyInactivityAutomations(): Promise<void> {    // Find all automation-enabled inactivity campaigns across all communities
+    const automations = await this.emailCampaignModel
+      .find({
+        isInactiveUserCampaign: true,
+        'metadata.automationSource': 'daily_inactivity',
+        'metadata.automationActive': true,
+      })
+      .lean()
+      .exec();
+
+    this.logger.log(`Found ${automations.length} daily inactivity automation(s) to process`);
+
+    for (const automation of automations) {
+      try {
+        const minInactiveDays = automation.metadata?.minInactiveDays as number;
+        if (!minInactiveDays || minInactiveDays < 1) continue;
+
+        const cutoff = new Date(Date.now() - minInactiveDays * 24 * 60 * 60 * 1000);
+        const recentEmailCutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+        const communityId = automation.communityId;
+
+        // Get inactive users that crossed the threshold today (within a 24-hour window)
+        const yesterdayCutoff = new Date(cutoff.getTime() - 24 * 60 * 60 * 1000);
+
+        const activities = await this.userLoginActivityModel
+          .find({
+            communityId,
+            lastLoginAt: { $gte: yesterdayCutoff, $lt: cutoff },
+          })
+          .populate('userId', 'email name')
+          .lean()
+          .exec();
+
+        const community = await this.communityModel.findById(communityId).select('name').lean().exec();
+        const communityName = community?.name || '';
+
+        for (const activity of activities) {
+          const user = activity.userId as any;
+          if (!user?.email) continue;
+
+          // Skip if we've emailed this user from THIS automation within the last 30 days
+          const alreadySent = automation.recipients?.some(
+            (r: any) =>
+              String(r.userId) === String(user._id) &&
+              r.sentAt &&
+              new Date(r.sentAt) > recentEmailCutoff,
+          );
+          if (alreadySent) continue;
+
+          const variables = this.buildBaseVariables({
+            recipientName: user.name || user.email,
+            communityName,
+            targetDaysThreshold: minInactiveDays,
+            targetInactivityPeriod: undefined,
+            contentType: undefined,
+          });
+
+          const renderedSubject = renderTemplate(automation.subject, variables);
+          const renderedContent = renderTemplate(automation.content, variables);
+
+          try {
+            await this.emailService.sendGenericEmail({
+              to: user.email,
+              subject: renderedSubject,
+              text: automation.isHtml ? '' : renderedContent,
+              html: automation.isHtml ? renderedContent : undefined,
+            });
+
+            // Record delivery
+            await this.emailCampaignModel
+              .updateOne(
+                { _id: automation._id },
+                {
+                  $push: {
+                    recipients: {
+                      userId: user._id,
+                      email: user.email,
+                      name: user.name || user.email,
+                      status: 'sent',
+                      sentAt: new Date(),
+                      opened: false,
+                      clickCount: 0,
+                    },
+                  },
+                  $inc: { sentCount: 1, totalRecipients: 1 },
+                },
+              )
+              .exec();
+
+            this.logger.debug(`Inactivity automation email sent to ${user.email} (inactive ${minInactiveDays}d)`);
+          } catch (sendErr: any) {
+            this.logger.warn(`Failed to send inactivity automation to ${user.email}: ${sendErr?.message}`);
+          }
+        }
+      } catch (automationErr: any) {
+        this.logger.error(`Error in daily inactivity automation ${String(automation._id)}: ${automationErr?.message}`);
+      }
+    }
   }
 
   async sendCampaign(

@@ -569,3 +569,250 @@ export class CreateContentReminderDto {
   @IsObject()
   metadata?: Record<string, any>;
 }
+
+// ─── Course Progress Filter Campaign ─────────────────────────────────────────
+
+/**
+ * DTO for creating a course-progress reminder campaign.
+ * Targets enrolled users whose completion is below a threshold after N days.
+ */
+export class CreateCourseProgressCampaignDto {
+  @ApiProperty({ example: 'Finish your course – you are almost there!', maxLength: 200 })
+  @IsString()
+  @IsNotEmpty()
+  @MinLength(2)
+  @MaxLength(200)
+  title: string;
+
+  @ApiProperty({ example: '{{userName}}, you still have {{progressPct}}% to go!', maxLength: 200 })
+  @IsString()
+  @IsNotEmpty()
+  @MinLength(2)
+  @MaxLength(200)
+  subject: string;
+
+  @ApiProperty({ example: 'Hi {{userName}}, you enrolled {{enrolledDays}} days ago but are only {{progressPct}}% through. Jump back in!' })
+  @IsString()
+  @IsNotEmpty()
+  content: string;
+
+  @ApiProperty({ example: '507f1f77bcf86cd799439011', description: 'Community ID' })
+  @IsString()
+  @IsNotEmpty()
+  communityId: string;
+
+  @ApiProperty({ example: '507f1f77bcf86cd799439012', description: 'Course ID to target enrollments from' })
+  @IsString()
+  @IsNotEmpty()
+  targetCourseId: string;
+
+  @ApiProperty({
+    example: 20,
+    description: 'Send email to users whose progress is LESS THAN this percentage (0-100)',
+    minimum: 1,
+    maximum: 99,
+  })
+  @IsNumber()
+  @Min(1)
+  @Max(99)
+  targetMaxProgressPct: number;
+
+  @ApiProperty({
+    example: 15,
+    description: 'Only target users who enrolled at least this many days ago',
+    minimum: 1,
+  })
+  @IsNumber()
+  @Min(1)
+  targetMinEnrolledDays: number;
+
+  @ApiPropertyOptional({ example: '2024-02-15T10:00:00.000Z', description: 'Schedule send date' })
+  @IsOptional()
+  @IsDateString()
+  scheduledAt?: string;
+
+  @ApiPropertyOptional({ default: false })
+  @IsOptional()
+  @IsBoolean()
+  isHtml?: boolean;
+
+  @ApiPropertyOptional({ default: true })
+  @IsOptional()
+  @IsBoolean()
+  trackOpens?: boolean;
+
+  @ApiPropertyOptional({ default: true })
+  @IsOptional()
+  @IsBoolean()
+  trackClicks?: boolean;
+
+  @ApiPropertyOptional({ example: 500, minimum: 1, maximum: 5000 })
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  @Max(5000)
+  maxRecipients?: number;
+}
+
+// ─── Preview Audience ─────────────────────────────────────────────────────────
+
+export class PreviewAudienceInactiveFilterDto {
+  @ApiProperty({ example: 15, description: 'Inactive for at least this many days', minimum: 1 })
+  @IsNumber()
+  @Min(1)
+  minInactiveDays: number;
+}
+
+export class PreviewAudienceCourseProgressFilterDto {
+  @ApiProperty({ example: '507f1f77bcf86cd799439012' })
+  @IsString()
+  @IsNotEmpty()
+  courseId: string;
+
+  @ApiProperty({ example: 20, minimum: 1, maximum: 99 })
+  @IsNumber()
+  @Min(1)
+  @Max(99)
+  maxProgressPct: number;
+
+  @ApiProperty({ example: 15, minimum: 1 })
+  @IsNumber()
+  @Min(1)
+  minEnrolledDays: number;
+}
+
+export class PreviewAudienceDto {
+  @ApiProperty({ example: '507f1f77bcf86cd799439011' })
+  @IsString()
+  @IsNotEmpty()
+  communityId: string;
+
+  @ApiProperty({ enum: ['inactivity', 'course_progress'], example: 'inactivity' })
+  @IsString()
+  @IsEnum(['inactivity', 'course_progress'])
+  filterType: 'inactivity' | 'course_progress';
+
+  @ApiPropertyOptional({ type: () => PreviewAudienceInactiveFilterDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => PreviewAudienceInactiveFilterDto)
+  inactiveFilter?: PreviewAudienceInactiveFilterDto;
+
+  @ApiPropertyOptional({ type: () => PreviewAudienceCourseProgressFilterDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => PreviewAudienceCourseProgressFilterDto)
+  courseProgressFilter?: PreviewAudienceCourseProgressFilterDto;
+}
+
+export class PreviewAudienceResponseDto {
+  @ApiProperty({ example: 47, description: 'Total users matching the filter' })
+  total: number;
+
+  @ApiProperty({ description: 'Sample of first 10 matching users' })
+  sample: Array<{ userId: string; email: string; name: string }>;
+
+  @ApiProperty({ example: 'inactivity', description: 'The filter type used' })
+  filterType: string;
+}
+
+// ─── Welcome / Automation Template ───────────────────────────────────────────
+
+/**
+ * DTO for creating or updating a community's automated welcome email template.
+ */
+export class CreateWelcomeTemplateDto {
+  @ApiProperty({ example: 'Welcome to {{communityName}}! 🎉', maxLength: 200 })
+  @IsString()
+  @IsNotEmpty()
+  @MinLength(2)
+  @MaxLength(200)
+  subject: string;
+
+  @ApiProperty({
+    example: 'Hi {{userName}}, welcome to {{communityName}}! We are thrilled to have you. Here is what you can do next...',
+  })
+  @IsString()
+  @IsNotEmpty()
+  content: string;
+
+  @ApiPropertyOptional({ default: true, description: 'Whether this email is HTML' })
+  @IsOptional()
+  @IsBoolean()
+  isHtml?: boolean;
+
+  @ApiPropertyOptional({ default: true, description: 'Start sending immediately when enabled' })
+  @IsOptional()
+  @IsBoolean()
+  automationActive?: boolean;
+}
+
+export class UpdateWelcomeTemplateDto {
+  @ApiPropertyOptional({ example: 'Welcome to {{communityName}}!', maxLength: 200 })
+  @IsOptional()
+  @IsString()
+  @MinLength(2)
+  @MaxLength(200)
+  subject?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  content?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  isHtml?: boolean;
+}
+
+// ─── Continuous Inactivity Automation ────────────────────────────────────────
+
+/**
+ * Set-and-forget automation: send this email automatically to any member
+ * who reaches exactly N days of inactivity (checked daily).
+ */
+export class CreateInactivityAutomationDto {
+  @ApiProperty({ example: 'We miss you! Come back to {{communityName}}', maxLength: 200 })
+  @IsString()
+  @IsNotEmpty()
+  @MinLength(2)
+  @MaxLength(200)
+  title: string;
+
+  @ApiProperty({ example: '{{userName}}, we miss you in {{communityName}}!', maxLength: 200 })
+  @IsString()
+  @IsNotEmpty()
+  @MinLength(2)
+  @MaxLength(200)
+  subject: string;
+
+  @ApiProperty({
+    example: 'Hi {{userName}}, you haven\'t visited {{communityName}} in {{daysThreshold}} days. Here is what you missed...',
+  })
+  @IsString()
+  @IsNotEmpty()
+  content: string;
+
+  @ApiProperty({ example: '507f1f77bcf86cd799439011' })
+  @IsString()
+  @IsNotEmpty()
+  communityId: string;
+
+  @ApiProperty({
+    example: 15,
+    description: 'Trigger this email when a user has been inactive for exactly this many days',
+    minimum: 1,
+    maximum: 365,
+  })
+  @IsNumber()
+  @Min(1)
+  @Max(365)
+  minInactiveDays: number;
+
+  @ApiPropertyOptional({ default: false })
+  @IsOptional()
+  @IsBoolean()
+  isHtml?: boolean;
+}
+

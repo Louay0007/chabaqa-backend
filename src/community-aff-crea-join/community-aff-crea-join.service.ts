@@ -16,6 +16,7 @@ import { ContentTrackingService } from '../common/services/content-tracking.serv
 import { PaginatedResponseDto } from '../common/dto/paginated-response.dto';
 import { CacheService } from '../common/services/cache.service';
 import { Post, PostDocument } from '../schema/post.schema';
+import { EmailCampaignService } from '../email-campaign/email-campaign.service';
 
 @Injectable()
 export class CommunityAffCreaJoinService implements OnModuleInit {
@@ -33,6 +34,7 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
     private readonly notificationService: NotificationService,
     private readonly trackingService: ContentTrackingService,
     private readonly cacheService: CacheService,
+    private readonly emailCampaignService: EmailCampaignService,
   ) { }
 
   async onModuleInit(): Promise<void> {
@@ -1418,6 +1420,7 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
       await community.save();
       await this.userModel.findByIdAndUpdate(userId, { $addToSet: { joinedCommunities: community._id } });
       await this.notifyCreatorMemberJoined(community, userId);
+      void this.emailCampaignService.sendWelcomeEmailToNewMember(userId, community._id.toString());
       try {
         await this.trackingService.trackStart(userId, community._id.toString(), TrackableContentType.COMMUNITY, {
           source: 'community_membership_checkout',
@@ -1471,6 +1474,7 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
       await community.save();
       await this.userModel.findByIdAndUpdate(userId, { $addToSet: { joinedCommunities: community._id } });
       await this.notifyCreatorMemberJoined(community, userId);
+      void this.emailCampaignService.sendWelcomeEmailToNewMember(userId, community._id.toString());
       try {
         await this.trackingService.trackStart(userId, community._id.toString(), TrackableContentType.COMMUNITY, {
           source: 'community_membership_checkout_paid_order_required',
@@ -1513,6 +1517,7 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
     await community.save();
     await this.userModel.findByIdAndUpdate(userId, { $addToSet: { joinedCommunities: community._id } });
     await this.notifyCreatorMemberJoined(community, userId);
+    void this.emailCampaignService.sendWelcomeEmailToNewMember(userId, community._id.toString());
     try {
       await this.trackingService.trackStart(userId, community._id.toString(), TrackableContentType.COMMUNITY, {
         source: 'community_membership_checkout_paid',

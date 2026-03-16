@@ -12,6 +12,7 @@ import { EmailCampaignService } from './email-campaign.service';
 export class EmailCampaignProcessor {
   private readonly logger = new Logger(EmailCampaignProcessor.name);
   private isProcessing = false;
+  private isDailyRunning = false;
 
   constructor(
     private readonly emailCampaignQueueService: EmailCampaignQueueService,
@@ -37,6 +38,26 @@ export class EmailCampaignProcessor {
       this.logger.error(`Queue processing error: ${error?.message || 'Unknown error'}`);
     } finally {
       this.isProcessing = false;
+    }
+  }
+
+  /**
+   * Runs once per day at 08:00 server time.
+   * Sends automated inactivity emails to users in all communities that have
+   * configured a continuous inactivity automation (managed via their campaign settings).
+   */
+  @Cron('0 8 * * *', { name: 'daily-inactivity-automations' })
+  async runDailyInactivityAutomations(): Promise<void> {
+    if (this.isDailyRunning) return;
+    this.isDailyRunning = true;
+    try {
+      this.logger.log('▶ Running daily inactivity email automations');
+      await this.emailCampaignService.runDailyInactivityAutomations();
+      this.logger.log('✅ Daily inactivity email automations complete');
+    } catch (error: any) {
+      this.logger.error(`Daily inactivity automation error: ${error?.message || error}`);
+    } finally {
+      this.isDailyRunning = false;
     }
   }
 

@@ -23,7 +23,16 @@ export enum EmailCampaignType {
   EVENT_REMINDER = 'event_reminder',
   COURSE_UPDATE = 'course_update',
   INACTIVE_USER_REACTIVATION = 'inactive_user_reactivation',
+  COURSE_PROGRESS_REMINDER = 'course_progress_reminder',
+  WELCOME = 'welcome',
   CUSTOM = 'custom'
+}
+
+/**
+ * Enum for automation event triggers
+ */
+export enum AutomationEventTrigger {
+  COMMUNITY_JOIN = 'COMMUNITY_JOIN',
 }
 
 /**
@@ -298,6 +307,72 @@ export class EmailCampaign {
   })
   targetAllInactive?: boolean;
 
+  // ─── Course Progress Campaign Fields ───────────────────────────────────────
+
+  /**
+   * Whether this targets under-performing learners
+   */
+  @Prop({
+    default: false,
+    index: true,
+  })
+  isCourseProgressCampaign: boolean;
+
+  /**
+   * The course to check progress against
+   */
+  @Prop({
+    type: Types.ObjectId,
+    ref: 'Cours',
+  })
+  targetCourseId?: Types.ObjectId;
+
+  /**
+   * Target users whose progress is less than this percentage (0–100)
+   */
+  @Prop({
+    min: 0,
+    max: 100,
+  })
+  targetMaxProgressPct?: number;
+
+  /**
+   * Target users who enrolled at least this many days ago
+   */
+  @Prop({
+    min: 0,
+  })
+  targetMinEnrolledDays?: number;
+
+  // ─── Automation Template Fields ─────────────────────────────────────────────
+
+  /**
+   * When true this document is a persistent automation template, not a sent campaign.
+   * Only one ACTIVE template per community per eventTrigger is allowed.
+   */
+  @Prop({
+    default: false,
+    index: true,
+  })
+  isAutomationTemplate: boolean;
+
+  /**
+   * The trigger event this automation responds to (e.g. COMMUNITY_JOIN)
+   */
+  @Prop({
+    enum: AutomationEventTrigger,
+    index: true,
+  })
+  eventTrigger?: AutomationEventTrigger;
+
+  /**
+   * Whether the automation is currently enabled (only meaningful for templates)
+   */
+  @Prop({
+    default: true,
+  })
+  automationActive: boolean;
+
   /**
    * Campaign metadata
    */
@@ -343,6 +418,15 @@ export interface EmailCampaignDocument extends Document {
   targetInactivityPeriod?: InactivityPeriod;
   targetDaysThreshold?: number;
   targetAllInactive?: boolean;
+  // Course progress fields
+  isCourseProgressCampaign: boolean;
+  targetCourseId?: Types.ObjectId;
+  targetMaxProgressPct?: number;
+  targetMinEnrolledDays?: number;
+  // Automation template fields
+  isAutomationTemplate: boolean;
+  eventTrigger?: AutomationEventTrigger;
+  automationActive: boolean;
   metadata?: Record<string, any>;
   createdAt: Date;
   updatedAt: Date;
@@ -361,6 +445,8 @@ EmailCampaignSchema.index({ targetInactivityPeriod: 1 });
 EmailCampaignSchema.index({ scheduledAt: 1 });
 EmailCampaignSchema.index({ createdAt: -1 });
 EmailCampaignSchema.index({ sentAt: -1 });
+EmailCampaignSchema.index({ isCourseProgressCampaign: 1, status: 1 });
+EmailCampaignSchema.index({ isAutomationTemplate: 1, eventTrigger: 1, communityId: 1, automationActive: 1 });
 
 // Pre-save middleware to update counts
 EmailCampaignSchema.pre('save', function(next) {

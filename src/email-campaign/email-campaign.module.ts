@@ -3,6 +3,8 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { EmailCampaign, EmailCampaignSchema } from '../schema/email-campaign.schema';
 import { User, UserSchema } from '../schema/user.schema';
 import { Community, CommunitySchema } from '../schema/community.schema';
+import { CourseEnrollmentSchema } from '../schema/course.schema';
+import { UserLoginActivity, UserLoginActivitySchema } from '../schema/user-login-activity.schema';
 import { EmailCampaignController } from './email-campaign.controller';
 import { EmailCampaignTrackingController } from './email-campaign-tracking.controller';
 import { EmailCampaignService } from './email-campaign.service';
@@ -20,6 +22,8 @@ import { EmailCampaignProcessor } from './email-campaign.processor';
       { name: EmailCampaign.name, schema: EmailCampaignSchema },
       { name: User.name, schema: UserSchema },
       { name: Community.name, schema: CommunitySchema },
+      { name: 'CourseEnrollment', schema: CourseEnrollmentSchema },
+      { name: UserLoginActivity.name, schema: UserLoginActivitySchema },
     ]),
     UserLoginActivityModule,
   ],
