@@ -870,16 +870,24 @@ export class PostService {
 
     const userObjectId = new Types.ObjectId(userId);
     const reactions = Array.isArray(post.reactions) ? post.reactions : [];
-    const existingReaction = reactions.find((reaction) => reaction.emoji === normalizedEmoji);
+    const selectedReaction = reactions.find((reaction) => reaction.emoji === normalizedEmoji);
+    const hadSelectedReaction = Boolean(
+      selectedReaction?.userIds?.some((id) => id.equals(userObjectId)),
+    );
 
-    if (!existingReaction) {
-      reactions.push({ emoji: normalizedEmoji, userIds: [userObjectId] } as any);
-    } else {
-      const existingIndex = existingReaction.userIds.findIndex((id) => id.equals(userObjectId));
-      if (existingIndex >= 0) {
-        existingReaction.userIds.splice(existingIndex, 1);
+    // Keep at most one active reaction per user by removing the user
+    // from all emoji buckets before applying the selected emoji.
+    for (const reaction of reactions) {
+      reaction.userIds = reaction.userIds.filter((id) => !id.equals(userObjectId));
+    }
+
+    // Toggle behavior: clicking the same emoji removes reaction;
+    // clicking a different emoji switches to that one.
+    if (!hadSelectedReaction) {
+      if (selectedReaction) {
+        selectedReaction.userIds.push(userObjectId);
       } else {
-        existingReaction.userIds.push(userObjectId);
+        reactions.push({ emoji: normalizedEmoji, userIds: [userObjectId] } as any);
       }
     }
 
