@@ -266,6 +266,12 @@ export class SessionService {
       console.log(`   🏢 Community filter: ${communityId}`);
     }
 
+    if (!Types.ObjectId.isValid(userId)) {
+      throw new BadRequestException('Invalid user ID');
+    }
+
+    const userObjectId = new Types.ObjectId(userId);
+
     const skip = (page - 1) * limit;
     let allSessions: any[] = [];
     let totalCount = 0;
@@ -284,7 +290,7 @@ export class SessionService {
     // Get booked sessions
     if (isOwnerView && (type === 'booked' || type === 'all')) {
       const bookedSessions = await this.sessionModel
-        .find({ 'bookings.userId': new Types.ObjectId(userId), ...communityFilter })
+        .find({ 'bookings.userId': userObjectId, ...communityFilter })
         .populate('creatorId', 'name email profile_picture photo_profil')
         .populate('communityId', 'name slug')
         .sort({ startTime: -1 })
@@ -330,7 +336,7 @@ export class SessionService {
 
     // Get created sessions
     if (type === 'created' || type === 'all') {
-      const createdSessionQuery: any = { creatorId: new Types.ObjectId(userId), ...communityFilter };
+      const createdSessionQuery: any = { creatorId: userObjectId, ...communityFilter };
       if (!isOwnerView) {
         createdSessionQuery.isActive = true;
       }

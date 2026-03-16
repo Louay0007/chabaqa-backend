@@ -12,6 +12,7 @@ import {
   Request,
   HttpCode,
   HttpStatus,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery, ApiParam } from '@nestjs/swagger';
 import { SessionService } from './session.service';
@@ -395,9 +396,16 @@ export class SessionController {
     @Request() req?: any,
   ) {
     const requesterId = this.getRequestUserId(req);
-    const visibilityScope = requesterId && requesterId === userId ? 'owner' : 'public';
+    const requestedUserId = String(userId || '').trim();
+    const resolvedUserId = requestedUserId.toLowerCase() === 'me' ? requesterId : requestedUserId;
+
+    if (!resolvedUserId) {
+      throw new UnauthorizedException('Unauthorized');
+    }
+
+    const visibilityScope = requesterId && requesterId === resolvedUserId ? 'owner' : 'public';
     return await this.sessionService.getSessionsByUser(
-      userId, 
+      resolvedUserId,
       Number(page) || 1, 
       Number(limit) || 10,
       type,
