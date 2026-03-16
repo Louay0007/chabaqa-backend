@@ -39,7 +39,7 @@ export class AffiliateService {
     if (dto.scopeType === 'community' && !dto.communityId) {
       throw new BadRequestException('communityId is required for community-scoped programs');
     }
-    return this.programModel.create({
+    const program = await this.programModel.create({
       creatorId: new Types.ObjectId(creatorId),
       communityId: dto.communityId ? new Types.ObjectId(dto.communityId) : undefined,
       scopeType: dto.scopeType,
@@ -50,6 +50,25 @@ export class AffiliateService {
       holdDays: dto.holdDays ?? Number(process.env.AFFILIATE_DEFAULT_HOLD_DAYS || 14),
       status: 'active',
     });
+
+    // Ensure creators can generate and use their own referral links without
+    // requiring a separate partner invite/approval flow.
+    await this.partnerModel.findOneAndUpdate(
+      {
+        programId: program._id,
+        partnerUserId: new Types.ObjectId(creatorId),
+      },
+      {
+        $setOnInsert: {
+          status: 'approved',
+          approvedAt: new Date(),
+          approvedBy: new Types.ObjectId(creatorId),
+        },
+      },
+      { upsert: true, new: true },
+    );
+
+    return program;
   }
 
   async getCreatorPrograms(creatorId: string): Promise<AffiliateProgramDocument[]> {
@@ -154,13 +173,32 @@ export class AffiliateService {
     });
     if (!program) throw new NotFoundException('Program not found');
 
-    const partnerUserId = dto.partnerUserId || creatorId;
-    const partner = await this.partnerModel.findOne({
-      programId: program._id,
-      partnerUserId: new Types.ObjectId(partnerUserId),
-      status: 'approved',
-    });
-    if (!partner) throw new BadRequestException('Partner not approved for this program');
+    let partnerUserId = dto.partnerUserId || creatorId;
+
+    if (!dto.partnerUserId) {
+      await this.partnerModel.findOneAndUpdate(
+        {
+          programId: program._id,
+          partnerUserId: new Types.ObjectId(creatorId),
+        },
+        {
+          $set: {
+            status: 'approved',
+            approvedAt: new Date(),
+            approvedBy: new Types.ObjectId(creatorId),
+          },
+        },
+        { upsert: true, new: true },
+      );
+      partnerUserId = creatorId;
+    } else {
+      const partner = await this.partnerModel.findOne({
+        programId: program._id,
+        partnerUserId: new Types.ObjectId(partnerUserId),
+        status: 'approved',
+      });
+      if (!partner) throw new BadRequestException('Partner not approved for this program');
+    }
 
     if (!dto.targetPath.startsWith('/')) {
       throw new BadRequestException('targetPath must start with /');
