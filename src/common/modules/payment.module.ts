@@ -37,6 +37,7 @@ import { EventModule } from '../../event/event.module';
 import { SubscriptionModule } from '../../subscription/subscription.module';
 import { SessionModule } from '../../session/session.module';
 import { ProductModule } from '../../product/product.module';
+import { AffiliateModule } from '../../affiliate/affiliate.module';
 
 @Global()
 @Module({
@@ -65,6 +66,7 @@ import { ProductModule } from '../../product/product.module';
     SubscriptionModule,
     SessionModule,
     ProductModule,
+    AffiliateModule,
   ],
   controllers: [PaymentController],
   providers: [
