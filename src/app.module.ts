@@ -57,6 +57,7 @@ import { CommerceDomainModule } from './domains/commerce-domain.module';
 import { CommunityDomainModule } from './domains/community-domain.module';
 import { LearningPathModule } from './learning-path/learning-path.module';
 import { CommunityInvitationModule } from './community-invitation/community-invitation.module';
+import { AffiliateModule } from './affiliate/affiliate.module';
 
 // Import new admin schemas
 import { AdminUser, AdminUserSchema } from './admin/schemas/admin-user.schema';
@@ -162,6 +163,7 @@ import { PaymentAuditLog, PaymentAuditLogSchema } from './schema/payment-audit-l
     LearningPathModule,
     Ga4Module,
     CommunityInvitationModule,
+    AffiliateModule,
   ],
   controllers: [AppController, UserController, TrackingController, PaymentController],
   providers: [

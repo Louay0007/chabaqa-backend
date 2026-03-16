@@ -37,6 +37,8 @@ import {
   ProcessedWebhookEvent,
   ProcessedWebhookEventDocument,
 } from '../../schema/processed-webhook-event.schema';
+import { AffiliateAttributionService } from '../../affiliate/affiliate-attribution.service';
+import { AffiliateCommissionService } from '../../affiliate/affiliate-commission.service';
 
 const manualProofStorage = diskStorage({
   destination: (req, file, cb) => {
@@ -93,6 +95,8 @@ export class PaymentController {
     private readonly sessionService: SessionService,
     private readonly subscriptionService: SubscriptionService,
     @InjectModel(Plan.name) private planModel: Model<PlanDocument>,
+    private readonly affiliateAttributionService: AffiliateAttributionService,
+    private readonly affiliateCommissionService: AffiliateCommissionService,
   ) { }
 
   private isEnvFlagEnabled(name: string, defaultValue = false): boolean {
@@ -187,6 +191,11 @@ export class PaymentController {
       fulfillmentStatus: 'pending',
       fulfillmentUpdatedAt: new Date().toISOString(),
     };
+  }
+
+  private resolveAffiliateAttribution(req: any): Record<string, any> {
+    const { clickId } = this.affiliateAttributionService.resolveAttributionFromRequest(req);
+    return clickId ? { affiliateClickId: clickId } : {};
   }
 
   private async hasProcessedWebhookEvent(provider: string, eventId: string): Promise<boolean> {
@@ -620,6 +629,7 @@ export class PaymentController {
 
       if (didCompleteFulfillment) {
         await this.incrementProductSalesFromOrder(order);
+        await this.affiliateCommissionService.onOrderPaid(order).catch((e) => this.logger.error(`Affiliate onOrderPaid failed: ${e?.message}`));
       }
 
       if (order.contentType === TrackableContentType.SESSION && order.metadata?.fulfillmentStatus === 'requires_booking') {
@@ -1032,6 +1042,7 @@ export class PaymentController {
     const metadata: Record<string, any> = {
       channel,
       ...(Object.keys(clientContext).length > 0 ? { clientContext } : {}),
+      ...this.resolveAffiliateAttribution(req),
     };
     if (validatedInviteCode) {
       metadata.inviteCode = validatedInviteCode;
@@ -1163,6 +1174,7 @@ export class PaymentController {
       metadata: this.buildPendingFulfillmentMetadata({
         channel,
         ...(Object.keys(clientContext).length > 0 ? { clientContext } : {}),
+        ...this.resolveAffiliateAttribution(req),
       }),
     });
 
@@ -1269,6 +1281,7 @@ export class PaymentController {
       metadata: this.buildPendingFulfillmentMetadata({
         channel,
         ...(Object.keys(clientContext).length > 0 ? { clientContext } : {}),
+        ...this.resolveAffiliateAttribution(req),
       }),
     });
 
@@ -1380,6 +1393,7 @@ export class PaymentController {
         ticketType,
         channel,
         ...(Object.keys(clientContext).length > 0 ? { clientContext } : {}),
+        ...this.resolveAffiliateAttribution(req),
       })
     });
 
@@ -1486,6 +1500,7 @@ export class PaymentController {
       metadata: this.buildPendingFulfillmentMetadata({
         channel,
         ...(Object.keys(clientContext).length > 0 ? { clientContext } : {}),
+        ...this.resolveAffiliateAttribution(req),
       }),
     });
 
@@ -1593,6 +1608,7 @@ export class PaymentController {
         slotId: bookingDto?.slotId,
         channel,
         ...(Object.keys(clientContext).length > 0 ? { clientContext } : {}),
+        ...this.resolveAffiliateAttribution(req),
       })
     });
 
@@ -1681,6 +1697,7 @@ export class PaymentController {
       metadata: this.buildPendingFulfillmentMetadata({
         channel,
         ...(Object.keys(clientContext).length > 0 ? { clientContext } : {}),
+        ...this.resolveAffiliateAttribution(req),
       }),
     });
 
@@ -2181,6 +2198,7 @@ export class PaymentController {
 
       if (didCompleteFulfillment) {
         await this.incrementProductSalesFromOrder(order);
+        await this.affiliateCommissionService.onOrderPaid(order).catch((e) => this.logger.error(`Affiliate onOrderPaid failed: ${e?.message}`));
       }
 
       const refreshedOrder = await this.orderModel.findById(order._id);
@@ -2442,6 +2460,7 @@ export class PaymentController {
 
             if (didCompleteFulfillment) {
               await this.incrementProductSalesFromOrder(order);
+              await this.affiliateCommissionService.onOrderPaid(order).catch((e) => this.logger.error(`Affiliate onOrderPaid failed: ${e?.message}`));
             }
           }
         }
@@ -2575,6 +2594,7 @@ export class PaymentController {
         chapterTitle: targetChapter.titre,
         channel,
         ...(Object.keys(clientContext).length > 0 ? { clientContext } : {}),
+        ...this.resolveAffiliateAttribution(req),
       })
     });
 
@@ -3292,6 +3312,7 @@ export class PaymentController {
 
         if (didCompleteFulfillment) {
           await this.incrementProductSalesFromOrder(fulfilledOrder);
+          await this.affiliateCommissionService.onOrderPaid(fulfilledOrder).catch((e) => this.logger.error(`Affiliate onOrderPaid failed: ${e?.message}`));
         }
 
         await this.notificationService.createNotification({
