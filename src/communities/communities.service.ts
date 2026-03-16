@@ -33,6 +33,67 @@ export class CommunitiesService {
     private readonly uploadService: UploadService,
   ) { }
 
+  async searchCommunityMembers(
+    communityId: string,
+    query: string,
+    limit: number = 8,
+  ): Promise<Array<{ id: string; username: string; firstName: string; lastName?: string; avatar?: string }>> {
+    const community = await this.communityModel
+      .findById(communityId)
+      .select('members createur')
+      .exec();
+
+    if (!community) {
+      throw new NotFoundException('Community not found');
+    }
+
+    const allMemberIds = [
+      ...(Array.isArray(community.members) ? community.members : []),
+      community.createur,
+    ]
+      .filter(Boolean)
+      .map((id) => new Types.ObjectId(id));
+
+    if (allMemberIds.length === 0) return [];
+
+    const cleanQuery = String(query || '').trim();
+    const escapedQuery = cleanQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = escapedQuery ? new RegExp(escapedQuery, 'i') : null;
+
+    const userQuery: any = {
+      _id: { $in: allMemberIds },
+    };
+
+    if (regex) {
+      userQuery.$or = [
+        { username: regex },
+        { name: regex },
+        { email: regex },
+      ];
+    }
+
+    const safeLimit = Math.min(Math.max(Number(limit) || 8, 1), 20);
+
+    const users = await this.userModel
+      .find(userQuery)
+      .select('username name profile_picture photo_profil')
+      .sort({ username: 1, name: 1 })
+      .limit(safeLimit)
+      .exec();
+
+    return users.map((user) => {
+      const displayName = user.name || user.username || '';
+      const [firstName, ...rest] = displayName.trim().split(' ');
+      return {
+        id: user._id.toString(),
+        username: user.username || displayName,
+        firstName: firstName || user.username || 'User',
+        lastName: rest.length > 0 ? rest.join(' ') : undefined,
+        avatar: this.uploadService.ensureAbsoluteUrl(user.photo_profil || user.profile_picture),
+      };
+    });
+  }
+
   /**
    * Get communities for a specific user (joined + created)
    */

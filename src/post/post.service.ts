@@ -19,9 +19,11 @@ import {
   PostResponseDto,
   PostListResponseDto,
   PostCommentResponseDto,
+  PostReactionResponseDto,
   PostStatsResponseDto,
   PostShareMetaResponseDto,
 } from '../dto-post/post-response.dto';
+import { NotificationService } from '../notification/notification.service';
 
 @Injectable()
 export class PostService {
@@ -34,6 +36,7 @@ export class PostService {
     private communityModel: Model<CommunityDocument>,
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     private readonly contentTrackingService: ContentTrackingService,
+    private readonly notificationService: NotificationService,
   ) { }
 
   private serializeLogArg(arg: unknown): string {
@@ -119,6 +122,167 @@ export class PostService {
     };
   }
 
+  private parseMentionUsernames(content: string): string[] {
+    const normalizedContent = String(content || '');
+    const usernames = new Set<string>();
+    const mentionRegex = /(^|\s)@([a-z0-9][a-z0-9._-]{1,31})/gi;
+
+    let match: RegExpExecArray | null = mentionRegex.exec(normalizedContent);
+    while (match) {
+      usernames.add(match[2].toLowerCase());
+      match = mentionRegex.exec(normalizedContent);
+    }
+
+    return Array.from(usernames);
+  }
+
+  private async resolveMentionedCommunityUsers(
+    content: string,
+    community: CommunityDocument,
+  ): Promise<Types.ObjectId[]> {
+    const usernames = this.parseMentionUsernames(content);
+    if (usernames.length === 0) return [];
+
+    const memberIds = [
+      ...(Array.isArray(community.members) ? community.members : []),
+      community.createur,
+    ]
+      .filter(Boolean)
+      .map((id) => new Types.ObjectId(id));
+
+    const mentionedUsers = await this.userModel
+      .find({
+        _id: { $in: memberIds },
+        username: { $in: usernames },
+      })
+      .select('_id username')
+      .exec();
+
+    const uniqueIds = new Map<string, Types.ObjectId>();
+    mentionedUsers.forEach((user) => {
+      uniqueIds.set(user._id.toString(), new Types.ObjectId(user._id));
+    });
+
+    return Array.from(uniqueIds.values());
+  }
+
+  private async notifyMentionedUsers(params: {
+    actorUserId: string;
+    postId: string;
+    communityId: string;
+    content: string;
+    community: CommunityDocument;
+    commentId?: string;
+    resolvedMentionedUserIds?: Types.ObjectId[];
+  }): Promise<void> {
+    const {
+      actorUserId,
+      postId,
+      communityId,
+      content,
+      community,
+      commentId,
+      resolvedMentionedUserIds,
+    } = params;
+
+    const mentionedUserIds = resolvedMentionedUserIds
+      ?? (await this.resolveMentionedCommunityUsers(content, community));
+
+    if (mentionedUserIds.length === 0) return;
+
+    const actor = await this.userModel.findById(actorUserId).select('name username').exec();
+    const actorLabel = actor?.username || actor?.name || 'A member';
+
+    await Promise.all(
+      mentionedUserIds
+        .filter((recipientId) => recipientId.toString() !== String(actorUserId))
+        .map((recipientId) =>
+          this.notificationService.createNotification({
+            recipient: recipientId.toString(),
+            sender: actorUserId,
+            type: commentId ? 'comment_mention' : 'post_mention',
+            title: commentId ? 'You were mentioned in a comment' : 'You were mentioned in a post',
+            body: `${actorLabel} mentioned you in the community.`,
+            data: {
+              postId,
+              commentId,
+              communityId,
+            },
+          }),
+        ),
+    );
+  }
+
+  private buildReactionsResponse(post: PostDocument, userId?: string): PostReactionResponseDto[] {
+    const me = userId ? new Types.ObjectId(userId) : null;
+    const reactions = Array.isArray(post.reactions) ? post.reactions : [];
+
+    return reactions
+      .map((reaction) => {
+        const userIds = Array.isArray(reaction.userIds) ? reaction.userIds : [];
+        return {
+          emoji: reaction.emoji,
+          count: userIds.length,
+          usersIncludeMe: me ? userIds.some((id) => id.equals(me)) : false,
+        };
+      })
+      .filter((reaction) => reaction.count > 0)
+      .sort((a, b) => b.count - a.count);
+  }
+
+  private async buildThreadedComments(comments: any[]): Promise<PostCommentResponseDto[]> {
+    if (!Array.isArray(comments) || comments.length === 0) return [];
+
+    const uniqueUserIds = Array.from(
+      new Set(
+        comments
+          .map((comment) => comment.userId?.toString())
+          .filter(Boolean),
+      ),
+    );
+
+    const users = await this.userModel
+      .find({ _id: { $in: uniqueUserIds } })
+      .select('name profile_picture photo_profil')
+      .exec();
+
+    const userMap = new Map<string, any>();
+    users.forEach((user) => userMap.set(user._id.toString(), user));
+
+    const mapped: PostCommentResponseDto[] = comments.map((comment) => {
+      const user = userMap.get(comment.userId.toString());
+      return {
+        id: comment.id,
+        content: comment.content,
+        userId: comment.userId.toString(),
+        userName: user?.name || 'Utilisateur inconnu',
+        userAvatar: user?.photo_profil || user?.profile_picture,
+        parentId: comment.parentId,
+        replies: [],
+        createdAt: comment.createdAt.toISOString(),
+        updatedAt: comment.updatedAt.toISOString(),
+      };
+    });
+
+    mapped.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+
+    const byId = new Map<string, PostCommentResponseDto>();
+    mapped.forEach((comment) => byId.set(comment.id, comment));
+
+    const roots: PostCommentResponseDto[] = [];
+    mapped.forEach((comment) => {
+      if (comment.parentId && byId.has(comment.parentId)) {
+        const parent = byId.get(comment.parentId)!;
+        if (!parent.replies) parent.replies = [];
+        parent.replies.push(comment);
+      } else {
+        roots.push(comment);
+      }
+    });
+
+    return roots;
+  }
+
   /**
    * Créer un nouveau post
    */
@@ -180,6 +344,10 @@ export class PostService {
       likes: 0,
       shareCount: 0,
       comments: [],
+      reactions: [],
+      isPinned: false,
+      pinnedAt: null,
+      mentionedUserIds: await this.resolveMentionedCommunityUsers(createPostDto.content, community),
       likedBy: [],
       sharedBy: [],
       tags: createPostDto.tags || [],
@@ -202,6 +370,15 @@ export class PostService {
       authorId: populatedPost!.authorId,
       authorName: (populatedPost!.authorId as any)?.name,
       authorEmail: (populatedPost!.authorId as any)?.email
+    });
+
+    await this.notifyMentionedUsers({
+      actorUserId: userId,
+      postId: savedPost.id,
+      communityId: savedPost.communityId,
+      content: savedPost.content,
+      community,
+      resolvedMentionedUserIds: savedPost.mentionedUserIds,
     });
 
     return await this.transformToResponseDto(populatedPost!, community);
@@ -251,7 +428,7 @@ export class PostService {
         .find(query)
         .select('+likedBy') // Explicitly select likedBy array
         .populate('authorId', 'name email profile_picture photo_profil')
-        .sort({ createdAt: -1 })
+        .sort({ isPinned: -1, createdAt: -1 })
         .skip(skip)
         .limit(limit)
         .exec(),
@@ -330,9 +507,12 @@ export class PostService {
             isPublished: post.isPublished,
             likes: post.likes || 0,
             shareCount: post.shareCount || 0,
+            reactions: [],
             isLikedByUser: false,
             isBookmarkedByUser: false,
             isSharedByUser: false,
+            isPinned: Boolean(post.isPinned),
+            pinnedAt: post.pinnedAt ? post.pinnedAt.toISOString() : undefined,
             comments: [],
             commentsCount: 0,
             tags: post.tags || [],
@@ -465,26 +645,7 @@ export class PostService {
       throw new NotFoundException('Post non trouvé');
     }
 
-    // Transformer les commentaires avec les informations des utilisateurs
-    const comments = await Promise.all(
-      post.comments.map(async (comment) => {
-        const user = await this.userModel
-          .findById(comment.userId)
-          .select('name profile_picture photo_profil');
-
-        return {
-          id: comment.id,
-          content: comment.content,
-          userId: comment.userId.toString(),
-          userName: user?.name || 'Utilisateur inconnu',
-          userAvatar: user?.photo_profil || user?.profile_picture,
-          createdAt: comment.createdAt.toISOString(),
-          updatedAt: comment.updatedAt.toISOString(),
-        };
-      }),
-    );
-
-    return comments;
+    return this.buildThreadedComments(post.comments);
   }
 
   /**
@@ -520,10 +681,18 @@ export class PostService {
     }
 
     // Créer le commentaire
+    if (createCommentDto.parentId) {
+      const parentExists = post.comments.some((comment) => comment.id === createCommentDto.parentId);
+      if (!parentExists) {
+        throw new NotFoundException('Commentaire parent non trouvé');
+      }
+    }
+
     const comment = {
       id: new Types.ObjectId().toString(),
       content: createCommentDto.content,
       userId: new Types.ObjectId(userId),
+      parentId: createCommentDto.parentId,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -543,6 +712,15 @@ export class PostService {
       this.logWarn(`⚠️ [POST-SERVICE] Failed to track comment: ${error?.message || error}`);
     }
 
+    await this.notifyMentionedUsers({
+      actorUserId: userId,
+      postId: post.id,
+      commentId: comment.id,
+      communityId: post.communityId,
+      content: createCommentDto.content,
+      community,
+    });
+
     // Récupérer les informations de l'utilisateur
     const user = await this.userModel
       .findById(userId)
@@ -554,6 +732,7 @@ export class PostService {
       userId: comment.userId.toString(),
       userName: user?.name || 'Utilisateur inconnu',
       userAvatar: user?.photo_profil || user?.profile_picture,
+      parentId: comment.parentId,
       createdAt: comment.createdAt.toISOString(),
       updatedAt: comment.updatedAt.toISOString(),
     };
@@ -658,9 +837,97 @@ export class PostService {
       userId: comment.userId.toString(),
       userName: user?.name || 'Utilisateur inconnu',
       userAvatar: user?.photo_profil || user?.profile_picture,
+      parentId: comment.parentId,
       createdAt: comment.createdAt.toISOString(),
       updatedAt: comment.updatedAt.toISOString(),
     };
+  }
+
+  async reactToPost(
+    postId: string,
+    emoji: string,
+    userId: string,
+  ): Promise<PostResponseDto> {
+    const post = await this.postModel.findOne({ id: postId });
+    if (!post) throw new NotFoundException('Post non trouvé');
+
+    const normalizedEmoji = String(emoji || '').trim();
+    if (!normalizedEmoji) {
+      throw new BadRequestException('Emoji de réaction invalide');
+    }
+
+    const userObjectId = new Types.ObjectId(userId);
+    const reactions = Array.isArray(post.reactions) ? post.reactions : [];
+    const existingReaction = reactions.find((reaction) => reaction.emoji === normalizedEmoji);
+
+    if (!existingReaction) {
+      reactions.push({ emoji: normalizedEmoji, userIds: [userObjectId] } as any);
+    } else {
+      const existingIndex = existingReaction.userIds.findIndex((id) => id.equals(userObjectId));
+      if (existingIndex >= 0) {
+        existingReaction.userIds.splice(existingIndex, 1);
+      } else {
+        existingReaction.userIds.push(userObjectId);
+      }
+    }
+
+    post.reactions = reactions.filter((reaction) => reaction.userIds.length > 0);
+    post.markModified('reactions');
+    await post.save();
+
+    const populatedPost = await this.postModel
+      .findById(post._id)
+      .populate('authorId', 'name email profile_picture photo_profil')
+      .exec();
+
+    const community = await this.communityModel.findById(post.communityId);
+    return this.transformToResponseDto(populatedPost!, community, userId);
+  }
+
+  async pinPost(postId: string, userId: string): Promise<PostResponseDto> {
+    const post = await this.postModel.findOne({ id: postId });
+    if (!post) throw new NotFoundException('Post non trouvé');
+
+    const community = await this.communityModel.findById(post.communityId);
+    if (!community) throw new NotFoundException('Communauté non trouvée');
+
+    if (community.createur.toString() !== String(userId)) {
+      throw new ForbiddenException('Seul le créateur de la communauté peut épingler un post');
+    }
+
+    post.isPinned = true;
+    post.pinnedAt = new Date();
+    await post.save();
+
+    const populatedPost = await this.postModel
+      .findById(post._id)
+      .populate('authorId', 'name email profile_picture photo_profil')
+      .exec();
+
+    return this.transformToResponseDto(populatedPost!, community, userId);
+  }
+
+  async unpinPost(postId: string, userId: string): Promise<PostResponseDto> {
+    const post = await this.postModel.findOne({ id: postId });
+    if (!post) throw new NotFoundException('Post non trouvé');
+
+    const community = await this.communityModel.findById(post.communityId);
+    if (!community) throw new NotFoundException('Communauté non trouvée');
+
+    if (community.createur.toString() !== String(userId)) {
+      throw new ForbiddenException('Seul le créateur de la communauté peut désépingler un post');
+    }
+
+    post.isPinned = false;
+    post.pinnedAt = undefined;
+    await post.save();
+
+    const populatedPost = await this.postModel
+      .findById(post._id)
+      .populate('authorId', 'name email profile_picture photo_profil')
+      .exec();
+
+    return this.transformToResponseDto(populatedPost!, community, userId);
   }
 
   /**
@@ -938,35 +1205,7 @@ export class PostService {
       // Transformer les commentaires avec error handling
       let comments: any[] = [];
       try {
-        comments = await Promise.all(
-          post.comments.map(async (comment) => {
-            try {
-              const user = await this.userModel
-                .findById(comment.userId)
-                .select('name profile_picture photo_profil');
-              return {
-                id: comment.id,
-                content: comment.content,
-                userId: comment.userId.toString(),
-                userName: user?.name || 'Utilisateur inconnu',
-                userAvatar: user?.photo_profil || user?.profile_picture,
-                createdAt: comment.createdAt.toISOString(),
-                updatedAt: comment.updatedAt.toISOString(),
-              };
-            } catch (commentError) {
-              this.logError('❌ [POST-SERVICE] Error transforming comment:', commentError);
-              return {
-                id: comment.id,
-                content: comment.content,
-                userId: comment.userId.toString(),
-                userName: 'Utilisateur inconnu',
-                userAvatar: null,
-                createdAt: comment.createdAt.toISOString(),
-                updatedAt: comment.updatedAt.toISOString(),
-              };
-            }
-          }),
-        );
+        comments = await this.buildThreadedComments(post.comments);
       } catch (commentsError) {
         this.logError('❌ [POST-SERVICE] Error transforming comments:', commentsError);
         comments = [];
@@ -1160,10 +1399,13 @@ export class PostService {
         },
         isPublished: post.isPublished,
         likes: post.likes || 0,
+        reactions: this.buildReactionsResponse(post, userId),
         isLikedByUser,
         isBookmarkedByUser,
         shareCount: post.shareCount || 0,
         isSharedByUser,
+        isPinned: Boolean(post.isPinned),
+        pinnedAt: post.pinnedAt ? post.pinnedAt.toISOString() : undefined,
         comments,
         commentsCount: post.comments.length,
         tags: post.tags || [],
@@ -1207,10 +1449,13 @@ export class PostService {
         },
         isPublished: post.isPublished || false,
         likes: post.likes || 0,
+        reactions: [],
         isBookmarkedByUser: false,
         shareCount: post.shareCount || 0,
         isLikedByUser: false,
         isSharedByUser: false,
+        isPinned: false,
+        pinnedAt: undefined,
         comments: [],
         commentsCount: 0,
         tags: post.tags || [],

@@ -34,6 +34,21 @@ export class PostCommentResponseDto {
   })
   userAvatar?: string;
 
+  @ApiPropertyOptional({
+    description: 'ID du commentaire parent (si c\'est une réponse)',
+    example: 'comment_parent_123'
+  })
+  parentId?: string;
+
+  @ApiPropertyOptional({
+    description: 'Réponses du commentaire',
+    type: 'array',
+    items: {
+      type: 'object',
+    }
+  })
+  replies?: PostCommentResponseDto[];
+
   @ApiProperty({
     description: 'Date de création du commentaire',
     example: '2024-02-10T10:30:00.000Z'
@@ -45,6 +60,26 @@ export class PostCommentResponseDto {
     example: '2024-02-10T10:30:00.000Z'
   })
   updatedAt: string;
+}
+
+export class PostReactionResponseDto {
+  @ApiProperty({
+    description: 'Emoji de la réaction',
+    example: '👍'
+  })
+  emoji: string;
+
+  @ApiProperty({
+    description: 'Nombre d\'utilisateurs ayant cette réaction',
+    example: 12
+  })
+  count: number;
+
+  @ApiProperty({
+    description: 'Indique si l\'utilisateur actuel a cette réaction',
+    example: false
+  })
+  usersIncludeMe: boolean;
 }
 
 /**
@@ -137,6 +172,12 @@ export class PostResponseDto {
   })
   likes: number;
 
+  @ApiPropertyOptional({
+    description: 'Réactions du post',
+    type: [PostReactionResponseDto]
+  })
+  reactions?: PostReactionResponseDto[];
+
   @ApiProperty({
     description: 'Nombre de commentaires du post',
     example: 10
@@ -166,6 +207,18 @@ export class PostResponseDto {
     example: false
   })
   isBookmarkedByUser: boolean;
+
+  @ApiProperty({
+    description: 'Indique si le post est épinglé',
+    example: false
+  })
+  isPinned: boolean;
+
+  @ApiPropertyOptional({
+    description: 'Date d\'épinglage du post',
+    example: '2024-02-10T10:00:00.000Z'
+  })
+  pinnedAt?: string;
 
   @ApiProperty({
     description: 'Commentaires du post',

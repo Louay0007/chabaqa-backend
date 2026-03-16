@@ -7,6 +7,7 @@ import { Community, CommunitySchema } from '../schema/community.schema';
 import { User, UserSchema } from '../schema/user.schema';
 import { AuthModule } from '../auth/auth.module';
 import { TrackingModule } from '../common/modules/tracking.module';
+import { NotificationModule } from '../notification/notification.module';
 
 @Module({
   imports: [
@@ -16,7 +17,8 @@ import { TrackingModule } from '../common/modules/tracking.module';
       { name: User.name, schema: UserSchema }
     ]),
     AuthModule,
-    TrackingModule
+    TrackingModule,
+    NotificationModule,
   ],
   controllers: [PostController],
   providers: [PostService],

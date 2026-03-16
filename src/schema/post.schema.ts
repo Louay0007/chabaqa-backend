@@ -27,6 +27,12 @@ export class PostComment {
   userId: Types.ObjectId;
 
   @Prop({
+    required: false,
+    type: String
+  })
+  parentId?: string;
+
+  @Prop({
     required: true,
     type: Date,
     default: Date.now
@@ -50,9 +56,29 @@ export interface PostCommentDocument extends Document {
   id: string;
   content: string;
   userId: Types.ObjectId;
+  parentId?: string;
   createdAt: Date;
   updatedAt: Date;
 }
+
+@Schema({ _id: false })
+export class PostReaction {
+  @Prop({
+    required: true,
+    type: String,
+    trim: true,
+  })
+  emoji: string;
+
+  @Prop({
+    type: [Types.ObjectId],
+    ref: 'User',
+    default: []
+  })
+  userIds: Types.ObjectId[];
+}
+
+export const PostReactionSchema = SchemaFactory.createForClass(PostReaction);
 
 /**
  * Schéma principal pour l'entité Post
@@ -210,6 +236,31 @@ export class Post {
   })
   bookmarks: Types.ObjectId[];
 
+  @Prop({
+    type: [PostReactionSchema],
+    default: []
+  })
+  reactions: PostReaction[];
+
+  @Prop({
+    type: Boolean,
+    default: false,
+  })
+  isPinned: boolean;
+
+  @Prop({
+    type: Date,
+    required: false,
+  })
+  pinnedAt?: Date;
+
+  @Prop({
+    type: [Types.ObjectId],
+    ref: 'User',
+    default: []
+  })
+  mentionedUserIds: Types.ObjectId[];
+
   /**
    * Images attachées au post
    */
@@ -341,6 +392,10 @@ export interface PostDocument extends Document {
   likedBy: Types.ObjectId[];
   sharedBy: Types.ObjectId[];
   bookmarks: Types.ObjectId[];
+  reactions: PostReaction[];
+  isPinned: boolean;
+  pinnedAt?: Date;
+  mentionedUserIds: Types.ObjectId[];
   images: string[];
   videos: string[];
   links: { url: string; title?: string; description?: string; thumbnail?: string }[];
@@ -382,6 +437,7 @@ export const PostSchema = SchemaFactory.createForClass(Post);
 
 // Index pour optimiser les requêtes
 PostSchema.index({ communityId: 1, isPublished: 1, createdAt: -1 });
+PostSchema.index({ communityId: 1, isPinned: -1, createdAt: -1 });
 PostSchema.index({ authorId: 1, isPublished: 1 });
 PostSchema.index({ tags: 1 });
 PostSchema.index({ likes: -1 });
@@ -416,7 +472,19 @@ PostSchema.methods.addComment = function (comment: PostComment): void {
 
 // Méthode pour supprimer un commentaire
 PostSchema.methods.removeComment = function (commentId: string): void {
-  this.comments = this.comments.filter(comment => comment.id !== commentId);
+  const target = this.comments.find((comment) => comment.id === commentId);
+  if (!target) return;
+
+  const idsToRemove = new Set<string>([commentId]);
+  if (!target.parentId) {
+    this.comments.forEach((comment) => {
+      if (comment.parentId === commentId) {
+        idsToRemove.add(comment.id);
+      }
+    });
+  }
+
+  this.comments = this.comments.filter((comment) => !idsToRemove.has(comment.id));
 };
 
 // Méthode pour mettre à jour un commentaire

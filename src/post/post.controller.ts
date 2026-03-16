@@ -25,6 +25,7 @@ import { PostService } from './post.service';
 import { CreatePostDto } from '../dto-post/create-post.dto';
 import { UpdatePostDto } from '../dto-post/update-post.dto';
 import { CreatePostCommentDto } from '../dto-post/create-post.dto';
+import { ReactPostDto } from '../dto-post/react-post.dto';
 import {
   PostResponseDto,
   PostListResponseDto,
@@ -578,6 +579,68 @@ export class PostController {
     }
     const stats = await this.postService.unlikePost(postId, userId);
     return { success: true, data: stats };
+  }
+
+  @Post(':id/react')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Ajouter/retirer une réaction emoji' })
+  @ApiResponse({
+    status: 200,
+    description: 'Réaction mise à jour avec succès',
+    type: PostResponseDto,
+  })
+  @ApiResponse({ status: 400, description: 'Emoji invalide' })
+  @ApiResponse({ status: 401, description: 'Non autorisé' })
+  @ApiResponse({ status: 404, description: 'Post non trouvé' })
+  async reactToPost(
+    @Param('id') postId: string,
+    @Body() reactPostDto: ReactPostDto,
+    @Request() req,
+  ): Promise<{ success: boolean; data: PostResponseDto }> {
+    const userId = this.resolveRequestUserId(req);
+    if (!userId) throw new UnauthorizedException();
+
+    const post = await this.postService.reactToPost(postId, reactPostDto.emoji, userId);
+    return { success: true, data: post };
+  }
+
+  @Patch(':id/pin')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Épingler un post dans la communauté' })
+  @ApiResponse({ status: 200, description: 'Post épinglé', type: PostResponseDto })
+  @ApiResponse({ status: 401, description: 'Non autorisé' })
+  @ApiResponse({ status: 403, description: 'Action réservée au créateur' })
+  @ApiResponse({ status: 404, description: 'Post non trouvé' })
+  async pinPost(
+    @Param('id') postId: string,
+    @Request() req,
+  ): Promise<{ success: boolean; data: PostResponseDto }> {
+    const userId = this.resolveRequestUserId(req);
+    if (!userId) throw new UnauthorizedException();
+
+    const post = await this.postService.pinPost(postId, userId);
+    return { success: true, data: post };
+  }
+
+  @Patch(':id/unpin')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Désépingler un post dans la communauté' })
+  @ApiResponse({ status: 200, description: 'Post désépinglé', type: PostResponseDto })
+  @ApiResponse({ status: 401, description: 'Non autorisé' })
+  @ApiResponse({ status: 403, description: 'Action réservée au créateur' })
+  @ApiResponse({ status: 404, description: 'Post non trouvé' })
+  async unpinPost(
+    @Param('id') postId: string,
+    @Request() req,
+  ): Promise<{ success: boolean; data: PostResponseDto }> {
+    const userId = this.resolveRequestUserId(req);
+    if (!userId) throw new UnauthorizedException();
+
+    const post = await this.postService.unpinPost(postId, userId);
+    return { success: true, data: post };
   }
 
   @Post(':id/share')

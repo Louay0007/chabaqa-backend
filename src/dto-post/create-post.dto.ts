@@ -51,6 +51,14 @@ export class CreatePostCommentDto {
   @IsNotEmpty()
   @MaxLength(2000, { message: 'Le contenu du commentaire ne peut pas dépasser 2000 caractères' })
   content: string;
+
+  @ApiPropertyOptional({
+    description: 'ID du commentaire parent pour une réponse',
+    example: 'comment_123'
+  })
+  @IsString()
+  @IsOptional()
+  parentId?: string;
 }
 
 /**

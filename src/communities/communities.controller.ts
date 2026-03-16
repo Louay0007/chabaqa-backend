@@ -23,6 +23,7 @@ import { CommunityPageContentService } from '../community-page-content/community
 import { HttpCacheInterceptor } from '../common/interceptors/cache.interceptor';
 import { CacheTTL, CacheDuration } from '../common/decorators/cache-ttl.decorator';
 import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 @ApiTags('Communities Discovery')
 @Controller('communities')
@@ -219,6 +220,37 @@ export class CommunitiesController {
     const categories = await this.communitiesService.getCategories();
     
     return { categories };
+  }
+
+  @Get(':communityId/members/search')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Search members in a community',
+    description: 'Returns members for @mention autocomplete',
+  })
+  @ApiParam({ name: 'communityId', description: 'Community ID' })
+  @ApiQuery({ name: 'q', required: false, type: String, description: 'Search query (username/name)' })
+  @ApiQuery({ name: 'limit', required: false, type: Number, description: 'Max results (default: 8)' })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Members retrieved successfully',
+  })
+  async searchCommunityMembers(
+    @Param('communityId') communityId: string,
+    @Query('q') q?: string,
+    @Query('limit') limit?: number,
+  ) {
+    const members = await this.communitiesService.searchCommunityMembers(
+      communityId,
+      q || '',
+      Number(limit) || 8,
+    );
+
+    return {
+      success: true,
+      data: members,
+    };
   }
 
   /**
