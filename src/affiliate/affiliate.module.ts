@@ -17,10 +17,12 @@ import { AffiliateAdminController } from './affiliate-admin.controller';
 import { AffiliateRedirectController } from './affiliate-redirect.controller';
 import { Order, OrderSchema } from '../schema/order.schema';
 import { User, UserSchema } from '../schema/user.schema';
+import { CommunityAccessModule } from '../community-access/community-access.module';
 
 @Module({
   imports: [
     ScheduleModule.forRoot(),
+    CommunityAccessModule,
     MongooseModule.forFeature([
       { name: AffiliateProgram.name, schema: AffiliateProgramSchema },
       { name: AffiliatePartner.name, schema: AffiliatePartnerSchema },
