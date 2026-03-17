@@ -1,11 +1,13 @@
 
-import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Req, UseGuards } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { NotificationService } from './notification.service';
 import { NotificationDto } from '../dto-notification/notification.dto';
 import { RemovePushSubscriptionDto, SavePushSubscriptionDto } from '../dto-notification/push-subscription.dto';
 import { UpdateNotificationPreferencesDto } from '../dto-notification/update-notification-preferences.dto';
+import { BulkUpsertPreferenceItemsDto, UpsertNotificationPreferenceItemDto } from '../dto-notification/notification-preference-item.dto';
+import { CreateNotificationMuteDto } from '../dto-notification/notification-mute.dto';
 
 @ApiTags('notifications')
 @ApiBearerAuth()
@@ -117,6 +119,114 @@ export class NotificationController {
     return {
       success: true,
       message: 'Push subscription removed successfully',
+    };
+  }
+
+  @Get('push/status')
+  @ApiOperation({ summary: 'Get push notification status for current user' })
+  @ApiResponse({ status: 200 })
+  async getPushStatus(@Req() req) {
+    const status = await this.notificationService.getPushStatus(req.user._id);
+    return {
+      success: true,
+      message: 'Push status retrieved successfully',
+      data: status,
+    };
+  }
+
+  @Post('push/test')
+  @ApiOperation({ summary: 'Send a test push notification to current user' })
+  @ApiResponse({ status: 200 })
+  async sendTestPush(@Req() req) {
+    const result = await this.notificationService.sendTestPush(req.user._id);
+    return {
+      success: true,
+      message: result.message,
+      data: result,
+    };
+  }
+
+  // ===== Preference Items (per-community overrides) =====
+
+  @Get('preferences/items')
+  @ApiOperation({ summary: 'Get notification preference items (global or per-community)' })
+  @ApiQuery({ name: 'communityId', required: false })
+  @ApiResponse({ status: 200 })
+  async getPreferenceItems(@Req() req, @Query('communityId') communityId?: string) {
+    const items = await this.notificationService.getPreferenceItems(
+      req.user._id,
+      communityId === undefined ? undefined : communityId || null,
+    );
+    return {
+      success: true,
+      message: 'Preference items retrieved successfully',
+      data: items,
+    };
+  }
+
+  @Put('preferences/items')
+  @ApiOperation({ summary: 'Upsert a single notification preference item' })
+  @ApiResponse({ status: 200 })
+  async upsertPreferenceItem(@Req() req, @Body() dto: UpsertNotificationPreferenceItemDto) {
+    const item = await this.notificationService.upsertPreferenceItem(req.user._id, dto);
+    return {
+      success: true,
+      message: 'Preference item saved successfully',
+      data: item,
+    };
+  }
+
+  @Put('preferences/items/bulk')
+  @ApiOperation({ summary: 'Bulk upsert notification preference items' })
+  @ApiResponse({ status: 200 })
+  async bulkUpsertPreferenceItems(@Req() req, @Body() dto: BulkUpsertPreferenceItemsDto) {
+    const items = await this.notificationService.bulkUpsertPreferenceItems(req.user._id, dto.items);
+    return {
+      success: true,
+      message: 'Preference items saved successfully',
+      data: items,
+    };
+  }
+
+  // ===== Mutes =====
+
+  @Get('mutes')
+  @ApiOperation({ summary: 'Get all notification mutes for current user' })
+  @ApiResponse({ status: 200 })
+  async getUserMutes(@Req() req) {
+    const mutes = await this.notificationService.getUserMutes(req.user._id);
+    return {
+      success: true,
+      message: 'Mutes retrieved successfully',
+      data: mutes,
+    };
+  }
+
+  @Post('mutes')
+  @ApiOperation({ summary: 'Create or update a notification mute' })
+  @ApiResponse({ status: 200 })
+  async createMute(@Req() req, @Body() dto: CreateNotificationMuteDto) {
+    const mute = await this.notificationService.createMute(req.user._id, dto);
+    return {
+      success: true,
+      message: 'Mute created successfully',
+      data: mute,
+    };
+  }
+
+  @Delete('mutes/:targetType/:targetId')
+  @ApiOperation({ summary: 'Remove a notification mute' })
+  @ApiResponse({ status: 200 })
+  async removeMute(
+    @Req() req,
+    @Param('targetType') targetType: string,
+    @Param('targetId') targetId: string,
+  ) {
+    const removed = await this.notificationService.removeMute(req.user._id, targetType, targetId);
+    return {
+      success: true,
+      message: removed ? 'Mute removed successfully' : 'Mute not found',
+      data: { removed },
     };
   }
 }
