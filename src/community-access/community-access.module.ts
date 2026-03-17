@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Global, Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { Community, CommunitySchema } from '../schema/community.schema';
 import {
@@ -10,6 +10,7 @@ import { CommunityStaffController } from './community-staff.controller';
 import { CommunityMeAccessController } from './community-me-access.controller';
 import { CommunityPermissionGuard } from './community-permission.guard';
 
+@Global()
 @Module({
   imports: [
     MongooseModule.forFeature([
