@@ -10,6 +10,14 @@ This repository now deploys backend/frontend as native host processes managed by
 
 The script builds apps, syncs runtime artifacts to `/var/www`, restarts Supervisor programs, verifies runtime env wiring, checks Redis connectivity, and (when enabled) deploys monitoring.
 
+## GitHub Actions deploy
+
+The backend repo workflow `Deploy to VPS` SSHes into the server and runs the VPS-side script:
+
+- `/home/ubuntu/chabaqa/scripts/deploy-from-github.sh`
+
+It then verifies `chabaqa-backend` is `RUNNING` in Supervisor and hits the health endpoint (default `http://127.0.0.1:3000/api/health`).
+
 ## Required services on host
 
 - Supervisor (`supervisorctl` available)
