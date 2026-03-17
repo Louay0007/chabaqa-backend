@@ -36,6 +36,9 @@ import {
 import { SharePostRequestDto } from '../dto-post/share-post.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { HttpCacheInterceptor } from '../common/interceptors/cache.interceptor';
+import { CommunityPermissionGuard } from '../community-access/community-permission.guard';
+import { RequireCommunityPermission, CommunityIdFrom } from '../community-access/community-permission.decorator';
+import { CommunityPermission } from '../common/permissions';
 
 @ApiTags('Posts')
 @Controller('posts')
@@ -110,7 +113,9 @@ export class PostController {
   }
 
   @Post()
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.POSTS_MODERATE)
+  @CommunityIdFrom({ type: 'body', name: 'communityId' })
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Créer un nouveau post' })
   @ApiResponse({
@@ -351,7 +356,9 @@ export class PostController {
   }
 
   @Patch(':id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.POSTS_MODERATE)
+  @CommunityIdFrom({ type: 'entity', modelName: 'Post', paramName: 'id' })
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Mettre à jour un post' })
   @ApiResponse({
@@ -379,7 +386,9 @@ export class PostController {
   }
 
   @Delete(':id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.POSTS_MODERATE)
+  @CommunityIdFrom({ type: 'entity', modelName: 'Post', paramName: 'id' })
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Supprimer un post' })
   @ApiResponse({ status: 200, description: 'Post supprimé avec succès' })
@@ -447,7 +456,9 @@ export class PostController {
   }
 
   @Delete(':id/comments/:commentId')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.POSTS_MODERATE)
+  @CommunityIdFrom({ type: 'entity', modelName: 'Post', paramName: 'id' })
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Supprimer un commentaire' })
   @ApiResponse({ status: 200, description: 'Commentaire supprimé avec succès' })
@@ -606,7 +617,9 @@ export class PostController {
   }
 
   @Patch(':id/pin')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.POSTS_MODERATE)
+  @CommunityIdFrom({ type: 'entity', modelName: 'Post', paramName: 'id' })
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Épingler un post dans la communauté' })
   @ApiResponse({ status: 200, description: 'Post épinglé', type: PostResponseDto })
@@ -625,7 +638,9 @@ export class PostController {
   }
 
   @Patch(':id/unpin')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.POSTS_MODERATE)
+  @CommunityIdFrom({ type: 'entity', modelName: 'Post', paramName: 'id' })
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Désépingler un post dans la communauté' })
   @ApiResponse({ status: 200, description: 'Post désépinglé', type: PostResponseDto })

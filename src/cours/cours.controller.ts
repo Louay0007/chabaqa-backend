@@ -8,6 +8,9 @@ import { CoursProgressionService } from './services/cours-progression.service';
 import { CoursNotesService } from './services/cours-notes.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
+import { CommunityPermissionGuard } from '../community-access/community-permission.guard';
+import { RequireCommunityPermission, CommunityIdFrom } from '../community-access/community-permission.decorator';
+import { CommunityPermission } from '../common/permissions';
 import { CreateCoursDto } from '../dto-cours/create-cours.dto';
 import { CreateUserNoteDto, UpdateUserNoteDto, UserNoteResponseDto } from '../dto-cours/user-note.dto';
 import { AddSectionDto } from '../dto-cours/add-section.dto';
@@ -130,7 +133,8 @@ export class CoursController {
 
 	// ============ CRÉATION DE COURS ============
 
-	@UseGuards(JwtAuthGuard)
+	@UseGuards(JwtAuthGuard, CommunityPermissionGuard)
+	@RequireCommunityPermission(CommunityPermission.CONTENT_MANAGE)
 	@ApiBearerAuth('JWT-auth')
 	@Post('create-cours')
 	@ApiOperation({
@@ -264,7 +268,8 @@ export class CoursController {
 	}
 
 	// Alias de compatibilité: POST /cours/create
-	@UseGuards(JwtAuthGuard)
+	@UseGuards(JwtAuthGuard, CommunityPermissionGuard)
+	@RequireCommunityPermission(CommunityPermission.CONTENT_MANAGE)
 	@ApiBearerAuth('JWT-auth')
 	@Post('create')
 	@ApiOperation({ summary: 'Créer un cours (alias /create-cours)' })
@@ -275,7 +280,8 @@ export class CoursController {
 	}
 
 	// Alias de compatibilité: POST /cours
-	@UseGuards(JwtAuthGuard)
+	@UseGuards(JwtAuthGuard, CommunityPermissionGuard)
+	@RequireCommunityPermission(CommunityPermission.CONTENT_MANAGE)
 	@ApiBearerAuth('JWT-auth')
 	@Post()
 	@ApiOperation({ summary: 'Créer un cours (alias racine)' })
@@ -455,7 +461,9 @@ export class CoursController {
 
 	// ============ GESTION DE COURS ============
 
-	@UseGuards(JwtAuthGuard)
+	@UseGuards(JwtAuthGuard, CommunityPermissionGuard)
+	@RequireCommunityPermission(CommunityPermission.CONTENT_MANAGE)
+	@CommunityIdFrom({ type: 'entity', modelName: 'Cours', paramName: 'id' })
 	@ApiBearerAuth('JWT-auth')
 	@Patch(':id')
 	@ApiOperation({ summary: 'Mettre à jour un cours' })
@@ -464,7 +472,9 @@ export class CoursController {
 		return await this.coursContentService.updateCours(id, dto, user._id);
 	}
 
-	@UseGuards(JwtAuthGuard)
+	@UseGuards(JwtAuthGuard, CommunityPermissionGuard)
+	@RequireCommunityPermission(CommunityPermission.CONTENT_MANAGE)
+	@CommunityIdFrom({ type: 'entity', modelName: 'Cours', paramName: 'id' })
 	@ApiBearerAuth('JWT-auth')
 	@Patch(':id/toggle-publication')
 	@ApiOperation({ summary: 'Publier/Dépublier un cours' })
@@ -473,7 +483,9 @@ export class CoursController {
 		return await this.coursContentService.togglePublication(id, user._id);
 	}
 
-	@UseGuards(JwtAuthGuard)
+	@UseGuards(JwtAuthGuard, CommunityPermissionGuard)
+	@RequireCommunityPermission(CommunityPermission.CONTENT_MANAGE)
+	@CommunityIdFrom({ type: 'entity', modelName: 'Cours', paramName: 'id' })
 	@ApiBearerAuth('JWT-auth')
 	@Delete(':id')
 	@ApiOperation({ summary: 'Supprimer un cours' })
@@ -484,7 +496,9 @@ export class CoursController {
 
 	// ============ GESTION DES SECTIONS ============
 
-	@UseGuards(JwtAuthGuard)
+	@UseGuards(JwtAuthGuard, CommunityPermissionGuard)
+	@RequireCommunityPermission(CommunityPermission.CONTENT_MANAGE)
+	@CommunityIdFrom({ type: 'entity', modelName: 'Cours', paramName: 'coursId' })
 	@ApiBearerAuth('JWT-auth')
 	@Patch(':coursId/sections/:sectionId')
 	@ApiOperation({ summary: 'Mettre à jour une section' })
@@ -498,7 +512,9 @@ export class CoursController {
 		return await this.coursContentService.updateSection(coursId, sectionId, dto, user._id);
 	}
 
-	@UseGuards(JwtAuthGuard)
+	@UseGuards(JwtAuthGuard, CommunityPermissionGuard)
+	@RequireCommunityPermission(CommunityPermission.CONTENT_MANAGE)
+	@CommunityIdFrom({ type: 'entity', modelName: 'Cours', paramName: 'id' })
 	@ApiBearerAuth('JWT-auth')
 	@Post(':id/add-section')
 	@ApiOperation({ summary: 'Ajouter une section à un cours' })
@@ -511,7 +527,9 @@ export class CoursController {
 		return await this.coursContentService.ajouterSection(id, dto, user._id);
 	}
 
-	@UseGuards(JwtAuthGuard)
+	@UseGuards(JwtAuthGuard, CommunityPermissionGuard)
+	@RequireCommunityPermission(CommunityPermission.CONTENT_MANAGE)
+	@CommunityIdFrom({ type: 'entity', modelName: 'Cours', paramName: 'coursId' })
 	@ApiBearerAuth('JWT-auth')
 	@Delete(':coursId/sections/:sectionId')
 	@ApiOperation({ summary: 'Supprimer une section d\'un cours' })

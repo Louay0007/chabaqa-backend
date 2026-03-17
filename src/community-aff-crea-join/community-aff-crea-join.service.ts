@@ -17,6 +17,7 @@ import { PaginatedResponseDto } from '../common/dto/paginated-response.dto';
 import { CacheService } from '../common/services/cache.service';
 import { Post, PostDocument } from '../schema/post.schema';
 import { EmailCampaignService } from '../email-campaign/email-campaign.service';
+import { CommunityStaff, CommunityStaffDocument } from '../schema/community-staff.schema';
 
 @Injectable()
 export class CommunityAffCreaJoinService implements OnModuleInit {
@@ -27,6 +28,7 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
     @InjectModel('ContentProgress') private contentProgressModel: Model<ContentProgressDocument>,
     @InjectModel('TrackingAction') private trackingActionModel: Model<any>,
     @InjectModel(Post.name) private postModel: Model<PostDocument>,
+    @InjectModel(CommunityStaff.name) private staffModel: Model<CommunityStaffDocument>,
     private readonly uploadService: UploadService,
     private readonly policyService: PolicyService,
     private readonly promoService: PromoService,
@@ -1340,13 +1342,34 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
     const adminIds = ((community as any).admins || []).map((a: any) => (a?._id ? a._id : a));
     const moderatorIds = ((community as any).moderateurs || []).map((m: any) => (m?._id ? m._id : m));
 
+    // Fetch staff records from the new RBAC system
+    const staffRecords = await this.staffModel
+      .find({ communityId: community._id, status: 'active' })
+      .lean()
+      .exec();
+    const staffMap = new Map<string, string>();
+    for (const s of staffRecords) {
+      staffMap.set(s.userId.toString(), s.role);
+    }
+
     const items = members.slice(start, end).map((u: any) => {
       const userId = u?._id ? u._id : u;
+      const userIdStr = userId.toString();
       const isCreator = creatorId && userId && new Types.ObjectId(userId).equals(creatorId);
-      const isAdmin = adminIds.some((a: any) => a && new Types.ObjectId(a).equals(userId));
-      const isModerator = moderatorIds.some((m: any) => m && new Types.ObjectId(m).equals(userId));
 
-      const role = isCreator || isAdmin ? 'admin' : isModerator ? 'moderator' : 'member';
+      // New RBAC staff role takes precedence over legacy arrays
+      const staffRole = staffMap.get(userIdStr);
+      let role: string;
+      if (isCreator) {
+        role = 'owner';
+      } else if (staffRole) {
+        role = staffRole; // 'admin' | 'moderator' | 'support'
+      } else {
+        // Fallback to legacy arrays
+        const isAdmin = adminIds.some((a: any) => a && new Types.ObjectId(a).equals(userId));
+        const isModerator = moderatorIds.some((m: any) => m && new Types.ObjectId(m).equals(userId));
+        role = isAdmin ? 'admin' : isModerator ? 'moderator' : 'member';
+      }
 
       return {
         id: `${community._id.toString()}-${userId.toString()}`,

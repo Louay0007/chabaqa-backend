@@ -44,6 +44,9 @@ import {
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 import { HttpCacheInterceptor } from '../common/interceptors/cache.interceptor';
+import { CommunityPermissionGuard } from '../community-access/community-permission.guard';
+import { RequireCommunityPermission, CommunityIdFrom } from '../community-access/community-permission.decorator';
+import { CommunityPermission } from '../common/permissions';
 
 const resolveRequestIpAddress = (req: any): string | undefined => {
   const forwarded = req?.headers?.['x-forwarded-for'];
@@ -92,7 +95,8 @@ export class ChallengeController {
   // ============================================================
 
   @Post()
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.CONTENT_MANAGE)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Créer un nouveau défi' })
   @ApiResponse({ status: 201, description: 'Défi créé avec succès', type: ChallengeResponseDto })
@@ -638,7 +642,9 @@ export class ChallengeController {
   // ============================================================
 
   @Patch(':id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.CONTENT_MANAGE)
+  @CommunityIdFrom({ type: 'entity', modelName: 'Challenge', paramName: 'id' })
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Mettre à jour un défi' })
   @ApiResponse({ status: 200, description: 'Défi mis à jour avec succès', type: ChallengeResponseDto })
@@ -655,7 +661,9 @@ export class ChallengeController {
   }
 
   @Put(':id/tasks')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.CONTENT_MANAGE)
+  @CommunityIdFrom({ type: 'entity', modelName: 'Challenge', paramName: 'id' })
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Mettre à jour uniquement les tâches d\'un défi' })
   @ApiResponse({ status: 200, description: 'Tâches mises à jour avec succès', type: ChallengeResponseDto })
@@ -672,7 +680,9 @@ export class ChallengeController {
   }
 
   @Delete(':id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.CONTENT_MANAGE)
+  @CommunityIdFrom({ type: 'entity', modelName: 'Challenge', paramName: 'id' })
   @ApiBearerAuth()
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Supprimer un défi' })
@@ -685,7 +695,9 @@ export class ChallengeController {
   }
 
   @Post(':id/publish')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.CONTENT_MANAGE)
+  @CommunityIdFrom({ type: 'entity', modelName: 'Challenge', paramName: 'id' })
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Publier un défi en brouillon (créateur uniquement)' })
   async publishChallenge(

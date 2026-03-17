@@ -20,6 +20,9 @@ import {
 } from '@nestjs/swagger';
 import { CommunityPageContentService } from './community-page-content.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { CommunityPermissionGuard } from '../community-access/community-permission.guard';
+import { RequireCommunityPermission } from '../community-access/community-permission.decorator';
+import { CommunityPermission } from '../common/permissions';
 import { 
   UpdateCommunityPageContentDto,
   PublishContentDto,
@@ -38,7 +41,8 @@ export class CommunityPageContentController {
    * Get page content for editing (creator only)
    */
   @Get(':communityId')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.COMMUNITY_MANAGE_SETTINGS)
   @ApiBearerAuth('JWT-auth')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -71,12 +75,13 @@ export class CommunityPageContentController {
    * Update page content sections
    */
   @Patch(':communityId')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.COMMUNITY_MANAGE_SETTINGS)
   @ApiBearerAuth('JWT-auth')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Update page content',
-    description: 'Update any section of the community page content. Supports partial updates. Only accessible by community creator.'
+    description: 'Update any section of the community page content. Supports partial updates. Only accessible by community staff with manage_settings.'
   })
   @ApiParam({ name: 'communityId', description: 'Community ID' })
   @ApiResponse({
@@ -131,7 +136,8 @@ export class CommunityPageContentController {
    * Publish or unpublish content
    */
   @Post(':communityId/publish')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.COMMUNITY_MANAGE_SETTINGS)
   @ApiBearerAuth('JWT-auth')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -179,7 +185,8 @@ export class CommunityPageContentController {
    * Add a testimonial with avatar upload
    */
   @Post(':communityId/testimonials')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.COMMUNITY_MANAGE_SETTINGS)
   @ApiBearerAuth('JWT-auth')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
@@ -238,7 +245,8 @@ export class CommunityPageContentController {
    * Delete a testimonial
    */
   @Delete(':communityId/testimonials/:testimonialId')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.COMMUNITY_MANAGE_SETTINGS)
   @ApiBearerAuth('JWT-auth')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({

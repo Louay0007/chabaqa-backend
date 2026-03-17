@@ -15,6 +15,9 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiBody, ApiOperation, ApiParam, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { CommunityPermissionGuard } from '../community-access/community-permission.guard';
+import { RequireCommunityPermission, CommunityIdFrom } from '../community-access/community-permission.decorator';
+import { CommunityPermission } from '../common/permissions';
 import {
   CampaignStatsDto,
   CreateContentReminderDto,
@@ -43,12 +46,16 @@ export class EmailCampaignController {
   constructor(private readonly emailCampaignService: EmailCampaignService) {}
 
   @Post()
+  @UseGuards(CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.MARKETING_MANAGE)
   @ApiOperation({ summary: 'Create email campaign' })
   createCampaign(@Request() req, @Body() dto: CreateEmailCampaignDto): Promise<EmailCampaignDocument> {
     return this.emailCampaignService.createCampaign(req.user._id, dto);
   }
 
   @Post('inactive-users')
+  @UseGuards(CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.MARKETING_MANAGE)
   @ApiOperation({ summary: 'Create inactive user campaign' })
   createInactiveUserCampaign(
     @Request() req,
@@ -58,6 +65,8 @@ export class EmailCampaignController {
   }
 
   @Post('content-reminder')
+  @UseGuards(CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.MARKETING_MANAGE)
   @ApiOperation({ summary: 'Create content reminder campaign and queue send' })
   async createAndSendContentReminder(
     @Request() req,
@@ -67,6 +76,8 @@ export class EmailCampaignController {
   }
 
   @Get('community/:communityId')
+  @UseGuards(CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.MARKETING_MANAGE)
   @ApiOperation({ summary: 'Get community campaigns' })
   getCommunityCampaigns(
     @Request() req,
@@ -77,12 +88,16 @@ export class EmailCampaignController {
   }
 
   @Get('community/:communityId/stats')
+  @UseGuards(CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.MARKETING_MANAGE)
   @ApiOperation({ summary: 'Get campaign stats for community' })
   getCampaignStats(@Request() req, @Param('communityId') communityId: string): Promise<CampaignStatsDto> {
     return this.emailCampaignService.getCampaignStats(req.user._id, communityId);
   }
 
   @Get('community/:communityId/inactive-users')
+  @UseGuards(CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.MARKETING_MANAGE)
   @ApiOperation({ summary: 'Get inactive users with period/limit filters' })
   getInactiveUsers(
     @Request() req,
@@ -93,6 +108,8 @@ export class EmailCampaignController {
   }
 
   @Get('community/:communityId/inactive-stats')
+  @UseGuards(CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.MARKETING_MANAGE)
   @ApiOperation({ summary: 'Get inactive user stats for community' })
   getInactiveStats(
     @Request() req,
@@ -117,6 +134,9 @@ export class EmailCampaignController {
 
   @Post(':campaignId/send')
   @HttpCode(HttpStatus.ACCEPTED)
+  @UseGuards(CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.MARKETING_MANAGE)
+  @CommunityIdFrom({ type: 'entity', modelName: 'EmailCampaign', paramName: 'campaignId' })
   @ApiOperation({ summary: 'Queue campaign for sending' })
   @ApiParam({ name: 'campaignId' })
   @ApiResponse({
@@ -137,6 +157,9 @@ export class EmailCampaignController {
 
   @Post(':campaignId/cancel')
   @HttpCode(HttpStatus.OK)
+  @UseGuards(CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.MARKETING_MANAGE)
+  @CommunityIdFrom({ type: 'entity', modelName: 'EmailCampaign', paramName: 'campaignId' })
   @ApiOperation({ summary: 'Cancel scheduled campaign' })
   async cancelCampaign(
     @Request() req,
@@ -147,6 +170,9 @@ export class EmailCampaignController {
   }
 
   @Post(':campaignId/duplicate')
+  @UseGuards(CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.MARKETING_MANAGE)
+  @CommunityIdFrom({ type: 'entity', modelName: 'EmailCampaign', paramName: 'campaignId' })
   @ApiOperation({ summary: 'Duplicate campaign' })
   duplicateCampaign(
     @Request() req,
@@ -157,6 +183,9 @@ export class EmailCampaignController {
   }
 
   @Get(':campaignId/recipients')
+  @UseGuards(CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.MARKETING_MANAGE)
+  @CommunityIdFrom({ type: 'entity', modelName: 'EmailCampaign', paramName: 'campaignId' })
   @ApiOperation({ summary: 'Get campaign recipients' })
   getCampaignRecipients(
     @Request() req,
@@ -201,12 +230,18 @@ export class EmailCampaignController {
   }
 
   @Get(':campaignId')
+  @UseGuards(CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.MARKETING_MANAGE)
+  @CommunityIdFrom({ type: 'entity', modelName: 'EmailCampaign', paramName: 'campaignId' })
   @ApiOperation({ summary: 'Get campaign details' })
   getCampaign(@Request() req, @Param('campaignId') campaignId: string): Promise<EmailCampaignDocument> {
     return this.emailCampaignService.getCampaign(campaignId, req.user._id);
   }
 
   @Put(':campaignId')
+  @UseGuards(CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.MARKETING_MANAGE)
+  @CommunityIdFrom({ type: 'entity', modelName: 'EmailCampaign', paramName: 'campaignId' })
   @ApiOperation({ summary: 'Update campaign' })
   updateCampaign(
     @Request() req,
@@ -218,6 +253,9 @@ export class EmailCampaignController {
 
   @Delete(':campaignId')
   @HttpCode(HttpStatus.NO_CONTENT)
+  @UseGuards(CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.MARKETING_MANAGE)
+  @CommunityIdFrom({ type: 'entity', modelName: 'EmailCampaign', paramName: 'campaignId' })
   @ApiOperation({ summary: 'Delete campaign' })
   deleteCampaign(@Request() req, @Param('campaignId') campaignId: string): Promise<void> {
     return this.emailCampaignService.deleteCampaign(campaignId, req.user._id);
@@ -226,6 +264,8 @@ export class EmailCampaignController {
   // ─── Course Progress Campaigns ──────────────────────────────────────────────
 
   @Post('course-progress')
+  @UseGuards(CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.MARKETING_MANAGE)
   @ApiOperation({
     summary: 'Create course-progress reminder campaign',
     description:
@@ -242,6 +282,8 @@ export class EmailCampaignController {
   // ─── Audience Preview ───────────────────────────────────────────────────────
 
   @Post('preview-audience')
+  @UseGuards(CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.MARKETING_MANAGE)
   @ApiOperation({
     summary: 'Preview the audience for a filter before sending',
     description:
@@ -258,6 +300,8 @@ export class EmailCampaignController {
   // ─── Welcome / Automation Templates ────────────────────────────────────────
 
   @Post('welcome-template/:communityId')
+  @UseGuards(CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.MARKETING_MANAGE)
   @ApiOperation({
     summary: 'Create automated welcome email template',
     description:
@@ -274,6 +318,8 @@ export class EmailCampaignController {
   }
 
   @Get('welcome-template/:communityId')
+  @UseGuards(CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.MARKETING_MANAGE)
   @ApiOperation({ summary: 'Get active welcome email template for a community' })
   @ApiParam({ name: 'communityId' })
   getWelcomeTemplate(
@@ -284,6 +330,8 @@ export class EmailCampaignController {
   }
 
   @Put('welcome-template/:communityId')
+  @UseGuards(CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.MARKETING_MANAGE)
   @ApiOperation({ summary: 'Update the welcome email template content' })
   @ApiParam({ name: 'communityId' })
   updateWelcomeTemplate(
@@ -296,6 +344,8 @@ export class EmailCampaignController {
 
   @Delete('welcome-template/:communityId')
   @HttpCode(HttpStatus.NO_CONTENT)
+  @UseGuards(CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.MARKETING_MANAGE)
   @ApiOperation({ summary: 'Delete the welcome email template' })
   @ApiParam({ name: 'communityId' })
   deleteWelcomeTemplate(
@@ -306,6 +356,8 @@ export class EmailCampaignController {
   }
 
   @Patch('welcome-template/:communityId/toggle')
+  @UseGuards(CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.MARKETING_MANAGE)
   @ApiOperation({ summary: 'Enable or disable the welcome email automation' })
   @ApiParam({ name: 'communityId' })
   @ApiBody({
@@ -326,6 +378,8 @@ export class EmailCampaignController {
   // ─── Continuous Inactivity Automations ─────────────────────────────────────
 
   @Post('inactivity-automation')
+  @UseGuards(CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.MARKETING_MANAGE)
   @ApiOperation({
     summary: 'Create a continuous inactivity automation',
     description:
@@ -341,6 +395,8 @@ export class EmailCampaignController {
   }
 
   @Get('inactivity-automation/:communityId')
+  @UseGuards(CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.MARKETING_MANAGE)
   @ApiOperation({ summary: 'List all inactivity automations for a community' })
   @ApiParam({ name: 'communityId' })
   getInactivityAutomations(
@@ -351,6 +407,9 @@ export class EmailCampaignController {
   }
 
   @Patch('inactivity-automation/:automationId/toggle')
+  @UseGuards(CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.MARKETING_MANAGE)
+  @CommunityIdFrom({ type: 'entity', modelName: 'EmailCampaign', paramName: 'automationId' })
   @ApiOperation({ summary: 'Enable or disable an inactivity automation' })
   @ApiParam({ name: 'automationId' })
   @ApiBody({

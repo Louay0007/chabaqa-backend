@@ -23,6 +23,9 @@ import {
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 import { CommunityInvitationService } from './community-invitation.service';
+import { CommunityPermissionGuard } from '../community-access/community-permission.guard';
+import { RequireCommunityPermission, CommunityIdFrom } from '../community-access/community-permission.decorator';
+import { CommunityPermission } from '../common/permissions';
 import {
   ImportContactsDto,
   InviteSingleDto,
@@ -41,7 +44,8 @@ export class CommunityInvitationController {
   // -----------------------------------------------------------------------
 
   @Post('import')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.MEMBERS_MANAGE)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Bulk import contacts and send invitations' })
   @ApiBody({ type: ImportContactsDto })
@@ -58,7 +62,8 @@ export class CommunityInvitationController {
   // -----------------------------------------------------------------------
 
   @Post('single')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.MEMBERS_MANAGE)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Invite a single contact' })
   @ApiBody({ type: InviteSingleDto })
@@ -103,7 +108,8 @@ export class CommunityInvitationController {
   // -----------------------------------------------------------------------
 
   @Get(':communityId')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.MEMBERS_VIEW)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'List invitations for a community' })
   @ApiParam({ name: 'communityId' })
@@ -121,7 +127,8 @@ export class CommunityInvitationController {
   }
 
   @Get(':communityId/stats')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.MEMBERS_VIEW)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get invitation statistics for a community' })
   @ApiParam({ name: 'communityId' })

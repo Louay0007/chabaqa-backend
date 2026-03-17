@@ -21,6 +21,9 @@ import { EventResponseDto, EventListResponseDto, EventStatsResponseDto } from '.
 import { EventQrTokenResponseDto } from '../dto-event/event-qr-token.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { HttpCacheInterceptor } from '../common/interceptors/cache.interceptor';
+import { CommunityPermissionGuard } from '../community-access/community-permission.guard';
+import { RequireCommunityPermission, CommunityIdFrom } from '../community-access/community-permission.decorator';
+import { CommunityPermission } from '../common/permissions';
 
 @ApiTags('Events')
 @Controller('events')
@@ -29,7 +32,8 @@ export class EventController {
   constructor(private readonly eventService: EventService) {}
 
   @Post()
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.CONTENT_MANAGE)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Créer un nouvel événement' })
   @ApiResponse({ status: 201, description: 'Événement créé avec succès', type: EventResponseDto })
@@ -251,7 +255,9 @@ export class EventController {
   }
 
   @Patch(':id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.CONTENT_MANAGE)
+  @CommunityIdFrom({ type: 'entity', modelName: 'Event', paramName: 'id' })
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Mettre à jour un événement' })
   @ApiResponse({ status: 200, description: 'Événement mis à jour avec succès', type: EventResponseDto })
@@ -280,7 +286,9 @@ export class EventController {
   }
 
   @Delete(':id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.CONTENT_MANAGE)
+  @CommunityIdFrom({ type: 'entity', modelName: 'Event', paramName: 'id' })
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Supprimer un événement' })
   @ApiResponse({ status: 200, description: 'Événement supprimé avec succès' })
@@ -297,7 +305,9 @@ export class EventController {
   }
 
   @Post(':id/sessions')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.CONTENT_MANAGE)
+  @CommunityIdFrom({ type: 'entity', modelName: 'Event', paramName: 'id' })
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Ajouter une session à un événement' })
   @ApiResponse({ status: 201, description: 'Session ajoutée avec succès' })
@@ -316,7 +326,9 @@ export class EventController {
   }
 
   @Delete(':id/sessions/:sessionId')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.CONTENT_MANAGE)
+  @CommunityIdFrom({ type: 'entity', modelName: 'Event', paramName: 'id' })
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Supprimer une session d\'un événement' })
   @ApiResponse({ status: 200, description: 'Session supprimée avec succès' })
@@ -334,7 +346,9 @@ export class EventController {
   }
 
   @Post(':id/tickets')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.CONTENT_MANAGE)
+  @CommunityIdFrom({ type: 'entity', modelName: 'Event', paramName: 'id' })
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Ajouter un billet à un événement' })
   @ApiResponse({ status: 201, description: 'Billet ajouté avec succès' })
@@ -353,7 +367,9 @@ export class EventController {
   }
 
   @Delete(':id/tickets/:ticketId')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.CONTENT_MANAGE)
+  @CommunityIdFrom({ type: 'entity', modelName: 'Event', paramName: 'id' })
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Supprimer un billet d\'un événement' })
   @ApiResponse({ status: 200, description: 'Billet supprimé avec succès' })
@@ -371,7 +387,9 @@ export class EventController {
   }
 
   @Post(':id/speakers')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.CONTENT_MANAGE)
+  @CommunityIdFrom({ type: 'entity', modelName: 'Event', paramName: 'id' })
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Ajouter un conférencier à un événement' })
   @ApiResponse({ status: 201, description: 'Conférencier ajouté avec succès' })
@@ -390,7 +408,9 @@ export class EventController {
   }
 
   @Delete(':id/speakers/:speakerId')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.CONTENT_MANAGE)
+  @CommunityIdFrom({ type: 'entity', modelName: 'Event', paramName: 'id' })
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Supprimer un conférencier d\'un événement' })
   @ApiResponse({ status: 200, description: 'Conférencier supprimé avec succès' })
@@ -408,7 +428,9 @@ export class EventController {
   }
 
   @Patch(':id/toggle-published')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.CONTENT_MANAGE)
+  @CommunityIdFrom({ type: 'entity', modelName: 'Event', paramName: 'id' })
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Basculer le statut de publication d\'un événement' })
   @ApiResponse({ status: 200, description: 'Statut de publication mis à jour avec succès' })

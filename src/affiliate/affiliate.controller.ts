@@ -5,6 +5,9 @@ import {
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AffiliateService } from './affiliate.service';
+import { CommunityPermissionGuard } from '../community-access/community-permission.guard';
+import { RequireCommunityPermission, OptionalCommunityPermission } from '../community-access/community-permission.decorator';
+import { CommunityPermission } from '../common/permissions';
 import {
   CreateProgramDto, UpdateProgramDto, InvitePartnerDto,
   UpdatePartnerDto, CreateLinkDto, StatsQueryDto,
@@ -26,6 +29,8 @@ export class AffiliateCreatorController {
   // ── Programs ──
 
   @Post('programs')
+  @UseGuards(CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.AFFILIATES_MANAGE)
   @ApiOperation({ summary: 'Create an affiliate program' })
   async createProgram(@Req() req: any, @Body() dto: CreateProgramDto) {
     return this.affiliateService.createProgram(this.getUserId(req), dto);
@@ -38,6 +43,9 @@ export class AffiliateCreatorController {
   }
 
   @Patch('programs/:id')
+  @UseGuards(CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.AFFILIATES_MANAGE)
+  @OptionalCommunityPermission()
   @ApiOperation({ summary: 'Update a program (pause/change rate)' })
   async updateProgram(@Req() req: any, @Param('id') id: string, @Body() dto: UpdateProgramDto) {
     return this.affiliateService.updateProgram(this.getUserId(req), id, dto);

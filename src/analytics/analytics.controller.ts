@@ -4,6 +4,9 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AnalyticsService } from './analytics.service';
 import { PlanTier } from '../schema/plan.schema';
 import { CreatorInsightsService } from './creator-insights.service';
+import { CommunityPermissionGuard } from '../community-access/community-permission.guard';
+import { RequireCommunityPermission, OptionalCommunityPermission } from '../community-access/community-permission.decorator';
+import { CommunityPermission } from '../common/permissions';
 
 @ApiTags('Creator Analytics')
 @Controller('analytics/creator')
@@ -67,6 +70,9 @@ export class AnalyticsController {
   }
 
   @Get('overview')
+  @UseGuards(CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.ANALYTICS_VIEW)
+  @OptionalCommunityPermission()
   @ApiOperation({ summary: 'Overview analytics for creator (plan-gated)' })
   @ApiQuery({ name: 'from', required: false, description: 'ISO date (inclusive)' })
   @ApiQuery({ name: 'to', required: false, description: 'ISO date (inclusive)' })
@@ -92,6 +98,9 @@ export class AnalyticsController {
   }
 
   @Get('devices')
+  @UseGuards(CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.ANALYTICS_VIEW)
+  @OptionalCommunityPermission()
   @ApiOperation({ summary: 'Audience devices breakdown' })
   @ApiQuery({ name: 'from', required: false })
   @ApiQuery({ name: 'to', required: false })
@@ -112,6 +121,9 @@ export class AnalyticsController {
   }
 
   @Get('referrers')
+  @UseGuards(CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.ANALYTICS_VIEW)
+  @OptionalCommunityPermission()
   @ApiOperation({ summary: 'Top referrers/UTMs' })
   @ApiQuery({ name: 'from', required: false })
   @ApiQuery({ name: 'to', required: false })
@@ -132,6 +144,9 @@ export class AnalyticsController {
   }
 
   @Get('funnel')
+  @UseGuards(CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.ANALYTICS_VIEW)
+  @OptionalCommunityPermission()
   @ApiOperation({ summary: 'Content funnel for a specific content item' })
   @ApiQuery({ name: 'contentType', required: true, description: 'course|challenge|session|event|product|post|community' })
   @ApiQuery({ name: 'contentId', required: true, description: 'Content identifier (id or Mongo _id)' })
@@ -291,6 +306,9 @@ export class AnalyticsController {
   }
 
   @Get('courses')
+  @UseGuards(CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.ANALYTICS_VIEW)
+  @OptionalCommunityPermission()
   @ApiOperation({ summary: 'Courses analytics (plan-gated)' })
   @ApiQuery({ name: 'from', required: false })
   @ApiQuery({ name: 'to', required: false })
@@ -311,6 +329,9 @@ export class AnalyticsController {
   }
 
   @Get('challenges')
+  @UseGuards(CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.ANALYTICS_VIEW)
+  @OptionalCommunityPermission()
   @ApiOperation({ summary: 'Challenges analytics (plan-gated)' })
   @ApiQuery({ name: 'from', required: false })
   @ApiQuery({ name: 'to', required: false })
@@ -331,6 +352,9 @@ export class AnalyticsController {
   }
 
   @Get('sessions')
+  @UseGuards(CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.ANALYTICS_VIEW)
+  @OptionalCommunityPermission()
   @ApiOperation({ summary: 'Sessions analytics (plan-gated)' })
   @ApiQuery({ name: 'from', required: false })
   @ApiQuery({ name: 'to', required: false })
@@ -351,6 +375,9 @@ export class AnalyticsController {
   }
 
   @Get('events')
+  @UseGuards(CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.ANALYTICS_VIEW)
+  @OptionalCommunityPermission()
   @ApiOperation({ summary: 'Events analytics (plan-gated)' })
   @ApiQuery({ name: 'from', required: false })
   @ApiQuery({ name: 'to', required: false })
@@ -371,6 +398,9 @@ export class AnalyticsController {
   }
 
   @Get('products')
+  @UseGuards(CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.ANALYTICS_VIEW)
+  @OptionalCommunityPermission()
   @ApiOperation({ summary: 'Products analytics (plan-gated)' })
   @ApiQuery({ name: 'from', required: false })
   @ApiQuery({ name: 'to', required: false })
@@ -391,6 +421,9 @@ export class AnalyticsController {
   }
 
   @Get('posts')
+  @UseGuards(CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.ANALYTICS_VIEW)
+  @OptionalCommunityPermission()
   @ApiOperation({ summary: 'Posts analytics (plan-gated)' })
   @ApiQuery({ name: 'from', required: false })
   @ApiQuery({ name: 'to', required: false })

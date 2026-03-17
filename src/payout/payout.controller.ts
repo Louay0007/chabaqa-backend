@@ -4,6 +4,9 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PayoutService } from './payout.service';
 import { Payout, PayoutStatus, PayoutMethod } from '../schema/payout.schema';
 import { UpdateBankCredentialsDto } from './dto/update-bank-credentials.dto';
+import { CommunityPermissionGuard } from '../community-access/community-permission.guard';
+import { RequireCommunityPermission, OptionalCommunityPermission } from '../community-access/community-permission.decorator';
+import { CommunityPermission } from '../common/permissions';
 
 export interface CreatePayoutDto {
   amount: number;
@@ -24,7 +27,8 @@ export class PayoutController {
   constructor(private readonly payoutService: PayoutService) {}
 
   @Post()
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.FINANCE_VIEW)
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({ summary: 'Request a new payout for the current creator' })
   @ApiBody({
@@ -60,7 +64,9 @@ export class PayoutController {
   }
 
   @Get()
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.FINANCE_VIEW)
+  @OptionalCommunityPermission()
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({ summary: 'Get all payouts for the current creator with pagination and filtering' })
   @ApiQuery({ name: 'status', required: false, enum: Object.values(PayoutStatus) })
@@ -95,7 +101,9 @@ export class PayoutController {
   }
 
   @Get('stats')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.FINANCE_VIEW)
+  @OptionalCommunityPermission()
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({ summary: 'Get payout statistics for the current creator' })
   @ApiQuery({ name: 'communityId', required: false, type: 'string', description: 'Filter by community' })
@@ -105,7 +113,9 @@ export class PayoutController {
   }
 
   @Get('available-balance')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.FINANCE_VIEW)
+  @OptionalCommunityPermission()
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({ summary: 'Get available balance for the current creator' })
   @ApiQuery({ name: 'communityId', required: false, type: 'string', description: 'Filter by community' })
