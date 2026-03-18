@@ -1393,12 +1393,59 @@ export class CoursService {
   /**
    * Transformer un document cours en DTO de réponse
    */
+  /**
+   * Extract video storage key from a video URL for protected delivery.
+   * Returns null for YouTube/Vimeo/external URLs (they don't need protection).
+   */
+  private extractVideoStorageKey(videoUrl: string | undefined): string | null {
+    if (!videoUrl) return null;
+    // Direct storage key format: "video/1234-uuid.mp4"
+    if (/^video\//.test(videoUrl)) return videoUrl;
+    // Relative path: "/uploads/video/1234-uuid.mp4"
+    const relMatch = videoUrl.match(/\/?uploads\/(video\/[^\s?#]+)/i);
+    if (relMatch) return relMatch[1];
+    // Absolute URL: "https://api.chabaqa.io/uploads/video/1234-uuid.mp4"
+    try {
+      const url = new URL(videoUrl);
+      const pathMatch = url.pathname.match(/\/?uploads\/(video\/[^\s?#]+)/i);
+      if (pathMatch) return pathMatch[1];
+    } catch { /* not a valid URL */ }
+    return null;
+  }
+
+  /**
+   * Determine which video fields to expose for a chapter.
+   * Premium chapters with local video: strip videoUrl, expose videoStorageKey + hasProtectedVideo.
+   * Preview/free chapters or YouTube/Vimeo: keep videoUrl as-is.
+   */
+  private resolveChapterVideoFields(chapitre: any): {
+    videoUrl: string;
+    videoStorageKey: string | null;
+    hasProtectedVideo: boolean;
+  } {
+    const rawUrl = chapitre.videoUrl || '';
+    const storageKey = this.extractVideoStorageKey(rawUrl);
+    const isPremium = !chapitre.isPreview;
+
+    // Premium chapter with local video → protect it
+    if (isPremium && storageKey) {
+      return {
+        videoUrl: '', // Don't expose the direct URL
+        videoStorageKey: storageKey,
+        hasProtectedVideo: true,
+      };
+    }
+
+    // Preview/free chapter or external embed (YouTube/Vimeo) → keep URL
+    return {
+      videoUrl: rawUrl ? this.uploadService.ensureAbsoluteUrl(rawUrl) : '',
+      videoStorageKey: storageKey, // May be null for YouTube
+      hasProtectedVideo: false,
+    };
+  }
+
   private async transformerEnReponse(cours: CoursDocument): Promise<CoursResponseDto> {
     try {
-      console.log('🔄 [TRANSFORM] Starting course transformation');
-      console.log('   📚 Course:', cours.titre);
-      console.log('   📁 Sections:', cours.sections?.length || 0);
-      
       // Récupérer la communauté pour avoir accès au slug (ID ou slug)
       let community: any = null;
       if (cours.communityId) {
@@ -1414,18 +1461,15 @@ export class CoursService {
       const tousLesChapitres = sections.flatMap(section => {
         const chapitres = Array.isArray(section.chapitres) ? section.chapitres : [];
         return chapitres.map(chapitre => {
-          const originalUrl = chapitre.videoUrl;
-          const transformedUrl = this.uploadService.ensureAbsoluteUrl(chapitre.videoUrl);
-          
-          if (originalUrl) {
-            console.log(`   🎬 Chapter "${chapitre.titre}": ${originalUrl} → ${transformedUrl}`);
-          }
+          const videoFields = this.resolveChapterVideoFields(chapitre);
           
           return {
             id: chapitre.id,
             titre: chapitre.titre,
             description: chapitre.contenu,
-            videoUrl: transformedUrl,
+            videoUrl: videoFields.videoUrl,
+            videoStorageKey: videoFields.videoStorageKey,
+            hasProtectedVideo: videoFields.hasProtectedVideo,
             isPaid: !chapitre.isPreview, // Inverse de isPreview
             ordre: chapitre.ordre,
             duree: chapitre.duree?.toString(),
@@ -1484,18 +1528,15 @@ export class CoursService {
             ordre: section.ordre,
             createdAt: section.createdAt,
             chapitres: chapitres.map(chapitre => {
-              const originalUrl = chapitre.videoUrl;
-              const transformedUrl = this.uploadService.ensureAbsoluteUrl(chapitre.videoUrl);
-              
-              if (originalUrl) {
-                console.log(`   🔄 [TRANSFORM SECTION] Chapter "${chapitre.titre}": ${originalUrl} → ${transformedUrl}`);
-              }
+              const videoFields = this.resolveChapterVideoFields(chapitre);
               
               return {
                 id: chapitre.id,
                 titre: chapitre.titre,
                 description: chapitre.contenu,
-                videoUrl: transformedUrl,
+                videoUrl: videoFields.videoUrl,
+                videoStorageKey: videoFields.videoStorageKey,
+                hasProtectedVideo: videoFields.hasProtectedVideo,
                 isPaid: !chapitre.isPreview,
                 isPreview: Boolean(chapitre.isPreview),
                 ordre: chapitre.ordre,

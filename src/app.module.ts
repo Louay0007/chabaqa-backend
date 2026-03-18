@@ -59,6 +59,7 @@ import { LearningPathModule } from './learning-path/learning-path.module';
 import { CommunityInvitationModule } from './community-invitation/community-invitation.module';
 import { AffiliateModule } from './affiliate/affiliate.module';
 import { CommunityAccessModule } from './community-access/community-access.module';
+import { VideoModule } from './video/video.module';
 
 // Import new admin schemas
 import { AdminUser, AdminUserSchema } from './admin/schemas/admin-user.schema';
@@ -74,11 +75,21 @@ import { PaymentAuditLog, PaymentAuditLogSchema } from './schema/payment-audit-l
     ConfigModule.forRoot({ isGlobal: true }),
 
     // 2) Configuration pour servir les fichiers statiques
+    // NOTE: Video files are served via X-Accel-Redirect through VideoModule.
+    // ServeStaticModule only serves images, documents, and audio.
     ServeStaticModule.forRoot({
       rootPath: join(process.cwd(), 'uploads'),
       serveRoot: '/uploads',
       serveStaticOptions: {
         index: false,
+        // Block direct access to video files — they must go through playback sessions
+        setHeaders: (res: any, path: string) => {
+          if (/\/video\//i.test(path)) {
+            res.statusCode = 403;
+            res.end('Video files must be accessed through playback sessions');
+            return;
+          }
+        },
       },
     }),
 
@@ -166,6 +177,7 @@ import { PaymentAuditLog, PaymentAuditLogSchema } from './schema/payment-audit-l
     CommunityInvitationModule,
     AffiliateModule,
     CommunityAccessModule,
+    VideoModule,
   ],
   controllers: [AppController, UserController, TrackingController, PaymentController],
   providers: [
