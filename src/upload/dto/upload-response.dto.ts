@@ -7,7 +7,7 @@ export class UploadResponseDto {
   url: string;
   size: number;
   mimetype: string;
-  type: FileType;
+  type: string;
   uploadedAt: Date;
 }
 

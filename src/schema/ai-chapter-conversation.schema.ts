@@ -7,7 +7,7 @@ export type AiChapterMessageRole = 'user' | 'assistant';
 export class AiChapterMessage {
   @Prop({
     required: true,
-    enum: ['user', 'assistant'],
+    type: String, enum: ['user', 'assistant'],
   })
   role: AiChapterMessageRole;
 

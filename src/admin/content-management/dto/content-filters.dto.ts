@@ -9,11 +9,11 @@ export class ContentFiltersDto {
 
   @IsOptional()
   @IsEnum(ContentStatus)
-  status?: ContentStatus;
+  status?: string;
 
   @IsOptional()
   @IsEnum(ContentType)
-  type?: ContentType;
+  type?: string;
 
   @IsOptional()
   @IsString()
@@ -56,7 +56,7 @@ export class ContentFiltersDto {
 
   @IsOptional()
   @IsEnum(SortOrder)
-  sortOrder?: SortOrder = SortOrder.DESC;
+  sortOrder?: string = SortOrder.DESC;
 }
 
 export class CourseFiltersDto extends ContentFiltersDto {

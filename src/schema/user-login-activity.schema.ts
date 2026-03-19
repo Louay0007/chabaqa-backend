@@ -54,7 +54,7 @@ export class UserLoginActivity {
    * Inactivity status based on days since last login
    */
   @Prop({ 
-    enum: ['active', 'inactive_7d', 'inactive_15d', 'inactive_30d', 'inactive_60d_plus'],
+    type: String, enum: ['active', 'inactive_7d', 'inactive_15d', 'inactive_30d', 'inactive_60d_plus'],
     default: 'active',
     index: true
   })

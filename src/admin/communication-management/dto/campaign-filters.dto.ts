@@ -28,7 +28,7 @@ export class CampaignFiltersDto {
   })
   @IsOptional()
   @IsEnum(CampaignStatus)
-  status?: CampaignStatus;
+  status?: string;
 
   @ApiPropertyOptional({
     description: 'Filter by campaign type',

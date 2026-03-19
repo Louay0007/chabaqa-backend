@@ -395,7 +395,7 @@ export class CommunityManagementController {
   })
   async getCommunityAnalytics(
     @Query('communityId') communityId: string | undefined,
-    @Query('period') period: TimePeriod,
+    @Query('period') period: string,
     @Req() req: ExpressRequest & AdminRequest
   ) {
     const result = await this.communityManagementService.getCommunityAnalytics(
@@ -494,7 +494,7 @@ export class CommunityManagementController {
   })
   async getSpecificCommunityAnalytics(
     @Param('id') communityId: string,
-    @Query('period') period: TimePeriod = TimePeriod.LAST_30_DAYS,
+    @Query('period') period: string = TimePeriod.LAST_30_DAYS,
     @Req() req: ExpressRequest & AdminRequest
   ) {
     const result = await this.communityManagementService.getCommunityAnalytics(
@@ -560,7 +560,7 @@ export class CommunityManagementController {
   async getDetailedCommunityAnalytics(
     @Param('id') communityId: string,
     @Req() req: ExpressRequest & AdminRequest,
-    @Query('period') period: TimePeriod = TimePeriod.LAST_30_DAYS,
+    @Query('period') period: string = TimePeriod.LAST_30_DAYS,
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string
   ) {
@@ -661,7 +661,7 @@ export class CommunityManagementController {
   async compareCommunities(
     @Query('communityA') communityAId: string,
     @Query('communityB') communityBId: string,
-    @Query('period') period: TimePeriod = TimePeriod.LAST_30_DAYS,
+    @Query('period') period: string = TimePeriod.LAST_30_DAYS,
     @Req() req: ExpressRequest & AdminRequest
   ) {
     if (!communityAId || !communityBId) {

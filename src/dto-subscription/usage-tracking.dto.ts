@@ -18,7 +18,7 @@ export class UsageTrackingDto {
     enum: UsageMetricType
   })
   @IsEnum(UsageMetricType)
-  metricType: UsageMetricType;
+  metricType: string;
 
   @ApiProperty({ 
     description: 'Usage value',
@@ -176,7 +176,7 @@ export class RecordUsageDto {
     enum: UsageMetricType
   })
   @IsEnum(UsageMetricType)
-  metricType: UsageMetricType;
+  metricType: string;
 
   @ApiProperty({ 
     description: 'Usage value to record',

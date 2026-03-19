@@ -35,7 +35,7 @@ export class NotificationConfigDto {
     example: NotificationType.SYSTEM,
   })
   @IsEnum(NotificationType)
-  type: NotificationType;
+  type: string;
 
   @ApiProperty({
     description: 'Notification name/identifier',

@@ -713,12 +713,30 @@ export class CourseEnrollmentService {
       }
     }
 
+    // Rebuild access context AFTER completion so the caller gets the latest next-chapter action.
+    let nextChapterAction: { action: string; chapterId?: string; chapterTitle?: string; lockCode?: string; reason?: string; needsPayment?: boolean } | undefined;
+    try {
+      const freshContext = await this.buildAccessContext(userId, course);
+      const action = this.chapterAccessService.resolveNextChapterAction(freshContext, chapterId);
+      nextChapterAction = {
+        action: action.action,
+        chapterId: action.chapterId,
+        chapterTitle: action.chapterTitle,
+        lockCode: action.lockCode,
+        reason: action.reason,
+        needsPayment: action.needsPayment,
+      };
+    } catch {
+      // Non-critical; caller can fall back to a session refresh if missing.
+    }
+
     return {
       success: true,
       message: 'Chapitre marqué comme terminé',
       chapterId: chapterId,
       completedAt: existingProgress.completedAt,
       courseJustCompleted,
+      nextChapterAction,
     };
   }
 
@@ -803,20 +821,24 @@ export class CourseEnrollmentService {
     );
     const clientDurationSeconds = Number(videoDuration || 0);
 
-    if (
-      clientDurationSeconds > 0 &&
-      trustedDurationSeconds <= 0
-    ) {
-      const normalizedMinutes = Math.max(1, Math.round(clientDurationSeconds / 60));
-      if (!chapterNode.chapter.duree || chapterNode.chapter.duree <= 0) {
-        console.log(
-          `📝 [CourseEnrollmentService] Backfilling chapter ${chapterId} duration to ${normalizedMinutes} minutes (${clientDurationSeconds}s)`,
-        );
-        chapterNode.chapter.duree = normalizedMinutes;
-        course.markModified('sections');
-        await course.save();
+    if (clientDurationSeconds > 0) {
+      // Always store accurate seconds-level video runtime when provided by client
+      if (!(progress as any).videoDuration || (progress as any).videoDuration !== Math.floor(clientDurationSeconds)) {
+        (progress as any).videoDuration = Math.floor(clientDurationSeconds);
+        enrollment.markModified('progression');
       }
-      (progress as any).videoDuration = Math.floor(clientDurationSeconds);
+
+      if (trustedDurationSeconds <= 0) {
+        const normalizedMinutes = Math.max(1, Math.round(clientDurationSeconds / 60));
+        if (!chapterNode.chapter.duree || chapterNode.chapter.duree <= 0) {
+          console.log(
+            `📝 [CourseEnrollmentService] Backfilling chapter ${chapterId} duration to ${normalizedMinutes} minutes (${clientDurationSeconds}s)`,
+          );
+          chapterNode.chapter.duree = normalizedMinutes;
+          course.markModified('sections');
+          await course.save();
+        }
+      }
     }
 
     const chapterDurationSeconds = this.normalizeChapterDurationSeconds(
@@ -967,6 +989,25 @@ export class CourseEnrollmentService {
       }
     }
 
+    // When a chapter was just completed (manual or auto), include next-chapter action metadata.
+    let nextChapterAction: { action: string; chapterId?: string; chapterTitle?: string; lockCode?: string; reason?: string; needsPayment?: boolean } | undefined;
+    if (chapterJustCompleted) {
+      try {
+        const freshContext = await this.buildAccessContext(userId, course);
+        const action = this.chapterAccessService.resolveNextChapterAction(freshContext, chapterId);
+        nextChapterAction = {
+          action: action.action,
+          chapterId: action.chapterId,
+          chapterTitle: action.chapterTitle,
+          lockCode: action.lockCode,
+          reason: action.reason,
+          needsPayment: action.needsPayment,
+        };
+      } catch {
+        // Non-critical
+      }
+    }
+
     return {
       success: true,
       message: isAutoCompleted
@@ -979,6 +1020,7 @@ export class CourseEnrollmentService {
       isAutoCompleted,
       courseJustCompleted,
       lastAccessedAt: progress.lastAccessedAt,
+      nextChapterAction,
     };
   }
 

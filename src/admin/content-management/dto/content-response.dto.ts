@@ -26,8 +26,8 @@ export interface ContentStatsDto {
 export class ContentSummaryDto {
   id: string;
   title: string;
-  type: ContentType;
-  status: ContentStatus;
+  type: string;
+  status: string;
   creator: UserSummaryDto;
   community: CommunitySummaryDto;
   createdAt: Date;
@@ -41,7 +41,7 @@ export class CourseResponseDto {
   title: string;
   description: string;
   thumbnail?: string;
-  status: ContentStatus;
+  status: string;
   creator: UserSummaryDto;
   community: CommunitySummaryDto;
   price: number;
@@ -98,7 +98,7 @@ export class ChallengeResponseDto {
   title: string;
   description: string;
   coverImage?: string;
-  status: ContentStatus;
+  status: string;
   creator: UserSummaryDto;
   community: CommunitySummaryDto;
   startDate: Date;
@@ -161,7 +161,7 @@ export class EventResponseDto {
   title: string;
   description: string;
   coverImage?: string;
-  status: ContentStatus;
+  status: string;
   creator: UserSummaryDto;
   community: CommunitySummaryDto;
   startDate: Date;
@@ -223,7 +223,7 @@ export class PostResponseDto {
   content: string;
   excerpt?: string;
   thumbnail?: string;
-  status: ContentStatus;
+  status: string;
   author: UserSummaryDto;
   community: CommunitySummaryDto;
   likeCount: number;

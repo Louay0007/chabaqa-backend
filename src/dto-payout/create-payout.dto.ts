@@ -25,7 +25,7 @@ export class CreatePayoutDto {
     example: PayoutMethod.BANK_TRANSFER
   })
   @IsEnum(PayoutMethod)
-  method: PayoutMethod;
+  method: string;
 
   @ApiPropertyOptional({ 
     description: 'Description of the payout',

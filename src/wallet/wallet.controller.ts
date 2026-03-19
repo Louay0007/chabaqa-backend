@@ -97,7 +97,7 @@ export class WalletController {
     @Request() req,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
-    @Query('type') type?: WalletTransactionType,
+    @Query('type') type?: string,
   ) {
     const result = await this.walletService.getTransactionHistory(this.getUserId(req), {
       page: page ? parseInt(page, 10) : 1,
@@ -146,7 +146,7 @@ export class WalletController {
     @Request() req,
     @UploadedFile() file: Express.Multer.File,
     @Body('amount') amount: string,
-    @Body('currency') currency: TopUpCurrency,
+    @Body('currency') currency: string,
     @Body('notes') notes?: string,
   ) {
     console.log('🔍 [TOPUP] req.user:', JSON.stringify(req.user));
@@ -243,7 +243,7 @@ export class WalletController {
   @Post('purchase')
   async purchaseWithWallet(
     @Request() req,
-    @Body('contentType') contentType: WalletPurchaseContentType,
+    @Body('contentType') contentType: string,
     @Body('contentId') contentId: string,
     @Body('amount') amount: number,
     @Body('creatorId') creatorId: string,

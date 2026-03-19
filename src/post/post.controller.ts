@@ -113,9 +113,7 @@ export class PostController {
   }
 
   @Post()
-  @UseGuards(JwtAuthGuard, CommunityPermissionGuard)
-  @RequireCommunityPermission(CommunityPermission.POSTS_MODERATE)
-  @CommunityIdFrom({ type: 'body', name: 'communityId' })
+  @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Créer un nouveau post' })
   @ApiResponse({
@@ -356,9 +354,7 @@ export class PostController {
   }
 
   @Patch(':id')
-  @UseGuards(JwtAuthGuard, CommunityPermissionGuard)
-  @RequireCommunityPermission(CommunityPermission.POSTS_MODERATE)
-  @CommunityIdFrom({ type: 'entity', modelName: 'Post', paramName: 'id' })
+  @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Mettre à jour un post' })
   @ApiResponse({
@@ -386,9 +382,7 @@ export class PostController {
   }
 
   @Delete(':id')
-  @UseGuards(JwtAuthGuard, CommunityPermissionGuard)
-  @RequireCommunityPermission(CommunityPermission.POSTS_MODERATE)
-  @CommunityIdFrom({ type: 'entity', modelName: 'Post', paramName: 'id' })
+  @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Supprimer un post' })
   @ApiResponse({ status: 200, description: 'Post supprimé avec succès' })

@@ -695,7 +695,7 @@ export class PaymentController {
   @ApiBearerAuth()
   async initSubscription(
     @Req() req: any,
-    @Body('tier') tier: PlanTier
+    @Body('tier') tier: string
   ) {
     const userId = (req.user?._id || req.user?.sub || '').toString();
     const plan = await this.planModel.findOne({ tier, isActive: true });
@@ -1663,7 +1663,7 @@ export class PaymentController {
   @ApiBearerAuth()
   async initStripeLinkSubscription(
     @Req() req: any,
-    @Body('tier') tier: PlanTier,
+    @Body('tier') tier: string,
     @Body('interval') interval: 'month' | 'year' = 'month',
     @Body('channel') channelRaw?: string,
     @Body('successRedirectUrl') successRedirectUrl?: string,

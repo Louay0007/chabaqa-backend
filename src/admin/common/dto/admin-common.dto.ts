@@ -71,7 +71,7 @@ export class AdminPaginationDto {
   })
   @IsEnum(SortOrder)
   @IsOptional()
-  sortOrder?: SortOrder = SortOrder.DESC;
+  sortOrder?: string = SortOrder.DESC;
 
   /**
    * Calculate skip value for database queries
@@ -293,7 +293,7 @@ export class AdminExportDto {
     example: ExportFormat.CSV,
   })
   @IsEnum(ExportFormat)
-  format: ExportFormat;
+  format: string;
 
   @ApiPropertyOptional({
     description: 'Fields to include in export',

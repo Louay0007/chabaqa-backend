@@ -23,6 +23,7 @@ import { UploadService } from '../upload/upload.service';
 import { MediaPurpose } from '../media/media.types';
 import { CacheService } from '../common/services/cache.service';
 import { ChapterAccessService } from '../common/services/chapter-access.service';
+import { CourseSessionDto } from '../common/dto/course-session.dto';
 import {
   isSupportedChapterVideoUrl,
   normalizeChapterVideoUrl,
@@ -3366,7 +3367,7 @@ export class CoursService {
 
       return {
         unlockedChapters,
-        sequentialProgressionEnabled: true,
+        sequentialProgressionEnabled: Boolean(cours.sequentialProgression),
         unlockMessage: cours.unlockMessage
       };
 
@@ -3378,6 +3379,116 @@ export class CoursService {
       console.error('❌ Erreur lors de la récupération des chapitres déverrouillés:', error);
       throw new BadRequestException('Erreur lors de la récupération des chapitres déverrouillés');
     }
+  }
+
+  /**
+   * Returns a normalized course session covering chapter access, progression,
+   * and next-chapter action in a single backend-authoritative response.
+   */
+  async getCourseSession(
+    coursId: string,
+    userId: string,
+    currentChapterId?: string,
+  ): Promise<CourseSessionDto> {
+    if (!this.chapterAccessService) {
+      throw new BadRequestException('Chapter access service indisponible');
+    }
+
+    const cours = await this.resolveCourseDocument(coursId);
+
+    // Admin/Creator bypass
+    let isAdmin = false;
+    try {
+      await this.verifierAdminCommunaute(userId, cours.communityId.toString());
+      isAdmin = true;
+    } catch {
+      // Not admin
+    }
+
+    const context = await this.chapterAccessService.buildAccessContext(userId, cours);
+    const allChapterAccess = isAdmin
+      ? context.orderedChapters.map((descriptor) => {
+          const chapterId = String(descriptor.chapter?.id || '');
+          const progress = context.progressMap.get(chapterId);
+          return {
+            chapterId,
+            chapterTitle: String(descriptor.chapter?.titre || ''),
+            sectionId: String(descriptor.section?.id || ''),
+            sectionTitle: String(descriptor.section?.titre || ''),
+            index: descriptor.index,
+            isPreview: Boolean(descriptor.chapter?.isPreview),
+            isPaidChapter: Boolean(descriptor.chapter?.isPaidChapter) && !Boolean(descriptor.chapter?.isPreview),
+            isCompleted: Boolean(progress?.isCompleted),
+            watchTime: Number(progress?.watchTime || 0),
+            videoDuration: Number((progress as any)?.videoDuration || 0),
+            access: {
+              canAccess: true,
+              lockCode: 'allowed' as const,
+              reason: 'admin_access',
+              hasCourseEnrollment: true,
+              hasChapterPurchase: true,
+              isPaidChapter: false,
+              needsPayment: false,
+            },
+          };
+        })
+      : this.chapterAccessService.computeAllChapterAccess(context);
+
+    const chapters = allChapterAccess.map((entry) => ({
+      chapterId: entry.chapterId,
+      chapterTitle: entry.chapterTitle,
+      sectionId: entry.sectionId,
+      sectionTitle: entry.sectionTitle,
+      index: entry.index,
+      isPreview: entry.isPreview,
+      isPaidChapter: entry.isPaidChapter,
+      isCompleted: entry.isCompleted,
+      watchTime: entry.watchTime,
+      videoDuration: entry.videoDuration,
+      canAccess: entry.access.canAccess,
+      lockCode: entry.access.lockCode,
+      lockReason: entry.access.canAccess ? undefined : entry.access.reason,
+      needsPayment: entry.access.needsPayment || undefined,
+      chapterPrice: entry.access.chapterPrice,
+      requiredChapterId: entry.access.requiredChapter?.id,
+    }));
+
+    const completedChapters = chapters.filter((c) => c.isCompleted).length;
+    const totalChapters = chapters.length;
+    const progressPercent = totalChapters > 0 ? Math.round((completedChapters / totalChapters) * 100) : 0;
+
+    // Determine current chapter for next-action resolution
+    const effectiveCurrentChapterId =
+      currentChapterId ||
+      (chapters.find((c) => !c.isCompleted && c.canAccess)?.chapterId ?? chapters[0]?.chapterId);
+
+    let nextChapterAction: CourseSessionDto['nextChapterAction'] | undefined;
+    if (effectiveCurrentChapterId && !isAdmin) {
+      const action = this.chapterAccessService.resolveNextChapterAction(context, effectiveCurrentChapterId);
+      nextChapterAction = {
+        action: action.action,
+        chapterId: action.chapterId,
+        chapterTitle: action.chapterTitle,
+        sectionId: action.sectionId,
+        lockCode: action.lockCode,
+        reason: action.reason,
+        needsPayment: action.needsPayment,
+        chapterPrice: action.chapterPrice,
+        requiredChapterId: action.requiredChapter?.id,
+      };
+    }
+
+    return {
+      courseId: String(cours.id || cours._id),
+      isEnrolled: Boolean(context.enrollment),
+      sequentialProgressionEnabled: Boolean(cours.sequentialProgression),
+      unlockMessage: cours.unlockMessage,
+      progressPercent,
+      completedChapters,
+      totalChapters,
+      chapters,
+      nextChapterAction,
+    };
   }
 
   /**

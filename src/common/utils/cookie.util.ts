@@ -50,7 +50,7 @@ export class CookieUtil {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production', // HTTPS en production
     sameSite: process.env.NODE_ENV === 'production' ? 'strict' as const : 'lax' as const,
-    maxAge: 30 * 24 * 60 * 60 * 1000, // 30 jours (correspond à la durée du JWT)
+    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 jours (correspond à la durée du JWT standard)
     path: '/',
     domain: CookieUtil.getCookieDomain(),
   };
@@ -86,7 +86,7 @@ export class CookieUtil {
   static setRefreshTokenCookie(res: Response, token: string, rememberMe: boolean = false): void {
     const config = rememberMe ? {
       ...this.REFRESH_TOKEN_CONFIG,
-      maxAge: 90 * 24 * 60 * 60 * 1000, // 90 jours si "Remember Me"
+      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 jours si "Remember Me"
     } : this.REFRESH_TOKEN_CONFIG;
     
     res.cookie(this.COOKIE_NAMES.REFRESH_TOKEN, token, config);
@@ -112,7 +112,7 @@ export class CookieUtil {
   static setAdminRefreshTokenCookie(res: Response, token: string, rememberMe: boolean = false): void {
     const config = rememberMe ? {
       ...this.REFRESH_TOKEN_CONFIG,
-      maxAge: 90 * 24 * 60 * 60 * 1000,
+      maxAge: 30 * 24 * 60 * 60 * 1000,
     } : this.REFRESH_TOKEN_CONFIG;
 
     res.cookie(this.ADMIN_COOKIE_NAMES.REFRESH_TOKEN, token, config);

@@ -126,7 +126,7 @@ export class UpdatePayoutStatusDto {
     description: 'New status for the payout',
   })
   @IsEnum(PayoutStatus)
-  status: PayoutStatus;
+  status: string;
 
   @ApiPropertyOptional({
     description: 'Optional admin notes for the status update',

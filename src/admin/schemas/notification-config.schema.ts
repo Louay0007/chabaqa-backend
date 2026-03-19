@@ -26,7 +26,7 @@ export type NotificationConfigDocument = NotificationConfig & Document;
  */
 @Schema({ timestamps: true })
 export class NotificationConfig {
-  @Prop({ required: true, enum: NotificationType })
+  @Prop({ required: true, type: String, enum: NotificationType })
   type: NotificationType;
 
   @Prop({ required: true, unique: true })
@@ -47,7 +47,7 @@ export class NotificationConfig {
   @Prop({ default: true })
   defaultEnabled: boolean;
 
-  @Prop({ enum: ['low', 'normal', 'high', 'urgent'], default: 'normal' })
+  @Prop({ type: String, enum: ['low', 'normal', 'high', 'urgent'], default: 'normal' })
   priority: string;
 
   @Prop({ type: Object, default: {} })

@@ -15,7 +15,7 @@ export class GenerateFinancialReportDto {
     description: 'Time period for the report',
   })
   @IsEnum(TimePeriod)
-  period: TimePeriod;
+  period: string;
 
   @ApiPropertyOptional({
     description: 'Start date for custom period',
@@ -37,7 +37,7 @@ export class GenerateFinancialReportDto {
     description: 'Output format for the report',
   })
   @IsEnum(ReportFormat)
-  format: ReportFormat = ReportFormat.PDF;
+  format: string = ReportFormat.PDF;
 }
 
 export class FinancialReportDto {
@@ -45,7 +45,7 @@ export class FinancialReportDto {
   generatedAt: Date;
 
   @ApiProperty({ description: 'Report period' })
-  period: TimePeriod;
+  period: string;
 
   @ApiProperty({ description: 'Period start date' })
   startDate: Date;

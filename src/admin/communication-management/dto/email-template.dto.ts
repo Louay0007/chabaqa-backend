@@ -48,7 +48,7 @@ export class CreateEmailTemplateDto {
     example: TemplateCategory.WELCOME,
   })
   @IsEnum(TemplateCategory)
-  category: TemplateCategory;
+  category: string;
 
   @ApiProperty({
     description: 'Email subject template',
@@ -136,7 +136,7 @@ export class UpdateEmailTemplateDto {
   })
   @IsOptional()
   @IsEnum(TemplateCategory)
-  category?: TemplateCategory;
+  category?: string;
 
   @ApiPropertyOptional({
     description: 'Email subject template',

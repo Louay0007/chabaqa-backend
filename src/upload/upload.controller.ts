@@ -155,11 +155,11 @@ export class UploadController {
   async uploadSingle(
     @UploadedFile() file: Express.Multer.File,
     @Request() req: any,
-    @Query('type') fileType?: FileType,
-    @Query('purpose') purpose?: MediaPurpose,
+    @Query('type') fileType?: string,
+    @Query('purpose') purpose?: string,
     @Query('entityType') entityType?: string,
     @Query('entityId') entityId?: string,
-    @Query('visibility') visibility?: MediaVisibility,
+    @Query('visibility') visibility?: string,
   ): Promise<UploadResponseDto> {
     if (!file) {
       throw new BadRequestException('Aucun fichier fourni');

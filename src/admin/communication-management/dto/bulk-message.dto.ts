@@ -45,7 +45,7 @@ export class BulkMessageDto {
     example: MessageChannel.BOTH,
   })
   @IsEnum(MessageChannel)
-  channel: MessageChannel;
+  channel: string;
 
   @ApiProperty({
     description: 'Audience targeting type',
@@ -53,7 +53,7 @@ export class BulkMessageDto {
     example: AudienceTargetType.ALL_USERS,
   })
   @IsEnum(AudienceTargetType)
-  audienceTarget: AudienceTargetType;
+  audienceTarget: string;
 
   @ApiPropertyOptional({
     description: 'Community ID for community-specific messages',

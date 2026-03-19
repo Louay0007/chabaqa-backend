@@ -31,10 +31,10 @@ export class NotificationDto {
   readAt?: Date;
 
   @ApiProperty({ enum: NotificationChannel })
-  channel: NotificationChannel;
+  channel: string;
 
   @ApiProperty({ enum: NotificationPriority })
-  priority: NotificationPriority;
+  priority: string;
 
   @ApiProperty({ required: false })
   expiresAt?: Date;

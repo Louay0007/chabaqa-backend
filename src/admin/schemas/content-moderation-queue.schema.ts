@@ -64,7 +64,7 @@ export class ContentModerationQueue {
   @Prop({ type: Types.ObjectId, required: true })
   contentId: Types.ObjectId;
 
-  @Prop({ required: true, enum: ContentType })
+  @Prop({ required: true, type: String, enum: ContentType })
   contentType: ContentType;
 
   @Prop({ type: Types.ObjectId, ref: 'User', required: true })
@@ -75,13 +75,13 @@ export class ContentModerationQueue {
 
   @Prop({ 
     required: true, 
-    enum: ModerationStatus, 
+    type: String, enum: ModerationStatus, 
     default: ModerationStatus.PENDING 
   })
   status: ModerationStatus;
 
   @Prop({ 
-    enum: ModerationPriority, 
+    type: String, enum: ModerationPriority, 
     default: ModerationPriority.NORMAL 
   })
   priority: ModerationPriority;

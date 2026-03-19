@@ -43,7 +43,7 @@ export class FieldValidationError {
     description: 'Error code',
     enum: ValidationErrorCode,
   })
-  code: ValidationErrorCode;
+  code: string;
 
   @ApiPropertyOptional({ description: 'The invalid value' })
   value?: any;
@@ -53,7 +53,7 @@ export class FieldValidationError {
     enum: ValidationSeverity,
     default: ValidationSeverity.ERROR,
   })
-  severity?: ValidationSeverity;
+  severity?: string;
 
   @ApiPropertyOptional({ description: 'Additional context or constraints' })
   context?: Record<string, any>;

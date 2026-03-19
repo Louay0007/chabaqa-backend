@@ -12,7 +12,7 @@ export class AuditTrailFiltersDto {
 
   @IsOptional()
   @IsEnum(AdminAction)
-  action?: AdminAction;
+  action?: string;
 
   @IsOptional()
   @IsString()
@@ -119,7 +119,7 @@ export class AuditTrailExportDto {
 
   @IsOptional()
   @IsEnum(AdminAction)
-  action?: AdminAction;
+  action?: string;
 
   @IsOptional()
   @IsString()

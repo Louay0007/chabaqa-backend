@@ -300,7 +300,7 @@ export class ResourceController {
     status: 400,
     description: 'Type de ressource invalide'
   })
-  async getResourcesByType(@Param('type') type: ResourceType) {
+  async getResourcesByType(@Param('type') type: string) {
     return await this.resourceService.findByType(type);
   }
 

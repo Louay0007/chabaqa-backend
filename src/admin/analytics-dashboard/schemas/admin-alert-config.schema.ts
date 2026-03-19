@@ -12,16 +12,16 @@ export class AdminAlertConfig {
   @Prop({ required: true, trim: true })
   description: string;
 
-  @Prop({ required: true, enum: AlertMetricType })
+  @Prop({ required: true, type: String, enum: AlertMetricType })
   metricType: AlertMetricType;
 
-  @Prop({ required: true, enum: AlertCondition })
+  @Prop({ required: true, type: String, enum: AlertCondition })
   condition: AlertCondition;
 
   @Prop({ required: true })
   threshold: number;
 
-  @Prop({ required: true, enum: AlertSeverity })
+  @Prop({ required: true, type: String, enum: AlertSeverity })
   severity: AlertSeverity;
 
   @Prop({ default: true })

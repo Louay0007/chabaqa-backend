@@ -20,7 +20,7 @@ export class SharePostRequestDto {
   })
   @IsOptional()
   @IsEnum(PostShareMethod)
-  method?: PostShareMethod;
+  method?: string;
 
   @ApiPropertyOptional({
     description: 'Target URL used for sharing (if applicable)',

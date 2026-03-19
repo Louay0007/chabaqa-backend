@@ -67,7 +67,7 @@ export class SubscriptionFiltersDto {
   })
   @IsOptional()
   @IsEnum(PlanTier)
-  planTier?: PlanTier;
+  planTier?: string;
 
   @ApiPropertyOptional({
     description: 'Filter by creator ID',

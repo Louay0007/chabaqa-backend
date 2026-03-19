@@ -49,7 +49,7 @@ export class BulkOperationDto {
     enum: BulkOperationAction,
   })
   @IsEnum(BulkOperationAction)
-  action: BulkOperationAction;
+  action: string;
 
   @ApiPropertyOptional({
     description: 'Reason for the bulk operation (required for some actions)',
@@ -88,7 +88,7 @@ export class BulkOperationProgressDto {
     description: 'Current status of the operation',
     enum: BulkOperationStatus,
   })
-  status: BulkOperationStatus;
+  status: string;
 
   @ApiProperty({ description: 'Total number of items to process' })
   totalItems: number;

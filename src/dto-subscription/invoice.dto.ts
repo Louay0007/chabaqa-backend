@@ -73,7 +73,7 @@ export class InvoiceDto {
     enum: InvoiceStatus
   })
   @IsEnum(InvoiceStatus)
-  status: InvoiceStatus;
+  status: string;
 
   @ApiProperty({ 
     description: 'Invoice number',

@@ -18,7 +18,7 @@ export class RevenueDashboardQueryDto {
   })
   @IsOptional()
   @IsEnum(TimePeriod)
-  period?: TimePeriod = TimePeriod.MONTH;
+  period?: string = TimePeriod.MONTH;
 
   @ApiPropertyOptional({
     description: 'Start date for custom period (ISO 8601 format)',
@@ -57,7 +57,7 @@ export class RevenueMetricsDto {
   growthRate: number;
 
   @ApiProperty({ description: 'Time period for these metrics' })
-  period: TimePeriod;
+  period: string;
 
   @ApiProperty({ description: 'Start date of the period' })
   startDate: Date;

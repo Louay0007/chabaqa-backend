@@ -70,7 +70,7 @@ export class CreateEmailCampaignDto {
   })
   @IsOptional()
   @IsEnum(EmailCampaignType)
-  type?: EmailCampaignType;
+  type?: string;
 
   @ApiPropertyOptional({
     description: 'Schedule date (ISO string)',
@@ -164,7 +164,7 @@ export class CreateInactiveUserCampaignDto {
     example: InactivityPeriod.LAST_7_DAYS
   })
   @IsEnum(InactivityPeriod)
-  inactivityPeriod: InactivityPeriod;
+  inactivityPeriod: string;
 
   @ApiPropertyOptional({
     description: 'Target all inactive users regardless of period',
@@ -272,7 +272,7 @@ export class UpdateEmailCampaignDto {
   })
   @IsOptional()
   @IsEnum(EmailCampaignStatus)
-  status?: EmailCampaignStatus;
+  status?: string;
 
   @ApiPropertyOptional({
     description: 'Schedule date (ISO string)',
@@ -350,7 +350,7 @@ export class EmailCampaignQueryDto {
   })
   @IsOptional()
   @IsEnum(EmailCampaignStatus)
-  status?: EmailCampaignStatus;
+  status?: string;
 
   @ApiPropertyOptional({
     description: 'Campaign type filter',
@@ -359,7 +359,7 @@ export class EmailCampaignQueryDto {
   })
   @IsOptional()
   @IsEnum(EmailCampaignType)
-  type?: EmailCampaignType;
+  type?: string;
 
   @ApiPropertyOptional({
     description: 'Filter inactive user campaigns only',
@@ -389,7 +389,7 @@ export class InactiveUserQueryDto {
   })
   @IsOptional()
   @IsEnum(InactivityPeriod)
-  period?: InactivityPeriod;
+  period?: string;
 
   @ApiPropertyOptional({
     description: 'Maximum number of users to return',

@@ -45,7 +45,7 @@ export class Achievement {
   @Prop({ default: true })
   isActive: boolean;
 
-  @Prop()
+  @Prop({ type: String })
   rarity: 'common' | 'rare' | 'epic' | 'legendary';
 
   @Prop()

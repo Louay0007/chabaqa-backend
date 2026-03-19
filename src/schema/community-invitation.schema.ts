@@ -29,7 +29,7 @@ export class CommunityInvitation {
 
   @Prop({
     required: true,
-    enum: InvitationStatus,
+    type: String, enum: InvitationStatus,
     default: InvitationStatus.PENDING,
     index: true,
   })

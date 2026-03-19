@@ -50,7 +50,7 @@ export class CreateAlertDto {
     example: AlertMetricType.ERROR_RATE
   })
   @IsEnum(AlertMetricType)
-  metricType: AlertMetricType;
+  metricType: string;
 
   @ApiProperty({
     description: 'Alert condition',
@@ -58,7 +58,7 @@ export class CreateAlertDto {
     example: AlertCondition.GREATER_THAN
   })
   @IsEnum(AlertCondition)
-  condition: AlertCondition;
+  condition: string;
 
   @ApiProperty({
     description: 'Threshold value',
@@ -73,7 +73,7 @@ export class CreateAlertDto {
     example: AlertSeverity.CRITICAL
   })
   @IsEnum(AlertSeverity)
-  severity: AlertSeverity;
+  severity: string;
 
   @ApiPropertyOptional({
     description: 'Admin user IDs to notify',
@@ -126,7 +126,7 @@ export class UpdateAlertDto {
   })
   @IsOptional()
   @IsEnum(AlertSeverity)
-  severity?: AlertSeverity;
+  severity?: string;
 
   @ApiPropertyOptional({
     description: 'Admin user IDs to notify',
@@ -165,16 +165,16 @@ export class AlertResponseDto {
   description: string;
 
   @ApiProperty({ description: 'Metric type', enum: AlertMetricType })
-  metricType: AlertMetricType;
+  metricType: string;
 
   @ApiProperty({ description: 'Alert condition', enum: AlertCondition })
-  condition: AlertCondition;
+  condition: string;
 
   @ApiProperty({ description: 'Threshold value' })
   threshold: number;
 
   @ApiProperty({ description: 'Alert severity', enum: AlertSeverity })
-  severity: AlertSeverity;
+  severity: string;
 
   @ApiProperty({ description: 'Is alert enabled' })
   isEnabled: boolean;
@@ -209,7 +209,7 @@ export class AlertNotificationDto {
   alertName: string;
 
   @ApiProperty({ description: 'Metric type', enum: AlertMetricType })
-  metricType: AlertMetricType;
+  metricType: string;
 
   @ApiProperty({ description: 'Current value' })
   currentValue: number;
@@ -218,7 +218,7 @@ export class AlertNotificationDto {
   threshold: number;
 
   @ApiProperty({ description: 'Alert severity', enum: AlertSeverity })
-  severity: AlertSeverity;
+  severity: string;
 
   @ApiProperty({ description: 'Triggered at timestamp' })
   triggeredAt: Date;

@@ -736,7 +736,7 @@ export class CommunicationManagementController {
     description: 'Forbidden - Insufficient permissions',
   })
   async getEmailTemplates(
-    @Query('category') category?: TemplateCategory,
+    @Query('category') category?: string,
     @Query('isActive') isActive?: string,
     @Query('search') search?: string,
     @Query('tags') tags?: string,

@@ -16,10 +16,10 @@ export const COMMUNITY_PERMISSION_KEY = 'community_permission';
  *
  * The guard extracts communityId from:
  *   1) req.params.communityId
- *   2) req.params.id  (fallback for routes like /:id/...)
- *   3) req.body.communityId
- *   4) req.query.communityId
- *   5) req.params.slug → resolved to communityId via slug lookup
+ *   2) req.body.communityId
+ *   3) req.query.communityId
+ *   4) req.params.slug / req.query.communitySlug / req.body.communitySlug
+ *      → resolved to communityId via slug lookup
  */
 export const RequireCommunityPermission = (
   ...permissions: CommunityPermission[]

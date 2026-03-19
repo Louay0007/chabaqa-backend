@@ -33,7 +33,7 @@ export class WebhookEventDto {
     enum: WebhookEventType
   })
   @IsEnum(WebhookEventType)
-  type: WebhookEventType;
+  type: string;
 
   @ApiProperty({ 
     description: 'Event data'

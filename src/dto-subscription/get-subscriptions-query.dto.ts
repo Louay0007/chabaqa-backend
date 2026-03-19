@@ -10,7 +10,7 @@ export class GetSubscriptionsQueryDto {
   })
   @IsOptional()
   @IsEnum(SubscriptionStatus)
-  status?: SubscriptionStatus;
+  status?: string;
 
   @ApiPropertyOptional({ 
     description: 'Filter by plan tier',
@@ -18,7 +18,7 @@ export class GetSubscriptionsQueryDto {
   })
   @IsOptional()
   @IsEnum(PlanTier)
-  plan?: PlanTier;
+  plan?: string;
 
   @ApiPropertyOptional({ 
     description: 'Start date for filtering',

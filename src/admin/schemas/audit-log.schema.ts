@@ -95,7 +95,7 @@ export class AuditLog {
   @Prop({ type: Types.ObjectId, ref: 'AdminUser', required: true })
   adminUserId: Types.ObjectId;
 
-  @Prop({ required: true, enum: AdminAction })
+  @Prop({ required: true, type: String, enum: AdminAction })
   action: AdminAction;
 
   @Prop({ required: true })

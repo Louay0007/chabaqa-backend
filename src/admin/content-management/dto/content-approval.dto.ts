@@ -35,7 +35,7 @@ export class BulkContentActionDto {
   ids: string[];
 
   @IsEnum(ContentStatus)
-  action: ContentStatus;
+  action: string;
 
   @IsOptional()
   @IsString()

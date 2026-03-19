@@ -16,7 +16,7 @@ export class SubscriptionResponseDto {
   subscriberEmail?: string;
 
   @ApiProperty({ enum: PlanTier, example: PlanTier.STARTER })
-  plan: PlanTier;
+  plan: string;
 
   @ApiProperty({ example: 'stripe' })
   provider: string;
@@ -37,7 +37,7 @@ export class SubscriptionResponseDto {
   currentPeriodEnd: Date;
 
   @ApiProperty({ enum: SubscriptionStatus, example: SubscriptionStatus.ACTIVE })
-  status: SubscriptionStatus;
+  status: string;
 
   @ApiProperty({ example: false })
   cancelAtPeriodEnd: boolean;
@@ -107,7 +107,7 @@ export class SubscriptionStatsDto {
 
 export class SubscriptionPlanDto {
   @ApiProperty({ enum: PlanTier, example: PlanTier.STARTER })
-  tier: PlanTier;
+  tier: string;
 
   @ApiProperty({ example: 'Starter Plan' })
   name: string;

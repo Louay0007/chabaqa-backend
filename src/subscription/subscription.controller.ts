@@ -64,7 +64,7 @@ export class SubscriptionController {
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({ summary: 'Upgrade plan tier (manual/stubbed until provider is integrated)' })
   @ApiBody({ schema: { type: 'object', properties: { tier: { type: 'string', enum: Object.values(PlanTier) } }, required: ['tier'] } })
-  async upgrade(@Request() req: any, @Body('tier') tier: PlanTier) {
+  async upgrade(@Request() req: any, @Body('tier') tier: string) {
     const creatorId = req.user._id || req.user.sub;
     return this.subscriptionService.upgradePlan(creatorId, tier);
   }
@@ -150,7 +150,7 @@ export class SubscriptionController {
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({ summary: 'Get a specific subscription plan by tier' })
   @ApiResponse({ status: 200, type: SubscriptionPlanDto })
-  async getPlanByTier(@Param('tier') tier: PlanTier): Promise<SubscriptionPlanDto> {
+  async getPlanByTier(@Param('tier') tier: string): Promise<SubscriptionPlanDto> {
     return this.subscriptionService.getPlanByTier(tier);
   }
 
@@ -161,7 +161,7 @@ export class SubscriptionController {
   @ApiBody({ type: UpdateSubscriptionDto })
   @ApiResponse({ status: 200, type: SubscriptionPlanDto })
   async updatePlan(
-    @Param('tier') tier: PlanTier,
+    @Param('tier') tier: string,
     @Body() updatePlanDto: UpdateSubscriptionDto
   ): Promise<SubscriptionPlanDto> {
     return this.subscriptionService.updatePlan(tier, updatePlanDto);
@@ -172,7 +172,7 @@ export class SubscriptionController {
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({ summary: 'Delete a subscription plan' })
   @ApiResponse({ status: 200, description: 'Plan deleted successfully' })
-  async deletePlan(@Param('tier') tier: PlanTier): Promise<{ message: string }> {
+  async deletePlan(@Param('tier') tier: string): Promise<{ message: string }> {
     return this.subscriptionService.deletePlan(tier);
   }
 

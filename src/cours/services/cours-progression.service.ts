@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { CoursService } from '../cours.service';
+import { CourseSessionDto } from '../../common/dto/course-session.dto';
 
 @Injectable()
 export class CoursProgressionService {
@@ -27,5 +28,9 @@ export class CoursProgressionService {
 
   unlockChapterManually(coursId: string, chapterId: string, targetUserId: string, requesterId: string) {
     return this.coursService.unlockChapterManually(coursId, chapterId, targetUserId, requesterId);
+  }
+
+  getCourseSession(coursId: string, userId: string, currentChapterId?: string): Promise<CourseSessionDto> {
+    return this.coursService.getCourseSession(coursId, userId, currentChapterId);
   }
 }

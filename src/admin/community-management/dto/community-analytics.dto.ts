@@ -12,7 +12,7 @@ export class CommunityAnalyticsFiltersDto {
   })
   @IsOptional()
   @IsEnum(TimePeriod)
-  period?: TimePeriod = TimePeriod.LAST_30_DAYS;
+  period?: string = TimePeriod.LAST_30_DAYS;
 
   @ApiProperty({ required: false, description: 'Custom start date (ISO string)' })
   @IsOptional()
@@ -211,7 +211,7 @@ export class DetailedCommunityAnalyticsDto {
   period: {
     startDate: Date;
     endDate: Date;
-    periodType: TimePeriod;
+    periodType: string;
   };
 
   @ApiProperty({ description: 'Last updated timestamp' })
@@ -254,7 +254,7 @@ export class CommunityAnalyticsSummaryDto {
   period: {
     startDate: Date;
     endDate: Date;
-    periodType: TimePeriod;
+    periodType: string;
   };
 }
 

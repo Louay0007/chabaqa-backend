@@ -53,7 +53,7 @@ export class FilterCondition {
     enum: FilterOperator,
   })
   @IsEnum(FilterOperator)
-  operator: FilterOperator;
+  operator: string;
 
   @ApiPropertyOptional({ description: 'Filter value' })
   value: any;
@@ -70,7 +70,7 @@ export class FilterGroup {
   })
   @IsEnum(LogicalOperator)
   @IsOptional()
-  operator?: LogicalOperator = LogicalOperator.AND;
+  operator?: string = LogicalOperator.AND;
 
   @ApiPropertyOptional({
     description: 'Filter conditions',

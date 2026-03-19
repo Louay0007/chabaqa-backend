@@ -11,7 +11,7 @@ export class ModerateContentDto {
     enum: [ModerationStatus.APPROVED, ModerationStatus.REJECTED, ModerationStatus.FLAGGED, ModerationStatus.ESCALATED]
   })
   @IsEnum([ModerationStatus.APPROVED, ModerationStatus.REJECTED, ModerationStatus.FLAGGED, ModerationStatus.ESCALATED])
-  action: ModerationStatus;
+  action: string;
 
   @ApiPropertyOptional({ 
     description: 'Review notes from the moderator',
@@ -72,7 +72,7 @@ export class BulkModerateContentDto {
     enum: [ModerationStatus.APPROVED, ModerationStatus.REJECTED, ModerationStatus.FLAGGED]
   })
   @IsEnum([ModerationStatus.APPROVED, ModerationStatus.REJECTED, ModerationStatus.FLAGGED])
-  action: ModerationStatus;
+  action: string;
 
   @ApiPropertyOptional({ 
     description: 'Review notes to apply to all items',

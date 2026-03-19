@@ -74,8 +74,11 @@ export class CommunityPermissionGuard implements CanActivate {
       if (isOptional) {
         return true; // No community context → skip permission check
       }
+      const paramsKeys = Object.keys(request.params || {});
+      const bodyKeys = Object.keys(request.body || {});
+      const queryKeys = Object.keys(request.query || {});
       this.logger.warn(
-        `Could not extract communityId for route ${request.method} ${request.url}`,
+        `Could not extract communityId for route ${request.method} ${request.url} (paramsKeys=${JSON.stringify(paramsKeys)}, bodyKeys=${JSON.stringify(bodyKeys)}, queryKeys=${JSON.stringify(queryKeys)})`,
       );
       throw new ForbiddenException(
         'Could not determine which community this action belongs to',
@@ -162,14 +165,19 @@ export class CommunityPermissionGuard implements CanActivate {
     modelName: string,
     entityId: string | undefined,
   ): Promise<string | null> {
-    if (!entityId || !/^[0-9a-fA-F]{24}$/.test(entityId)) return null;
+    if (!entityId) return null;
     try {
       const model = this.connection.model(modelName);
-      const doc = await model
-        .findById(entityId)
-        .select('communityId')
-        .lean()
-        .exec();
+      const isObjectId = /^[0-9a-fA-F]{24}$/.test(entityId);
+      const doc =
+        (isObjectId
+          ? await model.findById(entityId).select('communityId').lean().exec()
+          : null) ||
+        (await model
+          .findOne({ id: entityId })
+          .select('communityId')
+          .lean()
+          .exec());
       if (doc && (doc as any).communityId) {
         return String((doc as any).communityId);
       }

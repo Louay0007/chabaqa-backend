@@ -25,7 +25,7 @@ export class ProgressionItemDto {
   contentId: string;
 
   @ApiProperty({ enum: TrackableContentType })
-  contentType: TrackableContentType;
+  contentType: string;
 
   @ApiProperty()
   title: string;

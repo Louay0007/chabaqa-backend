@@ -252,13 +252,15 @@ export class ChapterAccessService {
       ? context.purchasedChapterIds.has(String(descriptor.chapter?.id))
       : false;
 
+    const isPreviewChapter = Boolean(descriptor.chapter?.isPreview);
+
     if (!hasEnrollment) {
-      // Preview policy: only first chapter is accessible before enrollment.
-      if (descriptor.index === 0) {
+      // Preview policy: first chapter or any chapter explicitly marked as preview.
+      if (descriptor.index === 0 || isPreviewChapter) {
         return {
           canAccess: true,
           lockCode: 'allowed',
-          reason: 'first_chapter_preview',
+          reason: isPreviewChapter ? 'chapter_preview' : 'first_chapter_preview',
           hasCourseEnrollment: false,
           hasChapterPurchase: false,
           isPaidChapter,
@@ -272,7 +274,7 @@ export class ChapterAccessService {
       return {
         canAccess: false,
         lockCode: 'not_enrolled_preview_only',
-        reason: 'Only the first chapter is available in preview before enrollment.',
+        reason: 'Only preview chapters are available before enrollment.',
         hasCourseEnrollment: false,
         hasChapterPurchase: false,
         isPaidChapter,
@@ -297,6 +299,7 @@ export class ChapterAccessService {
     }
 
     // Sequential policy: chapter N requires chapter N-1 completed.
+    // Sequential locks apply strictly to all chapters if the user is enrolled.
     if (descriptor.index > 0) {
       const previous = context.orderedChapters[descriptor.index - 1];
       const previousProgress = context.progressMap.get(String(previous.chapter?.id));
@@ -326,6 +329,101 @@ export class ChapterAccessService {
       needsPayment: false,
       chapterPrice: chapterPrice > 0 ? chapterPrice : undefined,
       nextChapter: this.toChapterReference(nextDescriptor),
+    };
+  }
+
+  /**
+   * Compute access decisions for ALL chapters in one call.
+   * Returns an ordered list matching `orderedChapters` with full access metadata.
+   */
+  computeAllChapterAccess(
+    context: ChapterAccessContext,
+  ): Array<{
+    chapterId: string;
+    chapterTitle: string;
+    sectionId: string;
+    sectionTitle: string;
+    index: number;
+    isPreview: boolean;
+    isPaidChapter: boolean;
+    isCompleted: boolean;
+    watchTime: number;
+    videoDuration: number;
+    access: ChapterAccessDecision;
+  }> {
+    return context.orderedChapters.map((descriptor) => {
+      const chapterId = String(descriptor.chapter?.id || '');
+      const progress = context.progressMap.get(chapterId);
+      return {
+        chapterId,
+        chapterTitle: String(descriptor.chapter?.titre || ''),
+        sectionId: String(descriptor.section?.id || ''),
+        sectionTitle: String(descriptor.section?.titre || ''),
+        index: descriptor.index,
+        isPreview: Boolean(descriptor.chapter?.isPreview),
+        isPaidChapter:
+          Boolean(descriptor.chapter?.isPaidChapter) &&
+          !Boolean(descriptor.chapter?.isPreview),
+        isCompleted: Boolean(progress?.isCompleted),
+        watchTime: Number(progress?.watchTime || 0),
+        videoDuration: Number((progress as any)?.videoDuration || 0),
+        access: this.evaluateChapterAccess(context, chapterId),
+      };
+    });
+  }
+
+  /**
+   * Deterministic next-chapter resolution.
+   * Given the current chapter, returns exactly what should happen when the user
+   * clicks "Next Chapter":
+   *   - { action: 'navigate', chapterId, ... }: safe to transition
+   *   - { action: 'blocked', reason, lockCode, ... }: must show CTA
+   *   - { action: 'course_complete' }: no more chapters
+   */
+  resolveNextChapterAction(
+    context: ChapterAccessContext,
+    currentChapterId: string,
+  ): {
+    action: 'navigate' | 'blocked' | 'course_complete';
+    chapterId?: string;
+    chapterTitle?: string;
+    sectionId?: string;
+    lockCode?: ChapterLockCode;
+    reason?: string;
+    needsPayment?: boolean;
+    chapterPrice?: number;
+    requiredChapter?: ChapterReference;
+  } {
+    const currentIndex = context.orderedChapters.findIndex(
+      (d) => String(d.chapter?.id) === String(currentChapterId),
+    );
+    if (currentIndex === -1 || currentIndex >= context.orderedChapters.length - 1) {
+      return { action: 'course_complete' };
+    }
+
+    const nextDescriptor = context.orderedChapters[currentIndex + 1];
+    const nextChapterId = String(nextDescriptor.chapter?.id || '');
+    const decision = this.evaluateChapterAccess(context, nextChapterId);
+
+    if (decision.canAccess) {
+      return {
+        action: 'navigate',
+        chapterId: nextChapterId,
+        chapterTitle: String(nextDescriptor.chapter?.titre || ''),
+        sectionId: String(nextDescriptor.section?.id || ''),
+      };
+    }
+
+    return {
+      action: 'blocked',
+      chapterId: nextChapterId,
+      chapterTitle: String(nextDescriptor.chapter?.titre || ''),
+      sectionId: String(nextDescriptor.section?.id || ''),
+      lockCode: decision.lockCode,
+      reason: decision.reason,
+      needsPayment: decision.needsPayment,
+      chapterPrice: decision.chapterPrice,
+      requiredChapter: decision.requiredChapter,
     };
   }
 }

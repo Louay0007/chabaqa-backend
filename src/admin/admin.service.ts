@@ -156,7 +156,7 @@ export class AdminService {
     };
 
     const accessTokenDuration = rememberMe ? '4h' : '2h';
-    const refreshTokenDuration = rememberMe ? '90d' : '30d';
+    const refreshTokenDuration = rememberMe ? '30d' : '7d';
 
     const accessToken = this.jwtService.sign(
       {

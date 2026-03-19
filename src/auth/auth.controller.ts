@@ -98,6 +98,7 @@ export class AuthController {
     access_token: string;
     accessToken: string;
     expires_in: number;
+    rememberMe: boolean;
     user: any;
   }> {
     const refreshToken = (
@@ -114,7 +115,7 @@ export class AuthController {
 
     const result = await this.authService.refreshToken(refreshToken);
     if (result?.accessToken) {
-      CookieUtil.setAccessTokenCookie(res as any, result.accessToken, false);
+      CookieUtil.setAccessTokenCookie(res as any, result.accessToken, !!result.rememberMe);
     }
 
     return {
@@ -123,6 +124,7 @@ export class AuthController {
       access_token: result.access_token,
       accessToken: result.accessToken,
       expires_in: result.expires_in,
+      rememberMe: result.rememberMe,
       user: result.user,
     };
   }

@@ -9,7 +9,7 @@ export class GetPayoutsQueryDto {
   })
   @IsOptional()
   @IsEnum(PayoutStatus)
-  status?: PayoutStatus;
+  status?: string;
 
   @ApiPropertyOptional({ 
     description: 'Filter by payout method',
@@ -17,7 +17,7 @@ export class GetPayoutsQueryDto {
   })
   @IsOptional()
   @IsEnum(PayoutMethod)
-  method?: PayoutMethod;
+  method?: string;
 
   @ApiPropertyOptional({ 
     description: 'Start date for filtering',

@@ -14,7 +14,7 @@ export class ContentModerationAnalyticsFiltersDto {
   })
   @IsOptional()
   @IsEnum(TimePeriod)
-  period?: TimePeriod = TimePeriod.LAST_30_DAYS;
+  period?: string = TimePeriod.LAST_30_DAYS;
 
   @ApiPropertyOptional({ 
     description: 'Custom start date (required if period is CUSTOM)'
@@ -36,7 +36,7 @@ export class ContentModerationAnalyticsFiltersDto {
   })
   @IsOptional()
   @IsEnum(ContentType)
-  contentType?: ContentType;
+  contentType?: string;
 
   @ApiPropertyOptional({ 
     description: 'Filter by community ID'

@@ -80,8 +80,8 @@ export class PayoutController {
     @Request() req: any,
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
     @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
-    @Query('status') status?: PayoutStatus,
-    @Query('method') method?: PayoutMethod,
+    @Query('status') status?: string,
+    @Query('method') method?: string,
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
     @Query('communityId') communityId?: string

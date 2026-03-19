@@ -6,7 +6,7 @@ export class MediaUploadBodyDto {
   @ApiPropertyOptional({ enum: MediaPurpose, default: MediaPurpose.GENERIC })
   @IsOptional()
   @IsEnum(MediaPurpose)
-  purpose?: MediaPurpose;
+  purpose?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
@@ -23,7 +23,7 @@ export class MediaUploadBodyDto {
   @ApiPropertyOptional({ enum: MediaVisibility })
   @IsOptional()
   @IsEnum(MediaVisibility)
-  visibility?: MediaVisibility;
+  visibility?: string;
 }
 
 export class MediaPresignDto {
@@ -45,7 +45,7 @@ export class MediaPresignDto {
   @ApiPropertyOptional({ enum: MediaPurpose, default: MediaPurpose.GENERIC })
   @IsOptional()
   @IsEnum(MediaPurpose)
-  purpose?: MediaPurpose;
+  purpose?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
@@ -84,7 +84,7 @@ export class MediaCompleteDto {
   @ApiPropertyOptional({ enum: MediaPurpose, default: MediaPurpose.GENERIC })
   @IsOptional()
   @IsEnum(MediaPurpose)
-  purpose?: MediaPurpose;
+  purpose?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
@@ -104,6 +104,6 @@ export class MediaCompleteDto {
   @ApiPropertyOptional({ enum: MediaVisibility })
   @IsOptional()
   @IsEnum(MediaVisibility)
-  visibility?: MediaVisibility;
+  visibility?: string;
 }
 

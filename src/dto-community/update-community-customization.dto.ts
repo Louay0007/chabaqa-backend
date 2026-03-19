@@ -193,12 +193,12 @@ export class UpdateCommunitySettingsDto {
   @ApiPropertyOptional({ enum: HeaderStyle })
   @IsOptional()
   @IsEnum(HeaderStyle)
-  headerStyle?: HeaderStyle;
+  headerStyle?: string;
 
   @ApiPropertyOptional({ enum: ContentWidth })
   @IsOptional()
   @IsEnum(ContentWidth)
-  contentWidth?: ContentWidth;
+  contentWidth?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
@@ -322,12 +322,12 @@ export class UpdateCommunityCustomizationDto {
   @ApiPropertyOptional({ enum: CommunityPriceType })
   @IsOptional()
   @IsEnum(CommunityPriceType)
-  priceType?: CommunityPriceType;
+  priceType?: string;
 
   @ApiPropertyOptional({ enum: CommunityType })
   @IsOptional()
   @IsEnum(CommunityType)
-  type?: CommunityType;
+  type?: string;
 
   @ApiPropertyOptional({ type: UpdateCommunitySettingsDto })
   @IsOptional()

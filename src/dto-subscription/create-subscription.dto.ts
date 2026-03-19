@@ -10,7 +10,7 @@ export class CreateSubscriptionDto {
     example: PlanTier.STARTER
   })
   @IsEnum(PlanTier)
-  plan: PlanTier;
+  plan: string;
 
   @ApiProperty({ 
     description: 'Amount to charge in TND',
@@ -83,7 +83,7 @@ export class CreateSubscriptionDto {
     default: SubscriptionStatus.ACTIVE
   })
   @IsEnum(SubscriptionStatus)
-  status: SubscriptionStatus;
+  status: string;
 
   @ApiPropertyOptional({ 
     description: 'Cancel at period end',

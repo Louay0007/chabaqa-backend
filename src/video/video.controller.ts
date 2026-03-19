@@ -115,7 +115,7 @@ export class VideoController {
   /**
    * Serve an HLS segment via X-Accel-Redirect.
    */
-  @Get('hls/:sessionToken/:segmentPath(*)')
+  @Get('hls/:sessionToken/*segmentPath')
   @Throttle({ default: { ttl: 60000, limit: 300 } })
   @ApiOperation({ summary: 'Serve HLS segment via X-Accel-Redirect' })
   async streamHlsSegment(

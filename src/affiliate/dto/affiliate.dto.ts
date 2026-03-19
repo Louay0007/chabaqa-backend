@@ -15,7 +15,7 @@ export class CreateProgramDto {
   @ApiPropertyOptional({ enum: Object.values(TrackableContentType) })
   @IsOptional()
   @IsEnum(TrackableContentType)
-  scopeContentType?: TrackableContentType;
+  scopeContentType?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
@@ -106,7 +106,7 @@ export class CreateLinkDto {
   @ApiPropertyOptional({ enum: Object.values(TrackableContentType) })
   @IsOptional()
   @IsEnum(TrackableContentType)
-  targetContentType?: TrackableContentType;
+  targetContentType?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
@@ -131,7 +131,7 @@ export class CreatePartnerLinkDto {
   @ApiPropertyOptional({ enum: Object.values(TrackableContentType) })
   @IsOptional()
   @IsEnum(TrackableContentType)
-  targetContentType?: TrackableContentType;
+  targetContentType?: string;
 
   @ApiPropertyOptional()
   @IsOptional()

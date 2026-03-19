@@ -71,7 +71,7 @@ export class TrackingController {
   @ApiParam({ name: 'contentId', description: 'Content ID' })
   @ApiBody({ schema: { type: 'object', properties: { metadata: { type: 'object' } } } })
   async trackView(
-    @Param('contentType') contentType: TrackableContentType,
+    @Param('contentType') contentType: string,
     @Param('contentId') contentId: string,
     @Req() req,
     @Body('metadata') metadata?: any,
@@ -91,7 +91,7 @@ export class TrackingController {
   @ApiParam({ name: 'contentId', description: 'Content ID' })
   @ApiBody({ schema: { type: 'object', properties: { metadata: { type: 'object' } } } })
   async trackStart(
-    @Param('contentType') contentType: TrackableContentType,
+    @Param('contentType') contentType: string,
     @Param('contentId') contentId: string,
     @Req() req,
     @Body('metadata') metadata?: any,
@@ -111,7 +111,7 @@ export class TrackingController {
   @ApiParam({ name: 'contentId', description: 'Content ID' })
   @ApiBody({ schema: { type: 'object', properties: { metadata: { type: 'object' } } } })
   async trackComplete(
-    @Param('contentType') contentType: TrackableContentType,
+    @Param('contentType') contentType: string,
     @Param('contentId') contentId: string,
     @Req() req,
     @Body('metadata') metadata?: any,
@@ -131,7 +131,7 @@ export class TrackingController {
   @ApiParam({ name: 'contentId', description: 'Content ID' })
   @ApiBody({ type: UpdateIncrementalWatchTimeDto })
   async updateWatchTime(
-    @Param('contentType') contentType: TrackableContentType,
+    @Param('contentType') contentType: string,
     @Param('contentId') contentId: string,
     @Body() body: UpdateIncrementalWatchTimeDto,
     @Req() req
@@ -150,7 +150,7 @@ export class TrackingController {
   @ApiParam({ name: 'contentId', description: 'Content ID' })
   @ApiBody({ schema: { type: 'object', properties: { metadata: { type: 'object' } } } })
   async trackLike(
-    @Param('contentType') contentType: TrackableContentType,
+    @Param('contentType') contentType: string,
     @Param('contentId') contentId: string,
     @Req() req,
     @Body('metadata') metadata?: any,
@@ -170,7 +170,7 @@ export class TrackingController {
   @ApiParam({ name: 'contentId', description: 'Content ID' })
   @ApiBody({ schema: { type: 'object', properties: { metadata: { type: 'object' } } } })
   async trackShare(
-    @Param('contentType') contentType: TrackableContentType,
+    @Param('contentType') contentType: string,
     @Param('contentId') contentId: string,
     @Req() req,
     @Body('metadata') metadata?: any,
@@ -190,7 +190,7 @@ export class TrackingController {
   @ApiParam({ name: 'contentId', description: 'Content ID' })
   @ApiBody({ schema: { type: 'object', properties: { metadata: { type: 'object' } } } })
   async trackDownload(
-    @Param('contentType') contentType: TrackableContentType,
+    @Param('contentType') contentType: string,
     @Param('contentId') contentId: string,
     @Req() req,
     @Body('metadata') metadata?: any,
@@ -209,7 +209,7 @@ export class TrackingController {
   @ApiParam({ name: 'contentType', enum: TrackableContentType })
   @ApiParam({ name: 'contentId', description: 'Content ID' })
   async addBookmark(
-    @Param('contentType') contentType: TrackableContentType,
+    @Param('contentType') contentType: string,
     @Param('contentId') contentId: string,
     @Req() req,
     @Body('bookmarkId') bookmarkId: string,
@@ -228,7 +228,7 @@ export class TrackingController {
   @ApiParam({ name: 'contentId', description: 'Content ID' })
   @ApiParam({ name: 'bookmarkId', description: 'Bookmark ID' })
   async removeBookmark(
-    @Param('contentType') contentType: TrackableContentType,
+    @Param('contentType') contentType: string,
     @Param('contentId') contentId: string,
     @Param('bookmarkId') bookmarkId: string,
     @Req() req
@@ -246,7 +246,7 @@ export class TrackingController {
   @ApiParam({ name: 'contentType', enum: TrackableContentType })
   @ApiParam({ name: 'contentId', description: 'Content ID' })
   async addRating(
-    @Param('contentType') contentType: TrackableContentType,
+    @Param('contentType') contentType: string,
     @Param('contentId') contentId: string,
     @Body('rating') rating: number,
     @Req() req,
@@ -264,7 +264,7 @@ export class TrackingController {
   @ApiParam({ name: 'contentType', enum: TrackableContentType })
   @ApiParam({ name: 'contentId', description: 'Content ID' })
   async getProgress(
-    @Param('contentType') contentType: TrackableContentType,
+    @Param('contentType') contentType: string,
     @Param('contentId') contentId: string,
     @Req() req
   ) {
@@ -281,7 +281,7 @@ export class TrackingController {
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
   async getUserProgressByType(
-    @Param('contentType') contentType: TrackableContentType,
+    @Param('contentType') contentType: string,
     @Query('page') page = '1',
     @Query('limit') limit = '10',
     @Req() req
@@ -303,7 +303,7 @@ export class TrackingController {
   @ApiParam({ name: 'contentType', enum: TrackableContentType })
   @ApiParam({ name: 'contentId', description: 'Content ID' })
   async getContentStats(
-    @Param('contentType') contentType: TrackableContentType,
+    @Param('contentType') contentType: string,
     @Param('contentId') contentId: string
   ) {
     return await this.trackingService.getContentStats(contentId, contentType);
@@ -318,7 +318,7 @@ export class TrackingController {
   @ApiQuery({ name: 'limit', required: false, type: Number })
   async getUserRecentActions(
     @Req() req,
-    @Query('contentType') contentType?: TrackableContentType,
+    @Query('contentType') contentType?: string,
     @Query('limit') limit = '20',
   ): Promise<any> {
     const user = req.user as AuthenticatedUser;

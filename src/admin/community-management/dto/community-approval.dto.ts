@@ -35,7 +35,7 @@ export class BulkCommunityApprovalDto {
 
   @ApiProperty({ enum: ApprovalAction, description: 'Action to perform on all communities' })
   @IsEnum(ApprovalAction)
-  action: ApprovalAction;
+  action: string;
 
   @ApiProperty({ description: 'Reason for bulk action (required for rejection)', required: false })
   @IsOptional()

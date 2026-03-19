@@ -16,6 +16,7 @@ import { CreateUserNoteDto, UpdateUserNoteDto, UserNoteResponseDto } from '../dt
 import { AddSectionDto } from '../dto-cours/add-section.dto';
 import { AddChapitreToSectionDto } from '../dto-cours/add-chapitre-to-section.dto';
 import { UpdateSequentialProgressionDto, ChapterAccessResponseDto, UnlockedChaptersResponseDto } from '../dto-cours/sequential-progression.dto';
+import { CourseSessionDto } from '../common/dto/course-session.dto';
 import { UpdateCoursDto, UpdateSectionDto, UpdateChapitreDto } from '../dto-cours/update-cours.dto';
 import { HttpCacheInterceptor } from '../common/interceptors/cache.interceptor';
 import { CacheTTL, CacheDuration } from '../common/decorators/cache-ttl.decorator';
@@ -1153,6 +1154,25 @@ export class CoursController {
 	) {
 		const user = req.user as AuthenticatedUser;
 		return await this.coursProgressionService.getUnlockedChapters(id, user._id);
+	}
+
+	@UseGuards(JwtAuthGuard)
+	@ApiBearerAuth('JWT-auth')
+	@Get(':id/course-session')
+	@ApiOperation({
+		summary: 'Get normalized course session state',
+		description: 'Returns the full course session including all chapter access decisions, progression, and next-chapter action in a single response. This is the single source of truth for the frontend course player.',
+	})
+	@ApiParam({ name: 'id', description: 'Course ID', type: 'string' })
+	@ApiQuery({ name: 'currentChapterId', required: false, type: String, description: 'Current chapter ID for next-action resolution' })
+	@ApiResponse({ status: 200, description: 'Course session retrieved', type: CourseSessionDto })
+	async getCourseSession(
+		@Param('id') id: string,
+		@Query('currentChapterId') currentChapterId: string | undefined,
+		@Req() req
+	) {
+		const user = req.user as AuthenticatedUser;
+		return await this.coursProgressionService.getCourseSession(id, user._id, currentChapterId || undefined);
 	}
 
 	@UseGuards(JwtAuthGuard)

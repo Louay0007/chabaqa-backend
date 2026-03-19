@@ -50,6 +50,7 @@ export interface UserRefreshPayload {
   accessToken: string;
   access_token: string;
   expires_in: number;
+  rememberMe: boolean;
   user: any;
 }
 
@@ -202,9 +203,9 @@ export class AuthService {
     const accessTokenId = `${user._id}-access-${currentTime}`;
     const refreshTokenId = `${user._id}-refresh-${currentTime}`;
     const accessExpiresIn = rememberMe ? '4h' : '2h';
-    const refreshExpiresIn = rememberMe ? '90d' : '30d';
+    const refreshExpiresIn = rememberMe ? '30d' : '7d';
     const accessExpiresInSeconds = rememberMe ? 4 * 60 * 60 : 2 * 60 * 60;
-    const refreshExpiresInSeconds = rememberMe ? 90 * 24 * 60 * 60 : 30 * 24 * 60 * 60;
+    const refreshExpiresInSeconds = rememberMe ? 30 * 24 * 60 * 60 : 7 * 24 * 60 * 60;
     const payload = {
       sub: user._id,
       email: user.email,
@@ -344,6 +345,7 @@ export class AuthService {
         accessToken: newAccessToken,
         access_token: newAccessToken,
         expires_in: accessExpiresInSeconds,
+        rememberMe,
         user: this.buildUserDto(user),
       };
     } catch (error) {

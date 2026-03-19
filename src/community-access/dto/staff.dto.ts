@@ -12,7 +12,7 @@ export class AssignStaffRoleDto {
     description: 'Staff role to assign',
   })
   @IsEnum(CommunityStaffRole)
-  role: CommunityStaffRole;
+  role: string;
 }
 
 export class UpdateStaffRoleDto {
@@ -21,5 +21,5 @@ export class UpdateStaffRoleDto {
     description: 'New staff role',
   })
   @IsEnum(CommunityStaffRole)
-  role: CommunityStaffRole;
+  role: string;
 }

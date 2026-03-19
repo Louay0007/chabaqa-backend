@@ -13,7 +13,7 @@ export class ContentModerationItemResponseDto {
   contentId: string;
 
   @ApiProperty({ description: 'Type of content', enum: ContentType })
-  contentType: ContentType;
+  contentType: string;
 
   @ApiProperty({ description: 'Creator information' })
   creator: {
@@ -31,10 +31,10 @@ export class ContentModerationItemResponseDto {
   };
 
   @ApiProperty({ description: 'Current moderation status', enum: ModerationStatus })
-  status: ModerationStatus;
+  status: string;
 
   @ApiProperty({ description: 'Priority level', enum: ModerationPriority })
-  priority: ModerationPriority;
+  priority: string;
 
   @ApiPropertyOptional({ description: 'Reviewer information if reviewed' })
   reviewer?: {

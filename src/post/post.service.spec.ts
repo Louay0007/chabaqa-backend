@@ -1,11 +1,13 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getModelToken } from '@nestjs/mongoose';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { Types } from 'mongoose';
 import { PostService } from './post.service';
 import { Post } from '../schema/post.schema';
 import { Community } from '../schema/community.schema';
 import { User } from '../schema/user.schema';
 import { ContentTrackingService } from '../common/services/content-tracking.service';
+import { NotificationService } from '../notification/notification.service';
 
 describe('PostService share flow', () => {
   let service: PostService;
@@ -13,6 +15,7 @@ describe('PostService share flow', () => {
   const mockPostModel: any = {
     findOne: jest.fn(),
     findById: jest.fn(),
+    deleteOne: jest.fn(),
   };
 
   const mockCommunityModel: any = {
@@ -29,6 +32,10 @@ describe('PostService share flow', () => {
     trackBookmark: jest.fn(),
   };
 
+  const mockNotificationService: any = {
+    createNotification: jest.fn(),
+  };
+
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -37,6 +44,7 @@ describe('PostService share flow', () => {
         { provide: getModelToken(Community.name), useValue: mockCommunityModel },
         { provide: getModelToken(User.name), useValue: mockUserModel },
         { provide: ContentTrackingService, useValue: mockTrackingService },
+        { provide: NotificationService, useValue: mockNotificationService },
       ],
     }).compile();
 
@@ -164,5 +172,44 @@ describe('PostService share flow', () => {
 
     await expect(service.getPostShareMeta('missing-post')).rejects.toThrow('Post non trouvé');
   });
-});
 
+  describe('remove', () => {
+    it('deletes when requester is the post author', async () => {
+      const post: any = {
+        _id: new Types.ObjectId(),
+        authorId: new Types.ObjectId('507f1f77bcf86cd799439011'),
+      };
+
+      mockPostModel.findOne.mockResolvedValue(post);
+      mockPostModel.deleteOne.mockResolvedValue({ deletedCount: 1 });
+
+      const result = await service.remove('post-1', '507f1f77bcf86cd799439011');
+
+      expect(mockPostModel.findOne).toHaveBeenCalledWith({ id: 'post-1' });
+      expect(mockPostModel.deleteOne).toHaveBeenCalledWith({ _id: post._id });
+      expect(result).toEqual({ message: 'Post supprimé avec succès' });
+    });
+
+    it('throws ForbiddenException for non-author', async () => {
+      const post: any = {
+        _id: new Types.ObjectId(),
+        authorId: new Types.ObjectId('507f1f77bcf86cd799439011'),
+      };
+      mockPostModel.findOne.mockResolvedValue(post);
+
+      await expect(service.remove('post-1', '507f1f77bcf86cd799439012')).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      expect(mockPostModel.deleteOne).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFoundException for unknown post id', async () => {
+      mockPostModel.findOne.mockResolvedValue(null);
+
+      await expect(service.remove('missing-post', '507f1f77bcf86cd799439011')).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      expect(mockPostModel.deleteOne).not.toHaveBeenCalled();
+    });
+  });
+});

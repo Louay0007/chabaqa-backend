@@ -10,7 +10,7 @@ export class FinancialAnalyticsQueryDto {
   })
   @IsOptional()
   @IsEnum(TimePeriod)
-  period?: TimePeriod = TimePeriod.MONTH;
+  period?: string = TimePeriod.MONTH;
 
   @ApiPropertyOptional({
     description: 'Start date for custom period',

@@ -10,7 +10,7 @@ export class UpdateSubscriptionDto {
   })
   @IsOptional()
   @IsEnum(PlanTier)
-  plan?: PlanTier;
+  plan?: string;
 
   @ApiPropertyOptional({ 
     description: 'Amount in TND',
@@ -85,7 +85,7 @@ export class UpdateSubscriptionDto {
   })
   @IsOptional()
   @IsEnum(SubscriptionStatus)
-  status?: SubscriptionStatus;
+  status?: string;
 
   @ApiPropertyOptional({ 
     description: 'Cancel at period end',

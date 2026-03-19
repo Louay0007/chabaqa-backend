@@ -26,7 +26,7 @@ export class ResourceSummaryDto {
     description: 'Type de ressource',
     enum: ResourceType
   })
-  type: ResourceType;
+  type: string;
 
   @ApiProperty({
     description: 'Temps de lecture estimé'
@@ -37,7 +37,7 @@ export class ResourceSummaryDto {
     description: 'Catégorie de la ressource',
     enum: ResourceCategory
   })
-  category: ResourceCategory;
+  category: string;
 
   @ApiPropertyOptional({
     description: 'Slug de la ressource pour URL'
@@ -59,7 +59,7 @@ export class CreateContentElementDto {
     enum: ContentElementType
   })
   @IsEnum(ContentElementType)
-  type: ContentElementType;
+  type: string;
 
   @ApiProperty({
     description: 'Contenu de l\'élément (texte, URL d\'image, URL de vidéo, etc.)',
@@ -410,7 +410,7 @@ class BaseResourceDto {
     return categoryMapping[value] || value;
   })
   @IsEnum(ResourceCategory)
-  category: ResourceCategory;
+  category: string;
 
   @ApiPropertyOptional({
     description: 'ID de la communauté associée'
@@ -514,7 +514,7 @@ export class CreateResourceDto extends BaseResourceDto {
     return typeMapping[value] || value;
   })
   @IsEnum(ResourceType)
-  type: ResourceType;
+  type: string;
 
   @ApiProperty({
     description: 'Contenu de la ressource (structure varie selon le type)',
@@ -544,7 +544,7 @@ export class CreateArticleResourceDto extends BaseResourceDto {
     default: ResourceType.ARTICLE
   })
   @IsEnum([ResourceType.ARTICLE])
-  type: ResourceType.ARTICLE;
+  type: string;
 
   @ApiProperty({
     description: 'Contenu de l\'article',
@@ -565,7 +565,7 @@ export class CreateVideoResourceDto extends BaseResourceDto {
     default: ResourceType.VIDEO
   })
   @IsEnum([ResourceType.VIDEO])
-  type: ResourceType.VIDEO;
+  type: string;
 
   @ApiProperty({
     description: 'Contenu de la vidéo',
@@ -586,7 +586,7 @@ export class CreateGuideResourceDto extends BaseResourceDto {
     default: ResourceType.GUIDE
   })
   @IsEnum([ResourceType.GUIDE])
-  type: ResourceType.GUIDE;
+  type: string;
 
   @ApiProperty({
     description: 'Contenu du guide',

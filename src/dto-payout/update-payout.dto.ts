@@ -9,7 +9,7 @@ export class UpdatePayoutDto {
   })
   @IsOptional()
   @IsEnum(PayoutStatus)
-  status?: PayoutStatus;
+  status?: string;
 
   @ApiPropertyOptional({ 
     description: 'Amount',
@@ -33,7 +33,7 @@ export class UpdatePayoutDto {
   })
   @IsOptional()
   @IsEnum(PayoutMethod)
-  method?: PayoutMethod;
+  method?: string;
 
   @ApiPropertyOptional({ 
     description: 'Description',

@@ -70,7 +70,7 @@ export class CreateEmailCampaignDto {
     example: CampaignType.ANNOUNCEMENT,
   })
   @IsEnum(CampaignType)
-  type: CampaignType;
+  type: string;
 
   @ApiProperty({
     description: 'Audience targeting type',
@@ -78,7 +78,7 @@ export class CreateEmailCampaignDto {
     example: AudienceTargetType.ALL_USERS,
   })
   @IsEnum(AudienceTargetType)
-  audienceTarget: AudienceTargetType;
+  audienceTarget: string;
 
   @ApiPropertyOptional({
     description: 'Community ID for community-specific campaigns',

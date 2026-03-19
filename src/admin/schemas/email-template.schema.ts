@@ -50,7 +50,7 @@ export class EmailTemplate {
   @Prop({ required: true })
   description: string;
 
-  @Prop({ required: true, enum: TemplateCategory, index: true })
+  @Prop({ required: true, type: String, enum: TemplateCategory, index: true })
   category: TemplateCategory;
 
   @Prop({ required: true, minlength: 3, maxlength: 200 })

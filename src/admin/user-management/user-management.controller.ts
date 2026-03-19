@@ -474,7 +474,7 @@ export class UserManagementController {
     }
   })
   @ApiResponse({ status: 403, description: 'Insufficient permissions' })
-  async getUserAnalytics(@Query('period') period?: TimePeriod): Promise<{
+  async getUserAnalytics(@Query('period') period?: string): Promise<{
     success: boolean;
     message: string;
     data: UserAnalytics;
@@ -519,7 +519,7 @@ export class UserManagementController {
     description: 'User growth metrics retrieved successfully'
   })
   @ApiResponse({ status: 403, description: 'Insufficient permissions' })
-  async getUserGrowthMetrics(@Query('period') period?: TimePeriod): Promise<{
+  async getUserGrowthMetrics(@Query('period') period?: string): Promise<{
     success: boolean;
     message: string;
     data: any;

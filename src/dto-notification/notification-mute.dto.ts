@@ -10,7 +10,7 @@ export enum MuteTargetDto {
 export class CreateNotificationMuteDto {
   @ApiProperty({ enum: MuteTargetDto })
   @IsEnum(MuteTargetDto)
-  targetType: MuteTargetDto;
+  targetType: string;
 
   @ApiProperty({ description: 'ID of target (postId, conversationId, senderId, communityId)' })
   @IsString()

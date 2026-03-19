@@ -61,7 +61,7 @@ export class EmailRecipient {
   name: string;
 
   @Prop({ 
-    enum: ['pending', 'sent', 'failed', 'bounced'],
+    type: String, enum: ['pending', 'sent', 'failed', 'bounced'],
     default: 'pending'
   })
   status: 'pending' | 'sent' | 'failed' | 'bounced';
@@ -154,7 +154,7 @@ export class EmailCampaign {
    * Campaign type
    */
   @Prop({ 
-    enum: EmailCampaignType,
+    type: String, enum: EmailCampaignType,
     default: EmailCampaignType.CUSTOM
   })
   type: EmailCampaignType;
@@ -163,7 +163,7 @@ export class EmailCampaign {
    * Campaign status
    */
   @Prop({ 
-    enum: EmailCampaignStatus,
+    type: String, enum: EmailCampaignStatus,
     default: EmailCampaignStatus.DRAFT,
     index: true
   })
@@ -287,7 +287,7 @@ export class EmailCampaign {
    * Target inactivity period (for inactive user campaigns)
    */
   @Prop({ 
-    enum: InactivityPeriod
+    type: String, enum: InactivityPeriod
   })
   targetInactivityPeriod?: InactivityPeriod;
 
@@ -360,7 +360,7 @@ export class EmailCampaign {
    * The trigger event this automation responds to (e.g. COMMUNITY_JOIN)
    */
   @Prop({
-    enum: AutomationEventTrigger,
+    type: String, enum: AutomationEventTrigger,
     index: true,
   })
   eventTrigger?: AutomationEventTrigger;

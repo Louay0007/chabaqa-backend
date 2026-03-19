@@ -42,7 +42,7 @@ export class InitiatePayoutDto {
   @ApiProperty({ enum: PayoutMethod, description: 'Payment method for the payout' })
   @IsNotEmpty()
   @IsEnum(PayoutMethod)
-  method: PayoutMethod;
+  method: string;
 
   @ApiPropertyOptional({ description: 'Optional description for the payout' })
   @IsOptional()

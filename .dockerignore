@@ -1,0 +1,12 @@
+node_modules
+dist
+.next
+uploads
+hls-output
+*.md
+.git
+.env
+.env.*
+test
+coverage
+.vscode

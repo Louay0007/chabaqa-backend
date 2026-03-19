@@ -67,7 +67,7 @@ export const PlanFeaturesSchema = SchemaFactory.createForClass(PlanFeatures);
 
 @Schema({ timestamps: true })
 export class Plan {
-  @Prop({ required: true, enum: PlanTier, unique: true })
+  @Prop({ required: true, type: String, enum: PlanTier, unique: true })
   tier: PlanTier;
 
   @Prop({ required: true, trim: true })

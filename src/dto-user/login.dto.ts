@@ -29,6 +29,11 @@ export class LoginDto {
     example: false,
     default: false
   })
+  @Transform(({ value, obj }) => {
+    if (typeof value === 'boolean') return value;
+    if (typeof obj?.rememberMe === 'boolean') return obj.rememberMe;
+    return value;
+  })
   @IsOptional()
   @IsBoolean({ message: 'Remember me doit être un booléen' })
   remember_me?: boolean;
