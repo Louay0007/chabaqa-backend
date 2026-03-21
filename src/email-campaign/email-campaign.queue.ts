@@ -6,6 +6,13 @@ const REDIS_READY_LIST = 'email-campaigns:ready';
 const REDIS_SCHEDULED_ZSET = 'email-campaigns:scheduled';
 const REDIS_PAYLOAD_HASH = 'email-campaigns:payloads';
 
+/** Error strings from Redis that indicate the connection is no longer usable. */
+const REDIS_CONNECTION_ERROR_PATTERNS = ['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'socket hang up', 'Connection is closed'];
+
+function isConnectionError(message: string): boolean {
+  return REDIS_CONNECTION_ERROR_PATTERNS.some((p) => message.includes(p));
+}
+
 @Injectable()
 export class EmailCampaignQueueService implements OnModuleDestroy {
   private readonly logger = new Logger(EmailCampaignQueueService.name);
@@ -112,11 +119,23 @@ export class EmailCampaignQueueService implements OnModuleDestroy {
       const db = Number(process.env.REDIS_DB || 0);
 
       const client = createClient({
-        socket: { host, port },
+        socket: { host, port, reconnectStrategy: false },
         password,
         database: db,
       });
-      client.on('error', (error) => this.logger.error(`Redis queue error: ${error.message}`));
+
+      client.on('error', (error: Error) => {
+        this.logger.error(`Redis queue error: ${error.message}`);
+        // Drop the reference on connection errors so the next call reconnects
+        if (isConnectionError(error.message)) {
+          this.client = null;
+        }
+      });
+
+      client.on('end', () => {
+        this.client = null;
+      });
+
       await client.connect();
       this.client = client;
       return client;

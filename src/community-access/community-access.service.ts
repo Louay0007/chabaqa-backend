@@ -200,24 +200,58 @@ export class CommunityAccessService {
         .exec(),
     ]);
 
-    if (!community) return { owner: null, staff: [] };
+    if (!community) return [];
 
-    const owner = {
-      userId: community.createur,
-      role: CommunityRole.OWNER as string,
-      user: community.createur, // populated
+    /** Map a populated user document to the shape the frontend expects */
+    const mapUser = (u: any) => {
+      const nameParts = (u.name ?? '').split(' ');
+      return {
+        _id: String(u._id),
+        firstName: nameParts[0] ?? '',
+        lastName: nameParts.slice(1).join(' ') ?? '',
+        email: u.email ?? '',
+        username: u.username ?? '',
+        profileImage: u.photo_de_profil ?? u.avatar ?? null,
+      };
     };
 
-    const staff = staffRecords.map((s) => ({
-      _id: s._id,
-      userId: s.userId,
-      role: s.role,
-      user: s.userId, // populated
-      createdAt: (s as any).createdAt,
-      createdBy: s.createdBy,
-    }));
+    const result: any[] = [];
 
-    return { owner, staff };
+    // Include owner as the first entry
+    const ownerRaw = community.createur as any;
+    if (ownerRaw) {
+      const ownerId = String(ownerRaw._id ?? ownerRaw);
+      result.push({
+        _id: ownerId,
+        communityId: String(communityOid),
+        userId: ownerId,
+        role: CommunityRole.OWNER as string,
+        status: 'active',
+        createdBy: ownerId,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        user: mapUser(ownerRaw),
+      });
+    }
+
+    // Include all active staff members
+    for (const s of staffRecords) {
+      const userRaw = s.userId as any;
+      const uid = String(userRaw?._id ?? userRaw ?? s.userId);
+      result.push({
+        _id: String(s._id),
+        communityId: String(communityOid),
+        userId: uid,
+        role: s.role,
+        status: s.status,
+        createdBy: String(s.createdBy),
+        createdAt: (s as any).createdAt,
+        updatedAt: (s as any).updatedAt,
+        user: mapUser(userRaw),
+      });
+    }
+
+    return result;
   }
 
   /**

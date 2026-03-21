@@ -127,51 +127,60 @@ export class CookieUtil {
    * Supprime les cookies de tokens (pour la déconnexion)
    */
   static clearTokenCookies(res: Response): void {
-    // Clear current cookie names
-    res.clearCookie(this.COOKIE_NAMES.ACCESS_TOKEN, {
-      path: this.ACCESS_TOKEN_CONFIG.path,
-      secure: this.ACCESS_TOKEN_CONFIG.secure,
-      sameSite: this.ACCESS_TOKEN_CONFIG.sameSite,
-    });
-    res.clearCookie(this.COOKIE_NAMES.REFRESH_TOKEN, {
-      path: this.REFRESH_TOKEN_CONFIG.path,
-      secure: this.REFRESH_TOKEN_CONFIG.secure,
-      sameSite: this.REFRESH_TOKEN_CONFIG.sameSite,
-    });
-    
-    // Also clear legacy cookie names for complete cleanup
-    res.clearCookie('access_token', {
-      path: this.ACCESS_TOKEN_CONFIG.path,
-      secure: this.ACCESS_TOKEN_CONFIG.secure,
-      sameSite: this.ACCESS_TOKEN_CONFIG.sameSite,
-    });
-    res.clearCookie('refresh_token', {
-      path: this.REFRESH_TOKEN_CONFIG.path,
-      secure: this.REFRESH_TOKEN_CONFIG.secure,
-      sameSite: this.REFRESH_TOKEN_CONFIG.sameSite,
-    });
+    const domain = this.getCookieDomain();
+    const clearOpts = (config: typeof this.ACCESS_TOKEN_CONFIG) => {
+      const opts: Record<string, any> = {
+        path: config.path,
+        secure: config.secure,
+        sameSite: config.sameSite,
+      };
+      if (domain) opts.domain = domain;
+      return opts;
+    };
+
+    // Clear current cookie names (with and without domain for full coverage)
+    const cookieNames = [
+      this.COOKIE_NAMES.ACCESS_TOKEN,
+      this.COOKIE_NAMES.REFRESH_TOKEN,
+      'access_token',
+      'refresh_token',
+    ];
+    for (const name of cookieNames) {
+      res.clearCookie(name, clearOpts(this.ACCESS_TOKEN_CONFIG));
+      // Also clear without domain in case cookie was set without one
+      res.clearCookie(name, {
+        path: this.ACCESS_TOKEN_CONFIG.path,
+        secure: this.ACCESS_TOKEN_CONFIG.secure,
+        sameSite: this.ACCESS_TOKEN_CONFIG.sameSite,
+      });
+    }
   }
 
   static clearAdminTokenCookies(res: Response): void {
-    res.clearCookie(this.ADMIN_COOKIE_NAMES.ACCESS_TOKEN, {
-      path: this.ACCESS_TOKEN_CONFIG.path,
-      secure: this.ACCESS_TOKEN_CONFIG.secure,
-      sameSite: this.ACCESS_TOKEN_CONFIG.sameSite,
-    });
-    res.clearCookie(this.ADMIN_COOKIE_NAMES.REFRESH_TOKEN, {
-      path: this.REFRESH_TOKEN_CONFIG.path,
-      secure: this.REFRESH_TOKEN_CONFIG.secure,
-      sameSite: this.REFRESH_TOKEN_CONFIG.sameSite,
-    });
-    res.clearCookie('admin_access_token', {
-      path: this.ACCESS_TOKEN_CONFIG.path,
-      secure: this.ACCESS_TOKEN_CONFIG.secure,
-      sameSite: this.ACCESS_TOKEN_CONFIG.sameSite,
-    });
-    res.clearCookie('admin_refresh_token', {
-      path: this.REFRESH_TOKEN_CONFIG.path,
-      secure: this.REFRESH_TOKEN_CONFIG.secure,
-      sameSite: this.REFRESH_TOKEN_CONFIG.sameSite,
-    });
+    const domain = this.getCookieDomain();
+    const clearOpts = (config: typeof this.ACCESS_TOKEN_CONFIG) => {
+      const opts: Record<string, any> = {
+        path: config.path,
+        secure: config.secure,
+        sameSite: config.sameSite,
+      };
+      if (domain) opts.domain = domain;
+      return opts;
+    };
+
+    const adminNames = [
+      this.ADMIN_COOKIE_NAMES.ACCESS_TOKEN,
+      this.ADMIN_COOKIE_NAMES.REFRESH_TOKEN,
+      'admin_access_token',
+      'admin_refresh_token',
+    ];
+    for (const name of adminNames) {
+      res.clearCookie(name, clearOpts(this.ACCESS_TOKEN_CONFIG));
+      res.clearCookie(name, {
+        path: this.ACCESS_TOKEN_CONFIG.path,
+        secure: this.ACCESS_TOKEN_CONFIG.secure,
+        sameSite: this.ACCESS_TOKEN_CONFIG.sameSite,
+      });
+    }
   }
 } 

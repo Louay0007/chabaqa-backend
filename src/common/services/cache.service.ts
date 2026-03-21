@@ -11,6 +11,8 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
   private readonly defaultTtlSeconds: number;
   private redisClient: RedisClientType | null = null;
   private redisConnectPromise: Promise<void> | null = null;
+  private lastRedisErrorMsg = '';
+  private lastRedisErrorTs = 0;
 
   constructor(
     @Inject(CACHE_MANAGER) private cacheManager: Cache,
@@ -26,13 +28,31 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
       const db = this.configService.get<number>('REDIS_DB', 0);
 
       this.redisClient = createClient({
-        socket: { host, port },
+        socket: {
+          host,
+          port,
+          reconnectStrategy: (retries: number) => {
+            // Exponential backoff: 500ms, 1s, 2s, 4s … capped at 30s
+            const delay = Math.min(500 * Math.pow(2, retries), 30_000);
+            this.logger.warn(
+              `Redis reconnect attempt ${retries + 1} in ${delay}ms`,
+            );
+            return delay;
+          },
+        },
         password: password || undefined,
         database: db,
       });
 
       this.redisClient.on('error', (error) => {
-        this.logger.error('Redis client error:', error);
+        // Throttle identical error logs to once per 30 seconds
+        const msg = error?.message || String(error);
+        const now = Date.now();
+        if (msg !== this.lastRedisErrorMsg || now - this.lastRedisErrorTs > 30_000) {
+          this.logger.error(`Redis client error: ${msg}`);
+          this.lastRedisErrorMsg = msg;
+          this.lastRedisErrorTs = now;
+        }
       });
 
       this.redisConnectPromise = this.redisClient.connect()

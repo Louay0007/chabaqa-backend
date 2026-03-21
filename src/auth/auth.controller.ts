@@ -231,6 +231,39 @@ export class AuthController {
     };
   }
 
+  @Get('signout')
+  @ApiOperation({
+    summary: 'Sign Out (browser redirect)',
+    description:
+      'Revokes auth tokens, clears all auth cookies, and redirects the browser to the signin page. Intended for window.location.href navigation from the frontend.',
+  })
+  @ApiResponse({ status: 302, description: 'Redirected to signin page after clearing cookies' })
+  async signout(@Req() req, @Res() res: Response) {
+    const accessToken = (
+      req.headers?.authorization?.replace('Bearer ', '')
+      || req.cookies?.accessToken
+      || req.cookies?.access_token
+      || ''
+    ).trim();
+    const refreshToken = (
+      req.cookies?.refreshToken
+      || req.cookies?.refresh_token
+      || ''
+    ).trim();
+
+    // Revoke tokens — idempotent, errors swallowed intentionally
+    await this.authService.logout(accessToken, refreshToken);
+
+    // Clear all auth cookies
+    CookieUtil.clearTokenCookies(res as any);
+
+    // Redirect browser to the frontend signin page (locale-aware)
+    const frontendBaseUrl = this.getFrontendBaseUrl();
+    const localeCookie: string = (req.cookies?.NEXT_LOCALE || '').toLowerCase();
+    const locale = (localeCookie === 'ar' || localeCookie === 'en') ? localeCookie : 'en';
+    return res.redirect(`${frontendBaseUrl}/${locale}/signin`);
+  }
+
   @Post('forgot-password')
   @UseGuards(PublicThrottlerGuard)
   @Throttle({ default: { ttl: 900000, limit: 3 } } as any)
