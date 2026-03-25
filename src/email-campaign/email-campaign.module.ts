@@ -9,6 +9,7 @@ import { EmailCampaignController } from './email-campaign.controller';
 import { EmailCampaignTrackingController } from './email-campaign-tracking.controller';
 import { EmailCampaignService } from './email-campaign.service';
 import { UserLoginActivityModule } from '../user-login-activity/user-login-activity.module';
+import { PolicyModule } from '../common/modules/policy.module';
 import { EmailService } from '../common/services/email.service';
 import { EmailCampaignQueueService } from './email-campaign.queue';
 import { EmailCampaignProcessor } from './email-campaign.processor';
@@ -26,6 +27,7 @@ import { EmailCampaignProcessor } from './email-campaign.processor';
       { name: UserLoginActivity.name, schema: UserLoginActivitySchema },
     ]),
     UserLoginActivityModule,
+    PolicyModule,
   ],
   controllers: [EmailCampaignController, EmailCampaignTrackingController],
   providers: [EmailCampaignService, EmailCampaignQueueService, EmailCampaignProcessor, EmailService],

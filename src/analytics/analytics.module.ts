@@ -4,6 +4,7 @@ import { AnalyticsDaily, AnalyticsDailySchema } from '../schema/analytics-daily.
 import { AnalyticsService } from './analytics.service';
 import { AnalyticsController } from './analytics.controller';
 import { SubscriptionModule } from '../subscription/subscription.module';
+import { PolicyModule } from '../common/modules/policy.module';
 import { CoursSchema, CourseEnrollmentSchema } from '../schema/course.schema';
 import { Subscription, SubscriptionSchema } from '../schema/subscription.schema';
 import { AnalyticsScheduler } from './analytics.scheduler';
@@ -13,6 +14,7 @@ import { CreatorInsightsService } from './creator-insights.service';
 @Module({
   imports: [
     SubscriptionModule,
+    PolicyModule,
     MongooseModule.forFeature([
       { name: AnalyticsDaily.name, schema: AnalyticsDailySchema },
       { name: 'Cours', schema: CoursSchema },

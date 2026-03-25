@@ -10,6 +10,7 @@ import { InjectConnection } from '@nestjs/mongoose';
 import { Connection } from 'mongoose';
 import { Ga4ReportingService } from '../ga4/ga4-reporting.service';
 import { CacheService } from '../common/services/cache.service';
+import { PolicyService } from '../common/services/policy.service';
 
 
 @Injectable()
@@ -26,9 +27,25 @@ export class AnalyticsService {
     @InjectConnection() private readonly dbConnection: Connection,
     private readonly ga4ReportingService: Ga4ReportingService,
     private readonly cacheService: CacheService,
+    private readonly policyService: PolicyService,
   ) {
     this.cache = new Map();
   }
+  /**
+   * Clamp the "from" date so it does not exceed the plan's lookback window.
+   * When PLAN_ENFORCEMENT_MODE=false the full range is returned unchanged.
+   */
+  private async clampDateRangeForPlan(
+    creatorId: string,
+    from: Date,
+    to: Date,
+  ): Promise<{ from: Date; to: Date; lookbackDays: number }> {
+    const lookbackDays = await this.policyService.getAnalyticsLookbackDays(creatorId);
+    const cutoff = new Date(to.getTime() - lookbackDays * 24 * 3600 * 1000);
+    const effectiveFrom = from < cutoff ? cutoff : from;
+    return { from: effectiveFrom, to, lookbackDays };
+  }
+
 
   private cacheKey(userId: string, from: string, to: string, scope: string) {
     return `${userId}:${from}:${to}:${scope}`;
@@ -316,6 +333,10 @@ export class AnalyticsService {
       const sub = await this.subscriptionService.getMySubscription(creatorId);
       plan = (sub?.plan as PlanTier) || PlanTier.STARTER;
     }
+    // Clamp date range to plan lookback window
+    const clamped = await this.clampDateRangeForPlan(creatorId, from, to);
+    from = clamped.from;
+    to = clamped.to;
     const communityScope = await this.resolveCommunityScope(creatorId, communityId, communitySlug);
     const key = this.cacheKey(creatorId, from.toISOString(), to.toISOString(), `overview:${communityScope.cacheKeyPart}`);
     const cached = await this.getCache<any>(key);
@@ -2434,9 +2455,19 @@ export class AnalyticsService {
   }
 
   async exportCsv(creatorId: string, scope: 'overview' | 'courses' | 'challenges' | 'sessions' | 'events' | 'products' | 'posts', from: Date, to: Date, communityId?: string, communitySlug?: string) {
-    // Restrictions removed: CSV export available for everyone
-    // const sub = await this.subscriptionService.getMySubscription(creatorId);
-    // const plan = (sub?.plan as PlanTier) || PlanTier.STARTER;
+    // CSV export: enforce Pro-only when plan enforcement is active
+    const enforcementOn = process.env.PLAN_ENFORCEMENT_MODE === 'true';
+    if (enforcementOn) {
+      const sub = await this.subscriptionService.getMySubscription(creatorId);
+      const plan = (sub?.plan as PlanTier) || PlanTier.STARTER;
+      if (plan !== PlanTier.PRO) {
+        throw new ForbiddenException('CSV export is available on the Pro plan only. Please upgrade.');
+      }
+    }
+    // Clamp date range to plan lookback window
+    const clamped = await this.clampDateRangeForPlan(creatorId, from, to);
+    from = clamped.from;
+    to = clamped.to;
 
     if (scope === 'overview') {
       const data = await this.getOverview(creatorId, from, to, PlanTier.PRO, communityId, communitySlug);

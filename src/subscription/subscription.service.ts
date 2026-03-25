@@ -720,9 +720,19 @@ export class SubscriptionService {
 
     if (subscription) {
       subscription.status = SubscriptionStatus.ACTIVE;
+      subscription.hasPaymentMethod = true;
+      // Update billing period from invoice data
+      if (data.period_start) {
+        subscription.currentPeriodStart = new Date(data.period_start * 1000);
+      }
+      if (data.period_end) {
+        subscription.currentPeriodEnd = new Date(data.period_end * 1000);
+      }
+      if (data.amount_paid) {
+        subscription.amount = data.amount_paid / 100;
+      }
       await subscription.save();
       
-      // Record successful payment
       this.logger.log(`Payment succeeded for subscription ${subscription._id}, amount: ${data.amount_paid / 100}`);
     }
 

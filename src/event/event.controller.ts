@@ -24,6 +24,7 @@ import { HttpCacheInterceptor } from '../common/interceptors/cache.interceptor';
 import { CommunityPermissionGuard } from '../community-access/community-permission.guard';
 import { RequireCommunityPermission, CommunityIdFrom } from '../community-access/community-permission.decorator';
 import { CommunityPermission } from '../common/permissions';
+import { PlanFeatureGuard, RequireFeature } from '../common/guards/plan-feature.guard';
 
 @ApiTags('Events')
 @Controller('events')
@@ -32,7 +33,8 @@ export class EventController {
   constructor(private readonly eventService: EventService) {}
 
   @Post()
-  @UseGuards(JwtAuthGuard, CommunityPermissionGuard)
+  @UseGuards(JwtAuthGuard, CommunityPermissionGuard, PlanFeatureGuard)
+  @RequireFeature('events')
   @RequireCommunityPermission(CommunityPermission.CONTENT_MANAGE)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Créer un nouvel événement' })

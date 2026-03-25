@@ -71,6 +71,19 @@ export class Subscription {
   @Prop({ type: Number, default: 0 })
   adminsMax: number;
 
+  // Extended limits cache (added for plan enforcement)
+  @Prop({ type: Number, default: 0 })
+  emailCampaignRecipientsPerMonth: number;
+
+  @Prop({ type: Number, default: 0 })
+  whatsappMessagesPerMonth: number;
+
+  @Prop({ type: Number, default: 30 })
+  analyticsLookbackDays: number;
+
+  @Prop({ type: Number, default: 0 })
+  sessionBookingsPerMonth: number;
+
   // Optional masked info for display
   @Prop()
   paymentBrand?: string; // e.g., VISA

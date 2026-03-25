@@ -26,6 +26,18 @@ export class PlanLimits {
 
   @Prop({ type: Number, default: 0 })
   adminsMax: number;
+
+  @Prop({ type: Number, default: 0 })
+  emailCampaignRecipientsPerMonth: number;
+
+  @Prop({ type: Number, default: 0 })
+  whatsappMessagesPerMonth: number;
+
+  @Prop({ type: Number, default: 30 })
+  analyticsLookbackDays: number;
+
+  @Prop({ type: Number, default: 0 })
+  sessionBookingsPerMonth: number;
 }
 
 export const PlanLimitsSchema = SchemaFactory.createForClass(PlanLimits);
@@ -75,6 +87,14 @@ export class Plan {
 
   @Prop({ type: Number, required: true })
   priceDTPerMonth: number;
+
+  /** Per-month price when billed yearly (~20% discount) */
+  @Prop({ type: Number, default: 0 })
+  yearlyPriceDTPerMonth: number;
+
+  /** Total annual price (yearlyPriceDTPerMonth × 12) */
+  @Prop({ type: Number, default: 0 })
+  yearlyTotalDT: number;
 
   @Prop({ type: Number, default: 7 })
   trialDays: number;

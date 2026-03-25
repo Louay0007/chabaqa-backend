@@ -39,6 +39,8 @@ import { UserLoginActivityDocument } from '../schema/user-login-activity.schema'
 import { UserLoginActivityService } from '../user-login-activity/user-login-activity.service';
 import { contentTypeToLabel, inactivityPeriodToText, renderTemplate } from './email-campaign-template.util';
 import { EmailCampaignQueueService } from './email-campaign.queue';
+import { PolicyService } from '../common/services/policy.service';
+import { Subscription, SubscriptionDocument } from '../schema/subscription.schema';
 import { EmailCampaignSendJobPayload } from './email-campaign.jobs';
 
 type RecipientsQuery = { page?: number; limit?: number; status?: string; opened?: boolean };
@@ -79,11 +81,55 @@ export class EmailCampaignService {
     private readonly emailService: EmailService,
     private readonly userLoginActivityService: UserLoginActivityService,
     private readonly emailCampaignQueueService: EmailCampaignQueueService,
+    private readonly policyService: PolicyService,
   ) {}
+
+  /**
+   * Validate that the creator has remaining email campaign quota for the month.
+   * Skipped when PLAN_ENFORCEMENT_MODE=false.
+   */
+  private async validateEmailCampaignQuota(creatorId: string, recipientCount: number): Promise<void> {
+    const enforcementOn = process.env.PLAN_ENFORCEMENT_MODE === 'true';
+    if (!enforcementOn) return;
+
+    // Count recipients already sent to this month
+    const monthStart = new Date();
+    monthStart.setDate(1);
+    monthStart.setHours(0, 0, 0, 0);
+
+    const usedThisMonth = await this.emailCampaignModel.aggregate([
+      {
+        $match: {
+          creatorId: new (await import('mongoose')).Types.ObjectId(creatorId),
+          createdAt: { $gte: monthStart },
+          status: { $in: ['sent', 'sending', 'scheduled'] },
+        },
+      },
+      { $group: { _id: null, total: { $sum: '$totalRecipients' } } },
+    ]);
+    const used = usedThisMonth[0]?.total ?? 0;
+
+    const remaining = await this.policyService.getRemainingQuota(
+      creatorId,
+      'emailCampaign',
+      used,
+    );
+
+    if (remaining < recipientCount) {
+      const limits = await this.policyService.getEffectiveLimitsForCreator(creatorId);
+      throw new ForbiddenException(
+        `Email campaign quota exceeded. Used ${used}/${limits.emailCampaignRecipientsPerMonth} recipients this month. ` +
+        `Cannot send to ${recipientCount} additional recipients. Please upgrade your plan.`,
+      );
+    }
+  }
 
   async createCampaign(creatorId: string, dto: CreateEmailCampaignDto): Promise<EmailCampaignDocument> {
     const community = await this.verifyCommunityAccess(creatorId, dto.communityId);
     const recipients = await this.buildCommunityRecipients(community);
+
+    // Enforce email campaign quota
+    await this.validateEmailCampaignQuota(creatorId, recipients.length);
     const scheduledAt = this.normalizeScheduledAt(dto.scheduledAt);
     const status = this.resolveCampaignStatus(scheduledAt);
 

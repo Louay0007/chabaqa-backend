@@ -47,6 +47,7 @@ import { HttpCacheInterceptor } from '../common/interceptors/cache.interceptor';
 import { CommunityPermissionGuard } from '../community-access/community-permission.guard';
 import { RequireCommunityPermission, CommunityIdFrom } from '../community-access/community-permission.decorator';
 import { CommunityPermission } from '../common/permissions';
+import { PlanFeatureGuard, RequireFeature } from '../common/guards/plan-feature.guard';
 
 const resolveRequestIpAddress = (req: any): string | undefined => {
   const forwarded = req?.headers?.['x-forwarded-for'];
@@ -95,7 +96,8 @@ export class ChallengeController {
   // ============================================================
 
   @Post()
-  @UseGuards(JwtAuthGuard, CommunityPermissionGuard)
+  @UseGuards(JwtAuthGuard, CommunityPermissionGuard, PlanFeatureGuard)
+  @RequireFeature('challenges')
   @RequireCommunityPermission(CommunityPermission.CONTENT_MANAGE)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Créer un nouveau défi' })

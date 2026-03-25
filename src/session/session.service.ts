@@ -447,12 +447,13 @@ export class SessionService {
     const sessionId = new Types.ObjectId().toString();
 
     // Gating: require active subscription to activate sessions
-    // DISABLED FOR TESTING - TODO: Re-enable before production
-    // const hasSub = await this.policyService.hasActiveSubscription(creatorId);
-    // if (!hasSub && createSessionDto.isActive) {
-    //   throw new ForbiddenException('Un abonnement actif est requis pour activer une session');
-    // }
-    const hasSub = true; // TESTING: Always allow session creation
+    const enforcementOn = process.env.PLAN_ENFORCEMENT_MODE === 'true';
+    const hasSub = enforcementOn
+      ? await this.policyService.hasActiveSubscription(creatorId)
+      : true;
+    if (!hasSub && createSessionDto.isActive) {
+      throw new ForbiddenException('Un abonnement actif est requis pour activer une session. Veuillez souscrire à un forfait.');
+    }
 
     // Créer la session
     const session = new this.sessionModel({
@@ -634,13 +635,15 @@ export class SessionService {
     // }
 
     // Gating: require active subscription to activate sessions
-    // DISABLED FOR TESTING - TODO: Re-enable before production
-    // if (updateSessionDto.isActive === true && session.isActive !== true) {
-    //   const hasSub = await this.policyService.hasActiveSubscription(userId);
-    //   if (!hasSub) {
-    //     throw new ForbiddenException('Un abonnement actif est requis pour publier une session');
-    //   }
-    // }
+    if (updateSessionDto.isActive === true && session.isActive !== true) {
+      const enforcementOn = process.env.PLAN_ENFORCEMENT_MODE === 'true';
+      if (enforcementOn) {
+        const hasSub = await this.policyService.hasActiveSubscription(userId);
+        if (!hasSub) {
+          throw new ForbiddenException('Un abonnement actif est requis pour publier une session. Veuillez souscrire à un forfait.');
+        }
+      }
+    }
 
     // Mettre à jour la session
     const sanitizedUpdate: any = { ...updateSessionDto };

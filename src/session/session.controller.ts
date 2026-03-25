@@ -26,6 +26,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 import { HttpCacheInterceptor } from '../common/interceptors/cache.interceptor';
 import { CacheDuration, CacheTTL } from '../common/decorators/cache-ttl.decorator';
+import { PlanFeatureGuard, RequireFeature } from '../common/guards/plan-feature.guard';
 
 @ApiTags('Sessions')
 @Controller('sessions')
@@ -43,7 +44,8 @@ export class SessionController {
   }
 
   @Post()
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, PlanFeatureGuard)
+  @RequireFeature('sessions')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Créer une nouvelle session' })
   @ApiResponse({ status: 201, description: 'Session créée avec succès', type: SessionResponseDto })
