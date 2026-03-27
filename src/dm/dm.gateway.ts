@@ -1,11 +1,11 @@
 import { OnGatewayConnection, OnGatewayDisconnect, SubscribeMessage, WebSocketGateway, WebSocketServer } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { JwtService } from '@nestjs/jwt';
-import { getAllowedCorsOrigins, getJwtSecret } from '../common/utils/security-config.util';
+import { getCorsOriginHandler, getJwtSecret } from '../common/utils/security-config.util';
 
 @WebSocketGateway({
   namespace: '/dm',
-  cors: { origin: getAllowedCorsOrigins(), credentials: true },
+  cors: { origin: getCorsOriginHandler(), credentials: true },
 })
 export class DmGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()

@@ -8,11 +8,11 @@ import {
 } from '@nestjs/websockets';
 import { JwtService } from '@nestjs/jwt';
 import { Server, Socket } from 'socket.io';
-import { getAllowedCorsOrigins, getJwtSecret } from '../common/utils/security-config.util';
+import { getCorsOriginHandler, getJwtSecret } from '../common/utils/security-config.util';
 
 @WebSocketGateway({
   namespace: '/live-support',
-  cors: { origin: getAllowedCorsOrigins(), credentials: true },
+  cors: { origin: getCorsOriginHandler(), credentials: true },
 })
 export class LiveSupportGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()

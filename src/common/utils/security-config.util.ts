@@ -62,6 +62,11 @@ export function isCorsOriginAllowed(origin: string | undefined, allowlist: strin
     return false;
   }
 
+  // Allow Cloudflare quick-tunnel origins (used for mobile web dev via Expo)
+  if (/^https:\/\/[a-z0-9-]+\.trycloudflare\.com$/.test(normalized)) {
+    return true;
+  }
+
   return allowlist.includes(normalized);
 }
 
@@ -104,6 +109,13 @@ export function getJwtRefreshSecret(): string {
 export function getMediaPrivateTokenSecret(): string {
   return process.env.MEDIA_PRIVATE_TOKEN_SECRET?.trim()
     || getJwtSecret();
+}
+
+export function getCorsOriginHandler(): (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => void {
+  const allowlist = getAllowedCorsOrigins();
+  return (origin, callback) => {
+    callback(null, isCorsOriginAllowed(origin, allowlist));
+  };
 }
 
 export function isSwaggerEnabled(): boolean {
