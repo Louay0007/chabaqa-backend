@@ -84,14 +84,6 @@ import { PaymentAuditLog, PaymentAuditLogSchema } from './schema/payment-audit-l
       serveRoot: '/uploads',
       serveStaticOptions: {
         index: false,
-        // Block direct access to video files — they must go through playback sessions
-        setHeaders: (res: any, path: string) => {
-          if (/\/video\//i.test(path)) {
-            res.statusCode = 403;
-            res.end('Video files must be accessed through playback sessions');
-            return;
-          }
-        },
       },
     }),
 
