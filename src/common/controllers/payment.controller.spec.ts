@@ -26,6 +26,7 @@ describe('PaymentController webhook hardening', () => {
     const controller = new PaymentController(
       {} as any,
       stripe as any,
+      {} as any, // konnect
       {} as any,
       {} as any,
       {} as any,
