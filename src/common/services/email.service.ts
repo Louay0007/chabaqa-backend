@@ -850,9 +850,332 @@ export class EmailService {
   }
 
   /**
+   * Sends a branded event ticket email with an inline QR code after successful registration/payment.
+   * Follows the Chabaqa OTP template design system: animated logo, Poppins font, gradient rainbow bars,
+   * mobile-responsive layout, app download CTA, and branded footer.
+   */
+  async sendEventTicketEmail(data: {
+    to: string;
+    userName: string;
+    eventTitle: string;
+    eventDate: string;
+    eventTime: string;
+    eventLocation?: string;
+    eventType: string;
+    ticketType: string;
+    ticketName: string;
+    verifyUrl: string;
+    qrDataUrl: string;
+  }): Promise<void> {
+    const html = this.generateEventTicketTemplate(data);
+
+    const base64Match = data.qrDataUrl.match(/^data:image\/png;base64,(.+)$/);
+    const attachments = base64Match ? [{
+      filename: 'ticket-qr.png',
+      content: Buffer.from(base64Match[1], 'base64'),
+      cid: 'ticket-qr',
+    }] : [];
+
+    const mailOptions = {
+      from: this.getFromHeader(),
+      replyTo: this.getReplyToAddress(),
+      to: data.to,
+      subject: `🎟️ Your Ticket: ${data.eventTitle}`,
+      text: [
+        `Hi ${data.userName}, your ticket for "${data.eventTitle}" is confirmed!`,
+        '',
+        `Date: ${data.eventDate}`,
+        `Time: ${data.eventTime}`,
+        data.eventLocation ? `Location: ${data.eventLocation}` : '',
+        `Ticket: ${data.ticketName} (${data.eventType})`,
+        '',
+        `View your ticket: ${data.verifyUrl}`,
+        '',
+        `© ${new Date().getFullYear()} Chabaqa. All rights reserved.`,
+      ].filter(Boolean).join('\n'),
+      html,
+      attachments,
+    };
+
+    try {
+      this.logger.log(`🎟️ Sending event ticket email to: ${data.to}`);
+      await this.sendWithAutoFallback(mailOptions, `event ticket email to ${data.to}`);
+      this.logger.log('✅ Event ticket email sent successfully');
+    } catch (error: any) {
+      this.logger.error('❌ Failed to send event ticket email:', error.message);
+    }
+  }
+
+  /**
+   * Generates the full Chabaqa-branded event ticket email template.
+   * Mirrors the OTP template design system for visual consistency.
+   */
+  private generateEventTicketTemplate(data: {
+    userName: string;
+    eventTitle: string;
+    eventDate: string;
+    eventTime: string;
+    eventLocation?: string;
+    eventType: string;
+    ticketType: string;
+    ticketName: string;
+    verifyUrl: string;
+  }): string {
+    const safeName = this.escapeHtml(data.userName || 'there');
+    const safeTitle = this.escapeHtml(data.eventTitle);
+    const safeDate = this.escapeHtml(data.eventDate);
+    const safeTime = this.escapeHtml(data.eventTime);
+    const safeLocation = data.eventLocation ? this.escapeHtml(data.eventLocation) : '';
+    const safeTicket = this.escapeHtml(data.ticketName);
+    const safeType = this.escapeHtml(data.eventType);
+    const safeVerifyUrl = data.verifyUrl;
+    const year = new Date().getFullYear();
+
+    // Build event detail rows programmatically
+    const detailRows: { icon: string; label: string; value: string; color?: string }[] = [
+      { icon: '📅', label: 'Date', value: safeDate },
+      { icon: '🕐', label: 'Time', value: safeTime },
+    ];
+    if (safeLocation) {
+      detailRows.push({ icon: '📍', label: 'Location', value: safeLocation });
+    }
+    detailRows.push({ icon: '🏷️', label: 'Type', value: safeType });
+    detailRows.push({ icon: '🎫', label: 'Ticket', value: safeTicket, color: '#8e78fb' });
+
+    const detailRowsHtml = detailRows.map(row => {
+      const valueStyle = row.color
+        ? `font-size:14px;font-weight:700;color:${row.color};font-family:'Poppins',Arial,sans-serif;`
+        : `font-size:14px;font-weight:600;color:#2d2d2d;font-family:'Poppins',Arial,sans-serif;`;
+      return `
+        <tr>
+          <td style="padding:8px 0;font-size:16px;width:32px;vertical-align:middle;">${row.icon}</td>
+          <td style="padding:8px 0;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:#999999;width:80px;vertical-align:middle;font-family:'Poppins',Arial,sans-serif;">${this.escapeHtml(row.label)}</td>
+          <td style="padding:8px 0;${valueStyle}vertical-align:middle;">${row.value}</td>
+        </tr>`;
+    }).join('');
+
+    return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Your Event Ticket – Chabaqa</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800;900&display=swap');
+  body { margin:0; padding:0; background:#f0f0f5; font-family:'Poppins',Arial,sans-serif; }
+  .logo .c1 { color:#8e78fb; animation:bounce 1.2s ease infinite 0.0s; display:inline-block; }
+  .logo .c2 { color:#47c7ea; animation:bounce 1.2s ease infinite 0.1s; display:inline-block; }
+  .logo .c3 { color:#f65887; animation:bounce 1.2s ease infinite 0.2s; display:inline-block; }
+  .logo .c4 { color:#ff9b28; animation:bounce 1.2s ease infinite 0.3s; display:inline-block; }
+  .logo .c5 { color:#8e78fb; animation:bounce 1.2s ease infinite 0.4s; display:inline-block; }
+  .logo .c6 { color:#47c7ea; animation:bounce 1.2s ease infinite 0.5s; display:inline-block; }
+  .logo .c7 { color:#f65887; animation:bounce 1.2s ease infinite 0.6s; display:inline-block; }
+  .logo .dot { color:#ff9b28; animation:bounce 1.2s ease infinite 0.7s; display:inline-block; }
+  @keyframes bounce { 0%,60%,100%{transform:translateY(0)} 30%{transform:translateY(-7px)} }
+  @media only screen and (max-width: 640px) {
+    body { padding:16px 8px !important; }
+    .mobile-stack { width:100% !important; max-width:100% !important; }
+    .mobile-pad { padding:22px 16px !important; }
+    .mobile-hero h1 { font-size:22px !important; }
+    .mobile-qr img { width:180px !important; height:180px !important; }
+    .mobile-banner-pad { padding:22px 16px !important; }
+    .mobile-stores .store-cell { display:block !important; width:100% !important; }
+    .mobile-stores .store-gap { display:block !important; width:100% !important; height:10px !important; line-height:10px !important; font-size:0 !important; }
+    .mobile-stores .store-btn { width:100% !important; }
+    .mobile-stores .store-btn td { display:table-cell !important; width:auto !important; }
+    .mobile-footer { padding:18px 16px !important; }
+  }
+</style>
+</head>
+<body style="margin:0;padding:40px 16px;background:#f0f0f5;font-family:'Poppins',Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" border="0">
+<tr><td align="center">
+<table width="560" cellpadding="0" cellspacing="0" border="0" class="mobile-stack" style="max-width:560px;width:100%;">
+
+  <!-- ===== ANIMATED LOGO HEADER ===== -->
+  <tr>
+    <td style="background:#ffffff;border-radius:20px 20px 0 0;padding:28px 20px 20px;text-align:center;border-bottom:1px solid #f0f0f5;">
+      <div class="logo" style="display:inline-block;font-size:26px;font-weight:900;letter-spacing:-1px;">
+        <span class="c1">c</span><span class="c2">h</span><span class="c3">a</span><span class="c4">b</span><span class="c5">a</span><span class="c6">q</span><span class="c7">a</span><span class="dot">.</span>
+      </div>
+    </td>
+  </tr>
+
+  <!-- ===== HERO SECTION ===== -->
+  <tr>
+    <td class="mobile-pad mobile-hero" style="background:#ffffff;padding:40px 36px 16px;text-align:center;">
+      <div style="display:inline-block;background:rgba(142,120,251,0.1);border:1px solid rgba(142,120,251,0.3);color:#8e78fb;font-size:11px;font-weight:600;letter-spacing:2px;text-transform:uppercase;padding:6px 18px;border-radius:30px;margin-bottom:18px;">
+        ✦ EVENT TICKET CONFIRMED
+      </div>
+      <h1 style="font-size:26px;font-weight:900;color:#8e78fb;line-height:1.2;letter-spacing:-0.5px;margin:0 0 12px 0;">
+        ${safeTitle}
+      </h1>
+      <p style="font-size:14px;color:#666666;line-height:1.7;margin:0 auto;max-width:380px;">
+        You're all set! Here's your digital ticket with QR code for check-in.
+      </p>
+    </td>
+  </tr>
+
+  <!-- ===== GREETING + EVENT DETAILS ===== -->
+  <tr>
+    <td class="mobile-pad" style="background:#ffffff;padding:28px 36px 12px;">
+      <p style="font-size:15px;color:#444444;line-height:1.75;margin:0 0 24px 0;">
+        Hey <strong style="color:#8e78fb;font-weight:700;">${safeName}</strong> 👋<br><br>
+        Your registration is confirmed! Keep this email safe — you'll need the QR code below for check-in at the event.
+      </p>
+
+      <!-- Event details card -->
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f7f5ff;border:2px solid #ede8ff;border-radius:16px;margin-bottom:24px;">
+        <tr>
+          <td style="padding:6px 0 0;background:linear-gradient(90deg,#8e78fb,#f65887,#ff9b28,#47c7ea);border-radius:14px 14px 0 0;height:4px;font-size:0;line-height:0;">&nbsp;</td>
+        </tr>
+        <tr>
+          <td style="padding:20px 24px;">
+            <table width="100%" cellpadding="0" cellspacing="0" border="0">
+              ${detailRowsHtml}
+            </table>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+
+  <!-- ===== QR CODE SECTION ===== -->
+  <tr>
+    <td class="mobile-pad" style="background:#ffffff;padding:8px 36px 28px;text-align:center;">
+      <p style="font-size:10px;font-weight:700;letter-spacing:2.5px;text-transform:uppercase;color:#8e78fb;margin:0 0 16px 0;">
+        YOUR CHECK-IN QR CODE
+      </p>
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f7f5ff;border:2px solid #ede8ff;border-radius:16px;margin-bottom:14px;">
+        <tr>
+          <td style="padding:24px;text-align:center;" class="mobile-qr">
+            <img src="cid:ticket-qr" alt="Ticket QR Code" style="width:220px;height:220px;display:inline-block;border-radius:12px;" />
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:0 24px 16px;text-align:center;">
+            <p style="font-size:12px;color:#aaaaaa;margin:0;">🔒 Scan at entrance &middot; Unique to you</p>
+          </td>
+        </tr>
+      </table>
+
+      <!-- View Ticket Online CTA -->
+      <table cellpadding="0" cellspacing="0" border="0" style="margin:0 auto;">
+        <tr>
+          <td align="center">
+            <a href="${safeVerifyUrl}" style="display:inline-block;background:linear-gradient(135deg,#8e78fb 0%,#6c52f0 100%);color:#ffffff;text-decoration:none;padding:14px 36px;border-radius:12px;font-size:14px;font-weight:700;font-family:'Poppins',Arial,sans-serif;box-shadow:0 8px 24px rgba(142,120,251,0.35);">
+              🎟️&nbsp;&nbsp;View Ticket Online
+            </a>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+
+  <!-- ===== IMPORTANT NOTE ===== -->
+  <tr>
+    <td class="mobile-pad" style="background:#ffffff;padding:0 36px 28px;">
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#fff8f0;border:1px solid #ffe0b2;border-radius:10px;">
+        <tr>
+          <td style="padding:14px 16px;font-size:13px;color:#e07000;font-family:'Poppins',Arial,sans-serif;line-height:1.6;">
+            💡 <strong style="color:#ff9b28;">Tip:</strong> Screenshot or save this QR code to your phone for quick access at the event. You can also access it anytime from your Chabaqa dashboard.
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+
+  <!-- ===== VERIFICATION BADGE ===== -->
+  <tr>
+    <td class="mobile-pad" style="background:#ffffff;padding:0 36px 24px;">
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;">
+        <tr>
+          <td style="padding:12px 16px;font-size:22px;vertical-align:middle;width:36px;">✅</td>
+          <td style="padding:12px 16px 12px 0;font-size:13px;color:#166534;line-height:1.6;font-family:'Poppins',Arial,sans-serif;">
+            <strong style="color:#15803d;">Verified Ticket</strong> — This is a cryptographically signed digital ticket issued and verified by Chabaqa.
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+
+  <!-- ===== APP DOWNLOAD BANNER ===== -->
+  <tr>
+    <td style="padding:0 16px 20px;">
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:linear-gradient(120deg,#7c5cf7 0%,#8e78fb 40%,#6a9ef5 100%);border-radius:20px;overflow:hidden;box-shadow:0 20px 60px rgba(142,120,251,0.35);">
+        <tr>
+          <td class="mobile-banner-pad" style="padding:32px 28px;">
+            <h2 style="font-size:22px;font-weight:900;color:#ffffff;margin:0 0 8px 0;letter-spacing:-0.3px;font-family:'Poppins',Arial,sans-serif;">Get Chabaqa APP</h2>
+            <p style="font-size:12px;color:rgba(255,255,255,0.85);line-height:1.6;margin:0 0 20px 0;font-family:'Poppins',Arial,sans-serif;">
+              Access your tickets, join events &amp; manage everything on the go.
+            </p>
+            <table cellpadding="0" cellspacing="0" border="0" class="mobile-stores">
+              <tr>
+                <td class="store-cell" align="center">
+                  <a href="https://expo.dev/accounts/mariembenali/projects/mobile/builds/f85b1b45-f20f-47c7-bb5b-78f3f36ce556" target="_blank" style="text-decoration:none;">
+                    <table cellpadding="0" cellspacing="0" border="0" class="store-btn" style="background:#ffffff;border-radius:10px;box-shadow:0 4px 12px rgba(0,0,0,0.15);">
+                      <tr>
+                        <td style="padding:8px 6px 8px 12px;font-size:18px;">🍎</td>
+                        <td style="padding:8px 14px 8px 6px;">
+                          <div style="font-size:9px;color:#888888;font-weight:500;text-transform:uppercase;letter-spacing:0.5px;font-family:'Poppins',Arial,sans-serif;">Get it on</div>
+                          <div style="font-size:13px;font-weight:700;color:#1a1a2e;font-family:'Poppins',Arial,sans-serif;">App Store</div>
+                        </td>
+                      </tr>
+                    </table>
+                  </a>
+                </td>
+                <td class="store-gap" width="10"></td>
+                <td class="store-cell" align="center">
+                  <a href="https://expo.dev/accounts/mariembenali/projects/mobile/builds/f85b1b45-f20f-47c7-bb5b-78f3f36ce556" target="_blank" style="text-decoration:none;">
+                    <table cellpadding="0" cellspacing="0" border="0" class="store-btn" style="background:#ffffff;border-radius:10px;box-shadow:0 4px 12px rgba(0,0,0,0.15);">
+                      <tr>
+                        <td style="padding:8px 6px 8px 12px;font-size:18px;">▶</td>
+                        <td style="padding:8px 14px 8px 6px;">
+                          <div style="font-size:9px;color:#888888;font-weight:500;text-transform:uppercase;letter-spacing:0.5px;font-family:'Poppins',Arial,sans-serif;">Get it on</div>
+                          <div style="font-size:13px;font-weight:700;color:#1a1a2e;font-family:'Poppins',Arial,sans-serif;">Google Play</div>
+                        </td>
+                      </tr>
+                    </table>
+                  </a>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+
+  <!-- ===== FOOTER ===== -->
+  <tr>
+    <td class="mobile-footer" style="background:#ffffff;border-radius:0 0 20px 20px;padding:24px 36px;text-align:center;border-top:1px solid #f0f0f5;">
+      <p style="font-size:12px;color:#aaaaaa;line-height:1.7;margin:0 0 6px 0;font-family:'Poppins',Arial,sans-serif;">
+        You received this email because you purchased a ticket on <a href="https://chabaqa.io" style="color:#8e78fb;text-decoration:none;font-weight:600;">Chabaqa</a>.
+      </p>
+      <p style="font-size:12px;color:#aaaaaa;line-height:1.7;margin:0 0 10px 0;font-family:'Poppins',Arial,sans-serif;">
+        <a href="#" style="color:#8e78fb;text-decoration:none;font-weight:600;">Manage Preferences</a> | <a href="#" style="color:#8e78fb;text-decoration:none;font-weight:600;">Unsubscribe</a>
+      </p>
+      <p style="font-size:11px;color:#cccccc;margin:0 0 16px 0;font-family:'Poppins',Arial,sans-serif;">&copy; ${year} Chabaqa. All rights reserved.</p>
+      <table width="100%" cellpadding="0" cellspacing="0" border="0">
+        <tr>
+          <td style="height:4px;background:linear-gradient(90deg,#8e78fb,#f65887,#ff9b28,#47c7ea);border-radius:4px;font-size:0;line-height:0;">&nbsp;</td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+
+</table>
+</td></tr>
+</table>
+</body>
+</html>
+    `;
+  }
+
+  /**
    * Génère le template HTML pour l'email de réinitialisation
    */
-  private generatePasswordResetEmailTemplate(code: string, userName: string): string {
     return `
       <!DOCTYPE html>
       <html lang="fr">

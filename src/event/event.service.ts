@@ -2,6 +2,7 @@ import { Injectable, NotFoundException, ForbiddenException, BadRequestException,
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { JwtService } from '@nestjs/jwt';
+import * as QRCode from 'qrcode';
 import { Event, EventDocument } from '../schema/event.schema';
 import { Community, CommunityDocument } from '../schema/community.schema';
 import { User, UserDocument } from '../schema/user.schema';
@@ -15,6 +16,7 @@ import { CacheService } from '../common/services/cache.service';
 import { UploadService } from '../upload/upload.service';
 import { ContentTrackingService } from '../common/services/content-tracking.service';
 import { TrackableContentType } from '../schema/content-tracking.schema';
+import { EmailService } from '../common/services/email.service';
 
 @Injectable()
 export class EventService {
@@ -30,6 +32,7 @@ export class EventService {
     private readonly cacheService: CacheService,
     private readonly uploadService: UploadService,
     private readonly trackingService: ContentTrackingService,
+    private readonly emailService: EmailService,
   ) {}
 
   /**
@@ -309,6 +312,161 @@ export class EventService {
       attendeeId: attendee.id,
       checkedInAt: attendee.checkedInAt.toISOString(),
     };
+  }
+
+  /**
+   * Public ticket verification — decodes QR JWT and returns event + attendee info
+   * for display on a public verification page. No auth required.
+   */
+  async verifyTicketPublic(token: string): Promise<{
+    valid: boolean;
+    event: {
+      title: string;
+      description: string;
+      startDate: string;
+      endDate?: string;
+      startTime: string;
+      endTime: string;
+      timezone: string;
+      location?: string;
+      onlineUrl?: string;
+      type: string;
+      category: string;
+      image?: string;
+      communityName?: string;
+      creatorName?: string;
+    };
+    attendee: {
+      name: string;
+      email: string;
+      ticketType: string;
+      registeredAt: string;
+      checkedIn: boolean;
+      checkedInAt?: string;
+    };
+    ticketInfo?: {
+      name: string;
+      type: string;
+      description: string;
+    };
+    issuedAt: string;
+    verifiedAt: string;
+  }> {
+    const payload = this.verifyEventQrToken(token);
+
+    const event = await this.findEventByIdentifier(payload.eventId);
+    if (!event) {
+      throw new NotFoundException('Event not found');
+    }
+
+    const attendee = (event.attendees || []).find((a: any) => {
+      if (payload.attendeeId && String(a?.id) === String(payload.attendeeId)) return true;
+      if (payload.sub && String(a?.userId) === String(payload.sub)) return true;
+      return false;
+    });
+    if (!attendee) {
+      throw new NotFoundException('Attendee registration not found');
+    }
+
+    const user = await this.userModel.findById(attendee.userId).select('firstName lastName email profilePicture').lean();
+    const community = await this.communityModel.findById(event.communityId).select('name').lean();
+    const creator = await this.userModel.findById(event.creatorId).select('firstName lastName').lean();
+
+    const ticket = (event.tickets || []).find(
+      (t: any) => t.type === attendee.ticketType || t.id === attendee.ticketType,
+    );
+
+    return {
+      valid: true,
+      event: {
+        title: event.title,
+        description: event.description,
+        startDate: event.startDate?.toISOString?.() || String(event.startDate),
+        endDate: event.endDate?.toISOString?.() || (event.endDate ? String(event.endDate) : undefined),
+        startTime: event.startTime,
+        endTime: event.endTime,
+        timezone: event.timezone,
+        location: event.location,
+        onlineUrl: event.onlineUrl,
+        type: event.type,
+        category: event.category,
+        image: event.image,
+        communityName: (community as any)?.name,
+        creatorName: creator ? `${(creator as any).firstName || ''} ${(creator as any).lastName || ''}`.trim() : undefined,
+      },
+      attendee: {
+        name: user ? `${(user as any).firstName || ''} ${(user as any).lastName || ''}`.trim() : 'Unknown',
+        email: (user as any)?.email ? this.maskEmail((user as any).email) : '',
+        ticketType: attendee.ticketType,
+        registeredAt: attendee.registeredAt?.toISOString?.() || String(attendee.registeredAt),
+        checkedIn: Boolean(attendee.checkedIn),
+        checkedInAt: attendee.checkedInAt?.toISOString?.() || undefined,
+      },
+      ticketInfo: ticket ? {
+        name: ticket.name,
+        type: ticket.type,
+        description: ticket.description,
+      } : undefined,
+      issuedAt: payload.issuedAt || payload.iat ? new Date((payload.iat || 0) * 1000).toISOString() : new Date().toISOString(),
+      verifiedAt: new Date().toISOString(),
+    };
+  }
+
+  /** Mask email for public display: j***n@gmail.com */
+  private maskEmail(email: string): string {
+    const [local, domain] = email.split('@');
+    if (!domain || local.length <= 2) return `***@${domain || '***'}`;
+    return `${local[0]}${'*'.repeat(Math.min(local.length - 2, 4))}${local[local.length - 1]}@${domain}`;
+  }
+
+  /**
+   * Generates QR code and sends ticket email after registration. Fire-and-forget.
+   */
+  private async sendTicketEmailAsync(
+    event: EventDocument,
+    attendee: { id: string; userId: any; ticketType: string },
+    ticket: { name: string; type: string } | undefined,
+    userId: string,
+  ): Promise<void> {
+    try {
+      const user = await this.userModel.findById(userId).select('firstName lastName email').lean();
+      if (!user || !(user as any).email) return;
+
+      const eventId = event.id || event._id?.toString();
+      const qrTokenResult = await this.buildEventQrToken(eventId, userId);
+
+      const frontendUrl = (process.env.FRONTEND_URL || 'https://chabaqa.io').replace(/\/+$/, '');
+      const verifyUrl = `${frontendUrl}/ticket/verify/${encodeURIComponent(qrTokenResult.token)}`;
+
+      const qrDataUrl = await QRCode.toDataURL(verifyUrl, {
+        width: 400,
+        margin: 2,
+        color: { dark: '#1a1730', light: '#ffffff' },
+        errorCorrectionLevel: 'H',
+      });
+
+      const eventDate = event.startDate
+        ? new Date(event.startDate).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
+        : 'TBA';
+
+      await this.emailService.sendEventTicketEmail({
+        to: (user as any).email,
+        userName: `${(user as any).firstName || ''} ${(user as any).lastName || ''}`.trim() || 'Attendee',
+        eventTitle: event.title,
+        eventDate,
+        eventTime: `${event.startTime || ''} - ${event.endTime || ''}`.trim(),
+        eventLocation: event.location,
+        eventType: event.type,
+        ticketType: attendee.ticketType,
+        ticketName: ticket?.name || attendee.ticketType,
+        verifyUrl,
+        qrDataUrl,
+      });
+
+      console.log(`🎟️ [EVENT-SERVICE] Ticket email sent to ${(user as any).email} for event ${eventId}`);
+    } catch (error: any) {
+      console.error(`⚠️ [EVENT-SERVICE] sendTicketEmailAsync failed:`, error?.message || error);
+    }
   }
 
   async checkInAttendee(
@@ -1004,6 +1162,11 @@ export class EventService {
     } catch (error: any) {
       console.error(`⚠️ [EVENT-SERVICE] Failed to track event registration:`, error?.message || error);
     }
+
+    // Send ticket email with QR code (fire-and-forget)
+    this.sendTicketEmailAsync(event, attendee, ticket, userId).catch((err) => {
+      console.error(`⚠️ [EVENT-SERVICE] Failed to send ticket email:`, err?.message || err);
+    });
 
     return { message: 'Inscription réussie' };
   }

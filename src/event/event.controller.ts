@@ -114,6 +114,17 @@ export class EventController {
     return { success: true, data: stats };
   }
 
+  @Get('ticket/verify/:token')
+  @ApiOperation({ summary: 'Public ticket verification via QR token — no auth required' })
+  @ApiResponse({ status: 200, description: 'Ticket verification data' })
+  @ApiResponse({ status: 400, description: 'Invalid or expired token' })
+  async verifyTicketPublic(
+    @Param('token') token: string,
+  ): Promise<{ success: boolean; data: any }> {
+    const data = await this.eventService.verifyTicketPublic(token);
+    return { success: true, data };
+  }
+
   @Get(':id/qr')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()

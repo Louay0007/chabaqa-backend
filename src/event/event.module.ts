@@ -11,6 +11,7 @@ import { OrderSchema } from '../schema/order.schema';
 import { PolicyModule } from '../common/modules/policy.module';
 import { PromoModule } from '../common/modules/promo.module';
 import { TrackingModule } from '../common/modules/tracking.module';
+import { EmailService } from '../common/services/email.service';
 
 @Module({
   imports: [
@@ -27,7 +28,7 @@ import { TrackingModule } from '../common/modules/tracking.module';
     TrackingModule
   ],
   controllers: [EventController],
-  providers: [EventService],
+  providers: [EventService, EmailService],
   exports: [EventService]
 })
 export class EventModule {}
