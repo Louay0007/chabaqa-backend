@@ -190,12 +190,12 @@ export class CommunityAccessService {
       this.communityModel
         .findById(communityOid)
         .select('createur')
-        .populate('createur', 'name email avatar photo_de_profil username')
+        .populate('createur', 'name email avatar photo_profil profile_picture username')
         .lean()
         .exec(),
       this.staffModel
         .find({ communityId: communityOid, status: 'active' })
-        .populate('userId', 'name email avatar photo_de_profil username')
+        .populate('userId', 'name email avatar photo_profil profile_picture username')
         .lean()
         .exec(),
     ]);
@@ -211,7 +211,7 @@ export class CommunityAccessService {
         lastName: nameParts.slice(1).join(' ') ?? '',
         email: u.email ?? '',
         username: u.username ?? '',
-        profileImage: u.photo_de_profil ?? u.avatar ?? null,
+        profileImage: u.photo_profil ?? u.profile_picture ?? u.avatar ?? null,
       };
     };
 
