@@ -8,6 +8,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { FlouciPaymentService } from '../services/flouci-payment.service';
 import { StripePaymentService } from '../services/stripe-payment.service';
+import { KonnectPaymentService } from '../services/konnect-payment.service';
 import { ManualPaymentService } from '../services/manual-payment.service';
 import { PaymentFulfillmentService } from '../services/payment-fulfillment.service';
 import { PaymentAuditService } from '../services/payment-audit.service';
@@ -71,6 +72,7 @@ export class PaymentController {
   constructor(
     private readonly flouci: FlouciPaymentService,
     private readonly stripe: StripePaymentService,
+    private readonly konnect: KonnectPaymentService,
     private readonly promoService: PromoService,
     private readonly feeService: FeeService,
     private readonly manualPaymentService: ManualPaymentService,
@@ -3341,5 +3343,743 @@ export class PaymentController {
     } catch (error: any) {
       throw new BadRequestException(error.message || 'Failed to verify payment');
     }
+  }
+
+  // ==================== KONNECT PAYMENT ENDPOINTS ====================
+
+  private getKonnectWebhookUrl(): string {
+    const backendUrl = (process.env.BACKEND_URL || process.env.API_URL || 'https://api.chabaqa.io/api').replace(/\/+$/, '');
+    return `${backendUrl}/payment/konnect/webhook`;
+  }
+
+  private buildKonnectInitResponse(params: {
+    scope: string;
+    targetId: string;
+    orderId: string;
+    paymentRef?: string;
+    payUrl?: string;
+  }) {
+    return {
+      payUrl: params.payUrl,
+      paymentRef: params.paymentRef,
+      orderId: params.orderId,
+      provider: 'konnect',
+      scope: params.scope,
+      targetId: params.targetId,
+    };
+  }
+
+  @Post('konnect/init/community')
+  @ApiOperation({ summary: 'Initiate Konnect payment for community membership' })
+  @ApiQuery({ name: 'promoCode', required: false })
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  async initKonnectCommunityPayment(
+    @Body('communityId') communityId: string,
+    @Body('inviteCode') inviteCode: string | undefined,
+    @Req() req: any,
+    @Query('promoCode') promoCode?: string,
+  ) {
+    const userId = (req.user?._id || req.user?.sub || '').toString();
+    const community = await this.communityModel.findById(communityId);
+    if (!community) throw new BadRequestException('Communauté non trouvée');
+    const validatedInviteCode = await this.assertPrivateInviteAccess(community, inviteCode);
+
+    const price = community.fees_of_join || 0;
+    if (price <= 0) throw new BadRequestException('Communauté gratuite');
+
+    let amount = price;
+    let discountDT = 0;
+    let appliedCode: string | undefined;
+    if (promoCode) {
+      const buyer = await this.userModel.findById(userId).select('email');
+      const promo = await this.promoService.validateAndApply(promoCode, price, TrackableContentType.COMMUNITY, community._id.toString(), (buyer as any)?.email);
+      if (promo.valid) {
+        amount = promo.finalAmountDT;
+        discountDT = promo.discountDT;
+        appliedCode = promo.appliedCode;
+      }
+    }
+
+    const breakdown = await this.feeService.calculateForAmount(amount, community.createur.toString());
+    const metadata: Record<string, any> = { provider: 'konnect' };
+    if (validatedInviteCode) metadata.inviteCode = validatedInviteCode;
+
+    const pendingOrder = await this.orderModel.create({
+      buyerId: new Types.ObjectId(userId),
+      creatorId: community.createur,
+      communityId: community._id,
+      contentType: TrackableContentType.COMMUNITY,
+      contentId: community._id.toString(),
+      amountDT: breakdown.amountDT,
+      platformPercent: breakdown.platformPercent,
+      platformFixedDT: breakdown.platformFixedDT,
+      platformFeeDT: breakdown.platformFeeDT,
+      creatorNetDT: breakdown.creatorNetDT,
+      promoCode: appliedCode,
+      discountDT,
+      status: 'pending',
+      metadata: this.buildPendingFulfillmentMetadata(metadata),
+    });
+
+    const user = await this.userModel.findById(userId).select('email name firstName lastName');
+    const successUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-success?scope=community&id=${communityId}&provider=konnect&paymentRef=PAYMENT_REF_PLACEHOLDER`;
+    const failUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-failed?scope=community&id=${communityId}&provider=konnect`;
+
+    const init = await this.konnect.initPayment({
+      amountTND: amount,
+      description: `Join ${community.name}`,
+      orderId: pendingOrder._id.toString(),
+      successUrl,
+      failUrl,
+      webhookUrl: this.getKonnectWebhookUrl(),
+      firstName: (user as any)?.firstName || (user as any)?.name?.split(' ')[0] || '',
+      lastName: (user as any)?.lastName || (user as any)?.name?.split(' ').slice(1).join(' ') || '',
+      email: user?.email || '',
+    });
+    if (!init.success) throw new BadRequestException(init.error || 'Konnect payment init failed');
+
+    pendingOrder.paymentId = init.paymentRef;
+    await pendingOrder.save();
+
+    return this.buildKonnectInitResponse({
+      scope: 'community',
+      targetId: communityId,
+      orderId: pendingOrder._id.toString(),
+      paymentRef: init.paymentRef,
+      payUrl: init.payUrl,
+    });
+  }
+
+  @Post('konnect/init/course')
+  @ApiOperation({ summary: 'Initiate Konnect payment for course enrollment' })
+  @ApiQuery({ name: 'promoCode', required: false })
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  async initKonnectCoursePayment(
+    @Body('courseId') courseId: string,
+    @Req() req: any,
+    @Query('promoCode') promoCode?: string,
+  ) {
+    const userId = (req.user?._id || req.user?.sub || '').toString();
+    let cours: CoursDocument | null = null;
+    if (Types.ObjectId.isValid(courseId)) {
+      cours = await this.coursModel.findById(courseId);
+    }
+    if (!cours) {
+      cours = await this.coursModel.findOne({ id: courseId });
+    }
+    if (!cours) throw new BadRequestException('Cours non trouvé');
+    const courseObjectId = cours._id;
+    const coursePublicId = cours.id || courseObjectId.toString();
+    const price = cours.prix || 0;
+    if (price <= 0) throw new BadRequestException('Cours gratuit');
+
+    let amount = price;
+    let discountDT = 0;
+    let appliedCode: string | undefined;
+    if (promoCode) {
+      const buyer = await this.userModel.findById(userId).select('email');
+      const promo = await this.promoService.validateAndApply(promoCode, price, TrackableContentType.COURSE, cours._id.toString(), (buyer as any)?.email);
+      if (promo.valid) { amount = promo.finalAmountDT; discountDT = promo.discountDT; appliedCode = promo.appliedCode; }
+    }
+
+    const breakdown = await this.feeService.calculateForAmount(amount, cours.creatorId.toString());
+    const pendingOrder = await this.orderModel.create({
+      buyerId: new Types.ObjectId(userId),
+      creatorId: cours.creatorId,
+      contentType: TrackableContentType.COURSE,
+      contentId: courseObjectId.toString(),
+      amountDT: breakdown.amountDT,
+      platformPercent: breakdown.platformPercent,
+      platformFixedDT: breakdown.platformFixedDT,
+      platformFeeDT: breakdown.platformFeeDT,
+      creatorNetDT: breakdown.creatorNetDT,
+      promoCode: appliedCode,
+      discountDT,
+      status: 'pending',
+      metadata: this.buildPendingFulfillmentMetadata({ provider: 'konnect' }),
+    });
+
+    const user = await this.userModel.findById(userId).select('email name firstName lastName');
+    const successUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-success?scope=course&id=${coursePublicId}&provider=konnect&paymentRef=PAYMENT_REF_PLACEHOLDER`;
+    const failUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-failed?scope=course&id=${coursePublicId}&provider=konnect`;
+
+    const init = await this.konnect.initPayment({
+      amountTND: amount,
+      description: cours.titre || 'Course',
+      orderId: pendingOrder._id.toString(),
+      successUrl,
+      failUrl,
+      webhookUrl: this.getKonnectWebhookUrl(),
+      firstName: (user as any)?.firstName || (user as any)?.name?.split(' ')[0] || '',
+      lastName: (user as any)?.lastName || (user as any)?.name?.split(' ').slice(1).join(' ') || '',
+      email: user?.email || '',
+    });
+    if (!init.success) throw new BadRequestException(init.error || 'Konnect payment init failed');
+
+    pendingOrder.paymentId = init.paymentRef;
+    await pendingOrder.save();
+
+    return this.buildKonnectInitResponse({
+      scope: 'course',
+      targetId: coursePublicId,
+      orderId: pendingOrder._id.toString(),
+      paymentRef: init.paymentRef,
+      payUrl: init.payUrl,
+    });
+  }
+
+  @Post('konnect/init/challenge')
+  @ApiOperation({ summary: 'Initiate Konnect payment for challenge participation' })
+  @ApiQuery({ name: 'promoCode', required: false })
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  async initKonnectChallengePayment(
+    @Body('challengeId') challengeId: string,
+    @Req() req: any,
+    @Query('promoCode') promoCode?: string,
+  ) {
+    const userId = (req.user?._id || req.user?.sub || '').toString();
+    const challenge = await this.challengeModel.findById(challengeId);
+    if (!challenge) throw new BadRequestException('Défi non trouvé');
+    const price = challenge.pricing?.participationFee || 0;
+    if (price <= 0) throw new BadRequestException('Défi gratuit');
+
+    let amount = price;
+    let discountDT = 0;
+    let appliedCode: string | undefined;
+    if (promoCode) {
+      const buyer = await this.userModel.findById(userId).select('email');
+      const promo = await this.promoService.validateAndApply(promoCode, price, TrackableContentType.CHALLENGE, challenge._id.toString(), (buyer as any)?.email);
+      if (promo.valid) { amount = promo.finalAmountDT; discountDT = promo.discountDT; appliedCode = promo.appliedCode; }
+    }
+
+    const breakdown = await this.feeService.calculateForAmount(amount, challenge.creatorId.toString());
+    const pendingOrder = await this.orderModel.create({
+      buyerId: new Types.ObjectId(userId),
+      creatorId: challenge.creatorId,
+      contentType: TrackableContentType.CHALLENGE,
+      contentId: challenge._id.toString(),
+      amountDT: breakdown.amountDT,
+      platformPercent: breakdown.platformPercent,
+      platformFixedDT: breakdown.platformFixedDT,
+      platformFeeDT: breakdown.platformFeeDT,
+      creatorNetDT: breakdown.creatorNetDT,
+      promoCode: appliedCode,
+      discountDT,
+      status: 'pending',
+      metadata: this.buildPendingFulfillmentMetadata({ provider: 'konnect' }),
+    });
+
+    const user = await this.userModel.findById(userId).select('email name firstName lastName');
+    const successUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-success?scope=challenge&id=${challengeId}&provider=konnect&paymentRef=PAYMENT_REF_PLACEHOLDER`;
+    const failUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-failed?scope=challenge&id=${challengeId}&provider=konnect`;
+
+    const init = await this.konnect.initPayment({
+      amountTND: amount,
+      description: challenge.title || 'Challenge',
+      orderId: pendingOrder._id.toString(),
+      successUrl,
+      failUrl,
+      webhookUrl: this.getKonnectWebhookUrl(),
+      firstName: (user as any)?.firstName || (user as any)?.name?.split(' ')[0] || '',
+      lastName: (user as any)?.lastName || (user as any)?.name?.split(' ').slice(1).join(' ') || '',
+      email: user?.email || '',
+    });
+    if (!init.success) throw new BadRequestException(init.error || 'Konnect payment init failed');
+
+    pendingOrder.paymentId = init.paymentRef;
+    await pendingOrder.save();
+
+    return this.buildKonnectInitResponse({
+      scope: 'challenge',
+      targetId: challengeId,
+      orderId: pendingOrder._id.toString(),
+      paymentRef: init.paymentRef,
+      payUrl: init.payUrl,
+    });
+  }
+
+  @Post('konnect/init/event')
+  @ApiOperation({ summary: 'Initiate Konnect payment for event ticket' })
+  @ApiQuery({ name: 'promoCode', required: false })
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  async initKonnectEventPayment(
+    @Body('eventId') eventId: string,
+    @Body('ticketType') ticketType: string,
+    @Req() req: any,
+    @Query('promoCode') promoCode?: string,
+  ) {
+    const userId = (req.user?._id || req.user?.sub || '').toString();
+    const event = await this.eventModel.findById(eventId);
+    if (!event) throw new BadRequestException('Événement non trouvé');
+    const alreadyRegistered = (event.attendees || []).some((attendee: any) => attendee?.userId?.toString() === userId);
+    if (alreadyRegistered) throw new BadRequestException('Vous êtes déjà inscrit à cet événement');
+
+    const ticket = event.tickets.find(t => t.type === ticketType);
+    if (!ticket || (ticket.price || 0) <= 0) throw new BadRequestException('Billet invalide ou gratuit');
+
+    let amount = ticket.price || 0;
+    let discountDT = 0;
+    let appliedCode: string | undefined;
+    if (promoCode) {
+      const buyer = await this.userModel.findById(userId).select('email');
+      const promo = await this.promoService.validateAndApply(promoCode, amount, TrackableContentType.EVENT, (event as any)._id.toString(), (buyer as any)?.email);
+      if (promo.valid) { amount = promo.finalAmountDT; discountDT = promo.discountDT; appliedCode = promo.appliedCode; }
+    }
+
+    const breakdown = await this.feeService.calculateForAmount(amount, event.creatorId.toString());
+    const pendingOrder = await this.orderModel.create({
+      buyerId: new Types.ObjectId(userId),
+      creatorId: event.creatorId,
+      contentType: TrackableContentType.EVENT,
+      contentId: (event as any)._id.toString(),
+      amountDT: breakdown.amountDT,
+      platformPercent: breakdown.platformPercent,
+      platformFixedDT: breakdown.platformFixedDT,
+      platformFeeDT: breakdown.platformFeeDT,
+      creatorNetDT: breakdown.creatorNetDT,
+      promoCode: appliedCode,
+      discountDT,
+      status: 'pending',
+      metadata: this.buildPendingFulfillmentMetadata({ provider: 'konnect', ticketType }),
+    });
+
+    const user = await this.userModel.findById(userId).select('email name firstName lastName');
+    const successUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-success?scope=event&id=${eventId}&provider=konnect&paymentRef=PAYMENT_REF_PLACEHOLDER`;
+    const failUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-failed?scope=event&id=${eventId}&provider=konnect`;
+
+    const init = await this.konnect.initPayment({
+      amountTND: amount,
+      description: `${ticket.name || ticketType} - ${event.title || 'Event'}`,
+      orderId: pendingOrder._id.toString(),
+      successUrl,
+      failUrl,
+      webhookUrl: this.getKonnectWebhookUrl(),
+      firstName: (user as any)?.firstName || (user as any)?.name?.split(' ')[0] || '',
+      lastName: (user as any)?.lastName || (user as any)?.name?.split(' ').slice(1).join(' ') || '',
+      email: user?.email || '',
+    });
+    if (!init.success) throw new BadRequestException(init.error || 'Konnect payment init failed');
+
+    pendingOrder.paymentId = init.paymentRef;
+    await pendingOrder.save();
+
+    return this.buildKonnectInitResponse({
+      scope: 'event',
+      targetId: eventId,
+      orderId: pendingOrder._id.toString(),
+      paymentRef: init.paymentRef,
+      payUrl: init.payUrl,
+    });
+  }
+
+  @Post('konnect/init/product')
+  @ApiOperation({ summary: 'Initiate Konnect payment for product purchase' })
+  @ApiQuery({ name: 'promoCode', required: false })
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  async initKonnectProductPayment(
+    @Body('productId') productId: string,
+    @Req() req: any,
+    @Query('promoCode') promoCode?: string,
+  ) {
+    const userId = (req.user?._id || req.user?.sub || '').toString();
+    let product = await this.productModel.findById(productId);
+    if (!product) product = await this.productModel.findOne({ id: productId });
+    if (!product) throw new BadRequestException('Produit non trouvé');
+
+    const existingPaidOrder = await this.findExistingPaidProductOrder(userId, product);
+    if (existingPaidOrder) throw new BadRequestException('Product already purchased. You already have lifetime access.');
+
+    const price = product.price || 0;
+    if (price <= 0) throw new BadRequestException('Produit gratuit');
+
+    let amount = price;
+    let discountDT = 0;
+    let appliedCode: string | undefined;
+    if (promoCode) {
+      const buyer = await this.userModel.findById(userId).select('email');
+      const promo = await this.promoService.validateAndApply(promoCode, price, TrackableContentType.PRODUCT, product._id.toString(), (buyer as any)?.email);
+      if (promo.valid) { amount = promo.finalAmountDT; discountDT = promo.discountDT; appliedCode = promo.appliedCode; }
+    }
+
+    const breakdown = await this.feeService.calculateForAmount(amount, product.creatorId.toString());
+    const pendingOrder = await this.orderModel.create({
+      buyerId: new Types.ObjectId(userId),
+      creatorId: product.creatorId,
+      contentType: TrackableContentType.PRODUCT,
+      contentId: product._id.toString(),
+      amountDT: breakdown.amountDT,
+      platformPercent: breakdown.platformPercent,
+      platformFixedDT: breakdown.platformFixedDT,
+      platformFeeDT: breakdown.platformFeeDT,
+      creatorNetDT: breakdown.creatorNetDT,
+      promoCode: appliedCode,
+      discountDT,
+      status: 'pending',
+      metadata: this.buildPendingFulfillmentMetadata({ provider: 'konnect' }),
+    });
+
+    const user = await this.userModel.findById(userId).select('email name firstName lastName');
+    const successUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-success?scope=product&id=${productId}&provider=konnect&paymentRef=PAYMENT_REF_PLACEHOLDER`;
+    const failUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-failed?scope=product&id=${productId}&provider=konnect`;
+
+    const init = await this.konnect.initPayment({
+      amountTND: amount,
+      description: product.title || 'Product',
+      orderId: pendingOrder._id.toString(),
+      successUrl,
+      failUrl,
+      webhookUrl: this.getKonnectWebhookUrl(),
+      firstName: (user as any)?.firstName || (user as any)?.name?.split(' ')[0] || '',
+      lastName: (user as any)?.lastName || (user as any)?.name?.split(' ').slice(1).join(' ') || '',
+      email: user?.email || '',
+    });
+    if (!init.success) throw new BadRequestException(init.error || 'Konnect payment init failed');
+
+    pendingOrder.paymentId = init.paymentRef;
+    await pendingOrder.save();
+
+    return this.buildKonnectInitResponse({
+      scope: 'product',
+      targetId: productId,
+      orderId: pendingOrder._id.toString(),
+      paymentRef: init.paymentRef,
+      payUrl: init.payUrl,
+    });
+  }
+
+  @Post('konnect/init/session')
+  @ApiOperation({ summary: 'Initiate Konnect payment for 1-to-1 session' })
+  @ApiQuery({ name: 'promoCode', required: false })
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  async initKonnectSessionPayment(
+    @Body('sessionId') sessionId: string,
+    @Req() req: any,
+    @Query('promoCode') promoCode?: string,
+  ) {
+    const userId = (req.user?._id || req.user?.sub || '').toString();
+    const session = await this.sessionModel.findById(sessionId);
+    if (!session) throw new BadRequestException('Session non trouvée');
+    const price = session.price || 0;
+    if (price <= 0) throw new BadRequestException('Session gratuite');
+
+    let amount = price;
+    let discountDT = 0;
+    let appliedCode: string | undefined;
+    if (promoCode) {
+      const buyer = await this.userModel.findById(userId).select('email');
+      const promo = await this.promoService.validateAndApply(promoCode, price, TrackableContentType.SESSION, session._id.toString(), (buyer as any)?.email);
+      if (promo.valid) { amount = promo.finalAmountDT; discountDT = promo.discountDT; appliedCode = promo.appliedCode; }
+    }
+
+    const breakdown = await this.feeService.calculateForAmount(amount, session.creatorId.toString());
+    const pendingOrder = await this.orderModel.create({
+      buyerId: new Types.ObjectId(userId),
+      creatorId: session.creatorId,
+      contentType: TrackableContentType.SESSION,
+      contentId: session._id.toString(),
+      amountDT: breakdown.amountDT,
+      platformPercent: breakdown.platformPercent,
+      platformFixedDT: breakdown.platformFixedDT,
+      platformFeeDT: breakdown.platformFeeDT,
+      creatorNetDT: breakdown.creatorNetDT,
+      promoCode: appliedCode,
+      discountDT,
+      status: 'pending',
+      metadata: this.buildPendingFulfillmentMetadata({ provider: 'konnect' }),
+    });
+
+    const user = await this.userModel.findById(userId).select('email name firstName lastName');
+    const successUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-success?scope=session&id=${sessionId}&provider=konnect&paymentRef=PAYMENT_REF_PLACEHOLDER`;
+    const failUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-failed?scope=session&id=${sessionId}&provider=konnect`;
+
+    const init = await this.konnect.initPayment({
+      amountTND: amount,
+      description: session.title || 'Session',
+      orderId: pendingOrder._id.toString(),
+      successUrl,
+      failUrl,
+      webhookUrl: this.getKonnectWebhookUrl(),
+      firstName: (user as any)?.firstName || (user as any)?.name?.split(' ')[0] || '',
+      lastName: (user as any)?.lastName || (user as any)?.name?.split(' ').slice(1).join(' ') || '',
+      email: user?.email || '',
+    });
+    if (!init.success) throw new BadRequestException(init.error || 'Konnect payment init failed');
+
+    pendingOrder.paymentId = init.paymentRef;
+    await pendingOrder.save();
+
+    return this.buildKonnectInitResponse({
+      scope: 'session',
+      targetId: sessionId,
+      orderId: pendingOrder._id.toString(),
+      paymentRef: init.paymentRef,
+      payUrl: init.payUrl,
+    });
+  }
+
+  @Post('konnect/init/subscription')
+  @ApiOperation({ summary: 'Initiate Konnect payment for creator subscription' })
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  async initKonnectSubscription(
+    @Req() req: any,
+    @Body('tier') tier: string,
+  ) {
+    const userId = (req.user?._id || req.user?.sub || '').toString();
+    const plan = await this.planModel.findOne({ tier, isActive: true });
+    if (!plan) throw new BadRequestException('Plan introuvable');
+    const amount = (plan as any).priceMonthlyDT || (plan as any).priceDT || 0;
+    if (amount <= 0) throw new BadRequestException('Montant invalide');
+
+    const breakdown = await this.feeService.calculateForAmount(amount, userId);
+    const pendingOrder = await this.orderModel.create({
+      buyerId: new Types.ObjectId(userId),
+      creatorId: new Types.ObjectId(userId),
+      contentType: TrackableContentType.SUBSCRIPTION,
+      contentId: tier,
+      amountDT: breakdown.amountDT,
+      platformPercent: breakdown.platformPercent,
+      platformFixedDT: breakdown.platformFixedDT,
+      platformFeeDT: breakdown.platformFeeDT,
+      creatorNetDT: breakdown.creatorNetDT,
+      status: 'pending',
+      metadata: this.buildPendingFulfillmentMetadata({ provider: 'konnect' }),
+    });
+
+    const user = await this.userModel.findById(userId).select('email name firstName lastName');
+    const successUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-success?scope=subscription&tier=${tier}&provider=konnect&paymentRef=PAYMENT_REF_PLACEHOLDER`;
+    const failUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-failed?scope=subscription&tier=${tier}&provider=konnect`;
+
+    const init = await this.konnect.initPayment({
+      amountTND: amount,
+      description: `${plan.name || tier} Plan Subscription`,
+      orderId: pendingOrder._id.toString(),
+      successUrl,
+      failUrl,
+      webhookUrl: this.getKonnectWebhookUrl(),
+      firstName: (user as any)?.firstName || (user as any)?.name?.split(' ')[0] || '',
+      lastName: (user as any)?.lastName || (user as any)?.name?.split(' ').slice(1).join(' ') || '',
+      email: user?.email || '',
+    });
+    if (!init.success) throw new BadRequestException(init.error || 'Konnect payment init failed');
+
+    pendingOrder.paymentId = init.paymentRef;
+    await pendingOrder.save();
+
+    return this.buildKonnectInitResponse({
+      scope: 'subscription',
+      targetId: tier,
+      orderId: pendingOrder._id.toString(),
+      paymentRef: init.paymentRef,
+      payUrl: init.payUrl,
+    });
+  }
+
+  @Get('konnect/verify')
+  @ApiOperation({ summary: 'Verify Konnect payment status' })
+  @ApiQuery({ name: 'paymentRef', required: true })
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  async verifyKonnectPayment(@Query('paymentRef') paymentRef: string) {
+    if (!paymentRef) throw new BadRequestException('paymentRef is required');
+
+    let order: any = await this.orderModel.findOne({ paymentId: paymentRef });
+    if (!order) throw new BadRequestException('Order not found for this payment reference');
+
+    const details = await this.konnect.getPaymentDetails(paymentRef);
+    if (!details.success) throw new BadRequestException(details.error || 'Failed to verify Konnect payment');
+
+    if (details.status === 'completed') {
+      await this.auditPaymentEvent({
+        orderId: order._id?.toString?.(),
+        eventType: 'provider_verification_completed',
+        provider: 'konnect',
+        eventId: paymentRef,
+        paymentMethod: details.paymentMethod || 'konnect',
+        previousStatus: order.status,
+        nextStatus: 'paid',
+      });
+
+      let didCompleteFulfillment = false;
+      await this.runWithOptionalTransaction(async (session) => {
+        const claim = await this.paymentFulfillmentService.claimForProcessing(
+          order._id.toString(),
+          details.paymentMethod || 'konnect',
+          session,
+        );
+        if (!claim.order) throw new BadRequestException('Order not found');
+        order = claim.order;
+
+        if (claim.state === 'requires_booking' || claim.state === 'completed') return;
+        if (claim.state !== 'claimed') return;
+
+        try {
+          await this.grantAccess(order, session);
+          order = await this.paymentFulfillmentService.markCompleted(order, session);
+          didCompleteFulfillment = true;
+        } catch (error: any) {
+          if (order.contentType === TrackableContentType.SESSION && this.isMissingScheduledAtError(error)) {
+            order = await this.paymentFulfillmentService.markRequiresBooking(order, session, {
+              contentId: order.metadata?.contentId || order.contentId,
+            });
+            return;
+          }
+          await this.paymentFulfillmentService.markFailed(order, error, session);
+          throw error;
+        }
+      });
+
+      if (didCompleteFulfillment) {
+        await this.incrementProductSalesFromOrder(order);
+        await this.affiliateCommissionService.onOrderPaid(order).catch((e) => this.logger.error(`Affiliate onOrderPaid failed: ${e?.message}`));
+      }
+
+      if (order.contentType === TrackableContentType.SESSION && order.metadata?.fulfillmentStatus === 'requires_booking') {
+        return {
+          status: 'paid_action_required',
+          action: 'choose_session_slot',
+          message: 'Payment received. Please choose a session slot to finalize your booking.',
+          orderId: order._id,
+          sessionContentId: order.metadata?.contentId || order.contentId,
+          ...(await this.enrichOrderDetails(order)),
+        };
+      }
+
+      const enriched = await this.enrichOrderDetails(order);
+      return { status: 'paid', orderId: order._id, provider: 'konnect', ...enriched };
+    }
+
+    if (details.status === 'failed') {
+      if (order.status !== 'failed') {
+        order.status = 'failed';
+        await order.save();
+      }
+      return { status: 'failed', orderId: order._id, provider: 'konnect' };
+    }
+
+    return { status: 'pending', orderId: order._id, provider: 'konnect' };
+  }
+
+  @Get('konnect/webhook')
+  @ApiOperation({ summary: 'Konnect payment webhook (GET with payment_ref query param)' })
+  async konnectWebhook(@Query('payment_ref') paymentRef: string) {
+    this.logger.log(`[Konnect Webhook] Received callback for payment_ref=${paymentRef}`);
+    if (!paymentRef) throw new BadRequestException('payment_ref is required');
+
+    const alreadyProcessed = await this.hasProcessedWebhookEvent('konnect', paymentRef);
+    if (alreadyProcessed) {
+      this.logger.log(`[Konnect Webhook] Already processed: ${paymentRef}`);
+      return { status: 'already_processed' };
+    }
+
+    const details = await this.konnect.getPaymentDetails(paymentRef);
+    if (!details.success) {
+      this.logger.warn(`[Konnect Webhook] Failed to fetch details for ${paymentRef}: ${details.error}`);
+      return { status: 'verification_failed' };
+    }
+
+    let order: any = await this.orderModel.findOne({ paymentId: paymentRef });
+    if (!order) {
+      this.logger.warn(`[Konnect Webhook] No order found for paymentRef=${paymentRef}`);
+      return { status: 'order_not_found' };
+    }
+
+    if (details.status === 'completed') {
+      await this.auditPaymentEvent({
+        orderId: order._id?.toString?.(),
+        eventType: 'webhook_payment_completed',
+        provider: 'konnect',
+        eventId: paymentRef,
+        paymentMethod: details.paymentMethod || 'konnect',
+        previousStatus: order.status,
+        nextStatus: 'paid',
+      });
+
+      let didCompleteFulfillment = false;
+      await this.runWithOptionalTransaction(async (session) => {
+        const claim = await this.paymentFulfillmentService.claimForProcessing(
+          order._id.toString(),
+          details.paymentMethod || 'konnect',
+          session,
+        );
+        if (!claim.order) return;
+        order = claim.order;
+
+        if (claim.state === 'requires_booking' || claim.state === 'completed') return;
+        if (claim.state !== 'claimed') return;
+
+        try {
+          await this.grantAccess(order, session);
+          order = await this.paymentFulfillmentService.markCompleted(order, session);
+          didCompleteFulfillment = true;
+        } catch (error: any) {
+          if (order.contentType === TrackableContentType.SESSION && this.isMissingScheduledAtError(error)) {
+            order = await this.paymentFulfillmentService.markRequiresBooking(order, session, {
+              contentId: order.metadata?.contentId || order.contentId,
+            });
+            return;
+          }
+          await this.paymentFulfillmentService.markFailed(order, error, session);
+          this.logger.error(`[Konnect Webhook] Fulfillment failed for order ${order._id}: ${error?.message}`);
+        }
+      });
+
+      if (didCompleteFulfillment) {
+        await this.incrementProductSalesFromOrder(order);
+        await this.affiliateCommissionService.onOrderPaid(order).catch((e) => this.logger.error(`Affiliate onOrderPaid failed: ${e?.message}`));
+      }
+
+      await this.markWebhookEventProcessed('konnect', paymentRef, 'payment_completed');
+      return { status: 'fulfilled' };
+    }
+
+    if (details.status === 'failed') {
+      if (order.status !== 'failed') {
+        order.status = 'failed';
+        await order.save();
+      }
+      await this.markWebhookEventProcessed('konnect', paymentRef, 'payment_failed');
+      return { status: 'payment_failed' };
+    }
+
+    return { status: 'pending' };
+  }
+
+  /**
+   * Mock-only endpoint: confirms a Konnect mock payment as succeeded or failed.
+   * Only works when KONNECT_MOCK_MODE=true. Used by the /konnect-mock-checkout frontend page.
+   * GET /api/payment/konnect/mock/confirm?paymentRef=xxx&outcome=success|fail
+   */
+  @Get('konnect/mock/confirm')
+  @ApiOperation({ summary: '[DEV MOCK] Confirm a Konnect mock payment as success or failure' })
+  @ApiQuery({ name: 'paymentRef', required: true })
+  @ApiQuery({ name: 'outcome', required: false, description: 'success (default) or fail' })
+  async confirmKonnectMockPayment(
+    @Query('paymentRef') paymentRef: string,
+    @Query('outcome') outcome: string = 'success',
+  ) {
+    if (!this.konnect.isMockMode) {
+      throw new BadRequestException('Mock mode is not enabled. Set KONNECT_MOCK_MODE=true.');
+    }
+    if (!paymentRef) throw new BadRequestException('paymentRef is required');
+
+    const normalizedOutcome = String(outcome).toLowerCase() === 'fail' ? 'fail' : 'success';
+    const confirmed = this.konnect.confirmMockPayment(paymentRef, normalizedOutcome as 'success' | 'fail');
+
+    if (!confirmed) throw new BadRequestException('Could not confirm mock payment');
+
+    this.logger.log(`[Konnect Mock] Payment ${paymentRef} confirmed as ${normalizedOutcome}`);
+    return {
+      success: true,
+      paymentRef,
+      outcome: normalizedOutcome,
+      message: `Mock payment marked as ${normalizedOutcome}. Now call /payment/konnect/verify?paymentRef=${paymentRef} to complete fulfillment.`,
+    };
   }
 }

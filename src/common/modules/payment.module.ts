@@ -2,6 +2,7 @@ import { Module, Global } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { StripePaymentService } from '../services/stripe-payment.service';
 import { FlouciPaymentService } from '../services/flouci-payment.service';
+import { KonnectPaymentService } from '../services/konnect-payment.service';
 import { PaymentController } from '../controllers/payment.controller';
 import { MongooseModule } from '@nestjs/mongoose';
 import { Community, CommunitySchema } from '../../schema/community.schema';
@@ -72,6 +73,7 @@ import { AffiliateModule } from '../../affiliate/affiliate.module';
   providers: [
     FlouciPaymentService,
     StripePaymentService,
+    KonnectPaymentService,
     PromoService,
     FeeService,
     ManualPaymentService,
@@ -82,6 +84,7 @@ import { AffiliateModule } from '../../affiliate/affiliate.module';
   exports: [
     FlouciPaymentService,
     StripePaymentService,
+    KonnectPaymentService,
     ManualPaymentService,
     PromoService,
     FeeService,
