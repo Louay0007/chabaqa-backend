@@ -36,7 +36,7 @@ export class AnalyticsScheduler implements OnModuleInit {
     for (const creatorId of creators) {
       await this.analyticsService.rollupDayForCreator(creatorId, today);
     }
-    this.logger.log(\`Hourly rollup completed for \${creators.length} creators\`);
+    this.logger.log(`Hourly rollup completed for ${creators.length} creators`);
   }
 
   private scheduleDaily(hour: number, minute: number) {
@@ -54,7 +54,7 @@ export class AnalyticsScheduler implements OnModuleInit {
           for (const creatorId of creators) {
             await this.analyticsService.rollupDayForCreator(creatorId, yesterday);
           }
-          this.logger.log(\`Daily rollup completed for \${creators.length} creators\`);
+          this.logger.log(`Daily rollup completed for ${creators.length} creators`);
         } catch (err) {
           this.logger.error('Daily rollup failed', err.stack);
         } finally {
@@ -119,7 +119,7 @@ export class AnalyticsScheduler implements OnModuleInit {
           { metric: 'uniqueUsers', value: ovData.totalUniqueUsers ?? 0, change: 0 },
         ];
 
-        const summary = \`This week you had \${ovData.totalViews ?? 0} views, \${ovData.totalCompletes ?? 0} completions, and earned \${ovData.totalRevenue ?? 0} TND in revenue across all your content.\`;
+        const summary = `This week you had ${ovData.totalViews ?? 0} views, ${ovData.totalCompletes ?? 0} completions, and earned ${ovData.totalRevenue ?? 0} TND in revenue across all your content.`;
 
         await this.weeklyReportModel.findOneAndUpdate(
           { creatorId: new Types.ObjectId(creatorId), weekStart },
@@ -138,11 +138,11 @@ export class AnalyticsScheduler implements OnModuleInit {
 
         generated++;
       } catch (err) {
-        this.logger.warn(\`Weekly report failed for creator \${sub.creatorId}: \${err.message}\`);
+        this.logger.warn(`Weekly report failed for creator ${sub.creatorId}: ${err.message}`);
       }
     }
 
-    this.logger.log(\`Weekly reports generated for \${generated}/\${growthPlusSubs.length} Growth+ creators\`);
+    this.logger.log(`Weekly reports generated for ${generated}/${growthPlusSubs.length} Growth+ creators`);
   }
 
   private async getActiveCreatorIds(): Promise<string[]> {

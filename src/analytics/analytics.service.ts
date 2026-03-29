@@ -3847,7 +3847,7 @@ export class AnalyticsService {
       const key = row.cohortStart.toISOString();
       if (!cohortMap.has(key)) {
         cohortMap.set(key, {
-          cohortLabel: period === 'weekly' ? \`Week of \${row.cohortStart.toISOString().slice(0, 10)}\` : row.cohortStart.toISOString().slice(0, 7),
+          cohortLabel: period === 'weekly' ? `Week of ${row.cohortStart.toISOString().slice(0, 10)}` : row.cohortStart.toISOString().slice(0, 7),
           cohortStart: row.cohortStart.toISOString().slice(0, 10),
           cohortSize: row.cohortSize,
           weeks: [],
@@ -3873,7 +3873,7 @@ export class AnalyticsService {
       };
       if (communityIdStrings.length > 0) this.setDailyCommunityFilter(match, communityIdStrings);
 
-      const metricField = \`$\${metric}\`;
+      const metricField = `$${metric}`;
       const pipeline: any[] = [
         { $match: match },
         {
