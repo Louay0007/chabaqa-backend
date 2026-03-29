@@ -576,7 +576,7 @@ export class SecurityAuditController {
     try {
       const filters = {
         adminUserId: filtersDto.adminUserId,
-        action: filtersDto.action,
+        action: filtersDto.action as AdminAction | undefined,
         entityType: filtersDto.entityType,
         entityId: filtersDto.entityId,
         startDate: filtersDto.startDate ? new Date(filtersDto.startDate) : undefined,
@@ -636,7 +636,7 @@ export class SecurityAuditController {
     try {
       const filters = {
         adminUserId: exportDto.adminUserId,
-        action: exportDto.action,
+        action: exportDto.action as AdminAction | undefined,
         entityType: exportDto.entityType,
         startDate: exportDto.startDate ? new Date(exportDto.startDate) : undefined,
         endDate: exportDto.endDate ? new Date(exportDto.endDate) : undefined,

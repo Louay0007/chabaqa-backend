@@ -79,7 +79,7 @@ export class FinancialManagementService {
     query: RevenueDashboardQueryDto,
   ): Promise<RevenueMetricsDto> {
     const { startDate, endDate } = this.getDateRange(
-      query.period || TimePeriod.MONTH,
+      (query.period || TimePeriod.MONTH) as TimePeriod,
       query.startDate,
       query.endDate,
     );
@@ -387,7 +387,7 @@ export class FinancialManagementService {
     dto: GenerateFinancialReportDto,
   ): Promise<FinancialReportDto> {
     const { startDate, endDate } = this.getDateRange(
-      dto.period,
+      dto.period as TimePeriod,
       dto.startDate,
       dto.endDate,
     );
@@ -690,7 +690,7 @@ export class FinancialManagementService {
       throw new NotFoundException('Payout not found');
     }
 
-    payout.status = dto.status;
+    payout.status = dto.status as PayoutStatus;
 
     if (dto.adminNotes) {
       payout.adminNotes = dto.adminNotes;
@@ -784,7 +784,7 @@ export class FinancialManagementService {
     query: FinancialAnalyticsQueryDto,
   ): Promise<RevenueByContentTypeDto> {
     const { startDate, endDate } = this.getDateRange(
-      query.period || TimePeriod.MONTH,
+      (query.period || TimePeriod.MONTH) as TimePeriod,
       query.startDate,
       query.endDate,
     );
@@ -833,7 +833,7 @@ export class FinancialManagementService {
     limit: number = 10,
   ): Promise<TopCreatorsDto[]> {
     const { startDate, endDate } = this.getDateRange(
-      query.period || TimePeriod.MONTH,
+      (query.period || TimePeriod.MONTH) as TimePeriod,
       query.startDate,
       query.endDate,
     );
@@ -983,7 +983,7 @@ export class FinancialManagementService {
     query: FinancialAnalyticsQueryDto,
   ): Promise<RevenueGrowthDto> {
     const { startDate, endDate } = this.getDateRange(
-      query.period || TimePeriod.MONTH,
+      (query.period || TimePeriod.MONTH) as TimePeriod,
       query.startDate,
       query.endDate,
     );
@@ -1055,7 +1055,7 @@ export class FinancialManagementService {
     query: FinancialAnalyticsQueryDto,
   ): Promise<PayoutAnalyticsDto> {
     const { startDate, endDate } = this.getDateRange(
-      query.period || TimePeriod.MONTH,
+      (query.period || TimePeriod.MONTH) as TimePeriod,
       query.startDate,
       query.endDate,
     );
@@ -1138,7 +1138,7 @@ export class FinancialManagementService {
     query: FinancialAnalyticsQueryDto,
   ): Promise<TransactionAnalyticsDto> {
     const { startDate, endDate } = this.getDateRange(
-      query.period || TimePeriod.MONTH,
+      (query.period || TimePeriod.MONTH) as TimePeriod,
       query.startDate,
       query.endDate,
     );
@@ -1211,7 +1211,7 @@ export class FinancialManagementService {
     query: FinancialAnalyticsQueryDto,
   ): Promise<PlatformFeesAnalyticsDto> {
     const { startDate, endDate } = this.getDateRange(
-      query.period || TimePeriod.MONTH,
+      (query.period || TimePeriod.MONTH) as TimePeriod,
       query.startDate,
       query.endDate,
     );

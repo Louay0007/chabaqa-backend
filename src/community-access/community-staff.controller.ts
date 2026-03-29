@@ -21,7 +21,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CommunityAccessService } from './community-access.service';
 import { CommunityPermissionGuard } from './community-permission.guard';
 import { RequireCommunityPermission } from './community-permission.decorator';
-import { CommunityPermission } from '../common/permissions';
+import { CommunityPermission, CommunityStaffRole } from '../common/permissions';
 import { AssignStaffRoleDto, UpdateStaffRoleDto } from './dto/staff.dto';
 
 @ApiTags('Community Staff')
@@ -65,7 +65,7 @@ export class CommunityStaffController {
     return this.communityAccess.assignStaffRole(
       communityId,
       dto.userId,
-      dto.role,
+      dto.role as CommunityStaffRole,
       this.getUserId(req),
     );
   }
@@ -88,7 +88,7 @@ export class CommunityStaffController {
     return this.communityAccess.updateStaffRole(
       communityId,
       userId,
-      dto.role,
+      dto.role as CommunityStaffRole,
       this.getUserId(req),
     );
   }

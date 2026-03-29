@@ -9,8 +9,13 @@ describe('CommunityManagementService Integration', () => {
     // Create a minimal service instance for testing core logic
     service = new CommunityManagementService(
       null as any, // communityModel
-      null as any, // userModel  
-      null as any  // auditLogService
+      null as any, // userModel
+      null as any, // postModel
+      null as any, // courseModel
+      null as any, // eventModel
+      null as any, // productModel
+      null as any, // auditLogService
+      null as any  // cacheService
     );
   });
 

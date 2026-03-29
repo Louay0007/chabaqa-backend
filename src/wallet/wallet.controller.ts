@@ -102,7 +102,7 @@ export class WalletController {
     const result = await this.walletService.getTransactionHistory(this.getUserId(req), {
       page: page ? parseInt(page, 10) : 1,
       limit: limit ? parseInt(limit, 10) : 20,
-      type,
+      type: type as WalletTransactionType | undefined,
     });
     return {
       success: true,
@@ -160,7 +160,7 @@ export class WalletController {
       throw new BadRequestException('Invalid amount');
     }
 
-    if (!Object.values(TopUpCurrency).includes(currency)) {
+    if (!Object.values(TopUpCurrency).includes(currency as TopUpCurrency)) {
       throw new BadRequestException('Invalid currency. Use DT, USD, or EUR');
     }
 
@@ -178,7 +178,7 @@ export class WalletController {
     const topUpRequest = await this.walletService.createTopUpRequest(
       userId,
       amountNum,
-      currency,
+      currency as TopUpCurrency,
       proofUrl,
       notes,
     );
@@ -266,7 +266,7 @@ export class WalletController {
 
     // Validate contentType
     const validContentTypes = Object.values(WalletPurchaseContentType);
-    if (!validContentTypes.includes(contentType)) {
+    if (!validContentTypes.includes(contentType as WalletPurchaseContentType)) {
       console.error('❌ [PURCHASE] Invalid contentType:', contentType, 'Valid types:', validContentTypes);
       throw new BadRequestException(`Invalid contentType. Must be one of: ${validContentTypes.join(', ')}`);
     }
@@ -279,7 +279,7 @@ export class WalletController {
 
     const result = await this.walletService.purchaseWithWallet(
       this.getUserId(req),
-      contentType,
+      contentType as WalletPurchaseContentType,
       contentId,
       amount,
       creatorId,

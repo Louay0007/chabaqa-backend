@@ -23,6 +23,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { UploadService } from '../upload/upload.service';
 import { MediaCompleteDto, MediaPresignDto, MediaUploadBodyDto } from './dto/media.dto';
 import { MediaService } from './media.service';
+import { MediaPurpose, MediaVisibility } from './media.types';
 
 const multerOptions = {
   storage: diskStorage({
@@ -103,10 +104,10 @@ export class MediaController {
     const requester = this.getRequester(req);
     const result = await this.uploadService.processUploadedFile(file, file.filename, {
       userId: requester.userId,
-      purpose: body.purpose,
+      purpose: body.purpose as MediaPurpose | undefined,
       entityType: body.entityType,
       entityId: body.entityId,
-      visibility: body.visibility,
+      visibility: body.visibility as MediaVisibility | undefined,
     });
 
     if (!result.assetId) {

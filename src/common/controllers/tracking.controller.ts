@@ -78,7 +78,7 @@ export class TrackingController {
   ) {
     const user = req.user as AuthenticatedUser;
     const enriched = enrichTrackingMetadata(req, metadata);
-    return await this.trackingService.trackView(user._id, contentId, contentType, enriched);
+    return await this.trackingService.trackView(user._id, contentId, contentType as TrackableContentType, enriched);
   }
 
   /**
@@ -98,7 +98,7 @@ export class TrackingController {
   ) {
     const user = req.user as AuthenticatedUser;
     const enriched = enrichTrackingMetadata(req, metadata);
-    return await this.trackingService.trackStart(user._id, contentId, contentType, enriched);
+    return await this.trackingService.trackStart(user._id, contentId, contentType as TrackableContentType, enriched);
   }
 
   /**
@@ -118,7 +118,7 @@ export class TrackingController {
   ) {
     const user = req.user as AuthenticatedUser;
     const enriched = enrichTrackingMetadata(req, metadata);
-    return await this.trackingService.trackComplete(user._id, contentId, contentType, enriched);
+    return await this.trackingService.trackComplete(user._id, contentId, contentType as TrackableContentType, enriched);
   }
 
   /**
@@ -137,7 +137,7 @@ export class TrackingController {
     @Req() req
   ) {
     const user = req.user as AuthenticatedUser;
-    return await this.trackingService.updateWatchTime(user._id, contentId, contentType, body.additionalTime);
+    return await this.trackingService.updateWatchTime(user._id, contentId, contentType as TrackableContentType, body.additionalTime);
   }
 
   /**
@@ -157,7 +157,7 @@ export class TrackingController {
   ) {
     const user = req.user as AuthenticatedUser;
     const enriched = enrichTrackingMetadata(req, metadata);
-    return await this.trackingService.trackLike(user._id, contentId, contentType, enriched);
+    return await this.trackingService.trackLike(user._id, contentId, contentType as TrackableContentType, enriched);
   }
 
   /**
@@ -177,7 +177,7 @@ export class TrackingController {
   ) {
     const user = req.user as AuthenticatedUser;
     const enriched = enrichTrackingMetadata(req, metadata);
-    return await this.trackingService.trackShare(user._id, contentId, contentType, enriched);
+    return await this.trackingService.trackShare(user._id, contentId, contentType as TrackableContentType, enriched);
   }
 
   /**
@@ -197,7 +197,7 @@ export class TrackingController {
   ) {
     const user = req.user as AuthenticatedUser;
     const enriched = enrichTrackingMetadata(req, metadata);
-    return await this.trackingService.trackDownload(user._id, contentId, contentType, enriched);
+    return await this.trackingService.trackDownload(user._id, contentId, contentType as TrackableContentType, enriched);
   }
 
   /**
@@ -215,7 +215,7 @@ export class TrackingController {
     @Body('bookmarkId') bookmarkId: string,
   ) {
     const user = req.user as AuthenticatedUser;
-    return await this.trackingService.addBookmark(user._id, contentId, contentType, bookmarkId);
+    return await this.trackingService.addBookmark(user._id, contentId, contentType as TrackableContentType, bookmarkId);
   }
 
   /**
@@ -234,7 +234,7 @@ export class TrackingController {
     @Req() req
   ) {
     const user = req.user as AuthenticatedUser;
-    return await this.trackingService.removeBookmark(user._id, contentId, contentType, bookmarkId);
+    return await this.trackingService.removeBookmark(user._id, contentId, contentType as TrackableContentType, bookmarkId);
   }
 
   /**
@@ -253,7 +253,7 @@ export class TrackingController {
     @Body('review') review?: string,
   ) {
     const user = req.user as AuthenticatedUser;
-    return await this.trackingService.addRating(user._id, contentId, contentType, rating, review);
+    return await this.trackingService.addRating(user._id, contentId, contentType as TrackableContentType, rating, review);
   }
 
   /**
@@ -269,7 +269,7 @@ export class TrackingController {
     @Req() req
   ) {
     const user = req.user as AuthenticatedUser;
-    return await this.trackingService.getProgress(user._id, contentId, contentType);
+    return await this.trackingService.getProgress(user._id, contentId, contentType as TrackableContentType);
   }
 
   /**
@@ -288,9 +288,9 @@ export class TrackingController {
   ) {
     const user = req.user as AuthenticatedUser;
     return await this.trackingService.getUserProgressByType(
-      user._id, 
-      contentType, 
-      Number(page) || 1, 
+      user._id,
+      contentType as TrackableContentType,
+      Number(page) || 1,
       Number(limit) || 10
     );
   }
@@ -306,7 +306,7 @@ export class TrackingController {
     @Param('contentType') contentType: string,
     @Param('contentId') contentId: string
   ) {
-    return await this.trackingService.getContentStats(contentId, contentType);
+    return await this.trackingService.getContentStats(contentId, contentType as TrackableContentType);
   }
 
   /**
@@ -323,8 +323,8 @@ export class TrackingController {
   ): Promise<any> {
     const user = req.user as AuthenticatedUser;
     return await this.trackingService.getUserRecentActions(
-      user._id, 
-      contentType, 
+      user._id,
+      contentType as TrackableContentType | undefined,
       Number(limit) || 20
     );
   }

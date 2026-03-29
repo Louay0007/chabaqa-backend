@@ -363,7 +363,7 @@ export class ChapterAccessService {
         isPreview: Boolean(descriptor.chapter?.isPreview),
         isPaidChapter:
           Boolean(descriptor.chapter?.isPaidChapter) &&
-          !Boolean(descriptor.chapter?.isPreview),
+          !descriptor.chapter?.isPreview,
         isCompleted: Boolean(progress?.isCompleted),
         watchTime: Number(progress?.watchTime || 0),
         videoDuration: Number((progress as any)?.videoDuration || 0),

@@ -201,7 +201,7 @@ export class AnalyticsDashboardService {
       alert.threshold = updateAlertDto.threshold;
     }
     if (updateAlertDto.severity) {
-      alert.severity = updateAlertDto.severity;
+      alert.severity = updateAlertDto.severity as AlertSeverity;
     }
     if (typeof updateAlertDto.isEnabled === 'boolean') {
       alert.isEnabled = updateAlertDto.isEnabled;
@@ -269,10 +269,10 @@ export class AnalyticsDashboardService {
     for (const alert of alerts) {
       if (!alert.isEnabled) continue;
 
-      const currentValue = this.getMetricValue(alert.metricType, { health, userGrowth });
+      const currentValue = this.getMetricValue(alert.metricType as AlertMetricType, { health, userGrowth });
       const shouldTrigger = this.evaluateAlertCondition(
         currentValue,
-        alert.condition,
+        alert.condition as AlertCondition,
         alert.threshold
       );
 

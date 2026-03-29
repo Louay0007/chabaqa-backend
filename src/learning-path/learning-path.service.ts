@@ -326,7 +326,7 @@ export class LearningPathService {
     const isPaid = Boolean(chapter.isPaidChapter || (chapter.prix && chapter.prix > 0));
     if (!isPaid) return true;
     if (chapter.isPreview) return true;
-    if (Boolean((course as any).isPaidCourse)) return true;
+    if ((course as any).isPaidCourse) return true;
     const purchased = enrollment.purchasedChapterIds || [];
     return purchased.includes(chapter.id);
   }

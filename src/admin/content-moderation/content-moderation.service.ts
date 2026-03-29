@@ -223,16 +223,16 @@ export class ContentModerationService {
 
       // Handle content publication/rejection based on moderation decision
       if (updatedItem) {
-        await this.handleContentModerationDecision(updatedItem, moderationData.action);
+        await this.handleContentModerationDecision(updatedItem, moderationData.action as ModerationStatus);
 
         // Send notifications
-        await this.sendModerationNotifications(updatedItem, moderationData.action);
+        await this.sendModerationNotifications(updatedItem, moderationData.action as ModerationStatus);
       }
 
       // Log the moderation action
       await this.auditLogService.logAction({
         ...adminContext,
-        action: this.getModerationAuditAction(moderationData.action),
+        action: this.getModerationAuditAction(moderationData.action as ModerationStatus),
         entityType: 'ContentModerationQueue',
         entityId: new Types.ObjectId(itemId),
         previousData,
@@ -879,7 +879,7 @@ export class ContentModerationService {
     filters: ContentModerationAnalyticsFiltersDto
   ): Promise<ContentModerationAnalyticsDto> {
     try {
-      const dateRange = this.getDateRangeFromPeriod(filters.period || TimePeriod.LAST_30_DAYS, filters.startDate, filters.endDate);
+      const dateRange = this.getDateRangeFromPeriod((filters.period || TimePeriod.LAST_30_DAYS) as TimePeriod, filters.startDate, filters.endDate);
       
       const [
         engagementMetrics,
@@ -899,7 +899,7 @@ export class ContentModerationService {
         period: {
           startDate: dateRange.startDate,
           endDate: dateRange.endDate,
-          label: this.getPeriodLabel(filters.period || TimePeriod.LAST_30_DAYS, dateRange)
+          label: this.getPeriodLabel((filters.period || TimePeriod.LAST_30_DAYS) as TimePeriod, dateRange)
         },
         engagementMetrics,
         performanceMetrics,

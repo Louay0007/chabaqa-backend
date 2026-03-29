@@ -91,8 +91,8 @@ export class PayoutController {
     return this.payoutService.getPayouts({
       creatorId,
       communityId,
-      status,
-      method,
+      status: status as PayoutStatus | undefined,
+      method: method as PayoutMethod | undefined,
       page,
       limit,
       startDate: startDate ? new Date(startDate) : undefined,

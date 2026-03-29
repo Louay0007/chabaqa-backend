@@ -480,7 +480,7 @@ export class UserManagementController {
     data: UserAnalytics;
   }> {
     try {
-      const analytics = await this.userManagementService.getUserAnalytics(period);
+      const analytics = await this.userManagementService.getUserAnalytics(period as TimePeriod | undefined);
       return {
         success: true,
         message: 'User analytics retrieved successfully',
@@ -525,7 +525,7 @@ export class UserManagementController {
     data: any;
   }> {
     try {
-      const growthMetrics = await this.userManagementService.getUserGrowthMetrics(period);
+      const growthMetrics = await this.userManagementService.getUserGrowthMetrics(period as TimePeriod | undefined);
       return {
         success: true,
         message: 'User growth metrics retrieved successfully',

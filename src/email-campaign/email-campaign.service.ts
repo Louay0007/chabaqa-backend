@@ -180,7 +180,7 @@ export class EmailCampaignService {
 
     const scheduledAt = this.normalizeScheduledAt(dto.scheduledAt);
     const status = this.resolveCampaignStatus(scheduledAt);
-    const targetDaysThreshold = this.getDaysThreshold(dto.inactivityPeriod);
+    const targetDaysThreshold = this.getDaysThreshold(dto.inactivityPeriod as InactivityPeriod);
 
     const campaign = new this.emailCampaignModel({
       title: dto.title,

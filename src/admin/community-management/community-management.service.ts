@@ -1195,7 +1195,7 @@ export class CommunityManagementService {
 
       // Calculate date range
       const { startDate, endDate } = this.calculateDateRange(
-        filters.period || TimePeriod.LAST_30_DAYS,
+        (filters.period || TimePeriod.LAST_30_DAYS) as TimePeriod,
         filters.startDate ? new Date(filters.startDate) : undefined,
         filters.endDate ? new Date(filters.endDate) : undefined
       );

@@ -174,10 +174,10 @@ export class UploadController {
       const userId = req?.user?._id || req?.user?.sub;
       const result = await this.uploadService.processUploadedFile(file, file.filename, {
         userId,
-        purpose,
+        purpose: purpose as MediaPurpose | undefined,
         entityType,
         entityId,
-        visibility,
+        visibility: visibility as MediaVisibility | undefined,
       });
       
       return {

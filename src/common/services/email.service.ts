@@ -1176,6 +1176,7 @@ export class EmailService {
   /**
    * Génère le template HTML pour l'email de réinitialisation
    */
+  private generatePasswordResetEmailTemplate(code: string, userName: string): string {
     return `
       <!DOCTYPE html>
       <html lang="fr">

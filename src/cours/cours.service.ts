@@ -3417,7 +3417,7 @@ export class CoursService {
             sectionTitle: String(descriptor.section?.titre || ''),
             index: descriptor.index,
             isPreview: Boolean(descriptor.chapter?.isPreview),
-            isPaidChapter: Boolean(descriptor.chapter?.isPaidChapter) && !Boolean(descriptor.chapter?.isPreview),
+            isPaidChapter: Boolean(descriptor.chapter?.isPaidChapter) && !descriptor.chapter?.isPreview,
             isCompleted: Boolean(progress?.isCompleted),
             watchTime: Number(progress?.watchTime || 0),
             videoDuration: Number((progress as any)?.videoDuration || 0),

@@ -130,8 +130,8 @@ export class MediaService {
   }
 
   async completeUpload(dto: MediaCompleteDto, userId?: string) {
-    const purpose = dto.purpose || MediaPurpose.GENERIC;
-    const visibility = this.getVisibility(purpose, dto.visibility);
+    const purpose = (dto.purpose as MediaPurpose | undefined) || MediaPurpose.GENERIC;
+    const visibility = this.getVisibility(purpose, dto.visibility as MediaVisibility | undefined);
     const mediaType = this.detectTypeFromKey(dto.storageKey);
     const baseUrl = this.buildPublicFileUrl(dto.storageKey);
     const asset = await this.mediaModel.create({

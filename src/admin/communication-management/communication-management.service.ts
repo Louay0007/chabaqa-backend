@@ -1390,7 +1390,7 @@ export class CommunicationManagementService {
     // Update fields
     if (dto.name !== undefined) template.name = dto.name;
     if (dto.description !== undefined) template.description = dto.description;
-    if (dto.category !== undefined) template.category = dto.category;
+    if (dto.category !== undefined) template.category = dto.category as TemplateCategory;
     if (dto.subject !== undefined) template.subject = dto.subject;
     if (dto.content !== undefined) template.content = dto.content;
     if (dto.isActive !== undefined) template.isActive = dto.isActive;

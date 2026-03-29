@@ -400,7 +400,7 @@ export class CommunityManagementController {
   ) {
     const result = await this.communityManagementService.getCommunityAnalytics(
       communityId,
-      period || TimePeriod.LAST_30_DAYS,
+      (period || TimePeriod.LAST_30_DAYS) as TimePeriod,
       req.user.id,
       req.ip || req.socket?.remoteAddress || 'unknown',
       req.get('user-agent') || 'unknown'
@@ -499,7 +499,7 @@ export class CommunityManagementController {
   ) {
     const result = await this.communityManagementService.getCommunityAnalytics(
       communityId,
-      period,
+      period as TimePeriod,
       req.user.id,
       req.ip || req.socket?.remoteAddress || 'unknown',
       req.get('user-agent') || 'unknown'
@@ -566,7 +566,7 @@ export class CommunityManagementController {
   ) {
     const result = await this.communityManagementService.getDetailedCommunityAnalytics(
       communityId,
-      period,
+      period as TimePeriod,
       startDate ? new Date(startDate) : undefined,
       endDate ? new Date(endDate) : undefined,
       req.user.id,
@@ -675,7 +675,7 @@ export class CommunityManagementController {
     const result = await this.communityManagementService.compareCommunities(
       communityAId,
       communityBId,
-      period,
+      period as TimePeriod,
       req.user.id,
       req.ip || req.socket?.remoteAddress || 'unknown',
       req.get('user-agent') || 'unknown'

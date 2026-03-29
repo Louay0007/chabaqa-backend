@@ -66,7 +66,7 @@ export class SubscriptionController {
   @ApiBody({ schema: { type: 'object', properties: { tier: { type: 'string', enum: Object.values(PlanTier) } }, required: ['tier'] } })
   async upgrade(@Request() req: any, @Body('tier') tier: string) {
     const creatorId = req.user._id || req.user.sub;
-    return this.subscriptionService.upgradePlan(creatorId, tier);
+    return this.subscriptionService.upgradePlan(creatorId, tier as PlanTier);
   }
 
   @Post('cancel')
@@ -151,7 +151,7 @@ export class SubscriptionController {
   @ApiOperation({ summary: 'Get a specific subscription plan by tier' })
   @ApiResponse({ status: 200, type: SubscriptionPlanDto })
   async getPlanByTier(@Param('tier') tier: string): Promise<SubscriptionPlanDto> {
-    return this.subscriptionService.getPlanByTier(tier);
+    return this.subscriptionService.getPlanByTier(tier as PlanTier);
   }
 
   @Put('plans/:tier')
@@ -164,7 +164,7 @@ export class SubscriptionController {
     @Param('tier') tier: string,
     @Body() updatePlanDto: UpdateSubscriptionDto
   ): Promise<SubscriptionPlanDto> {
-    return this.subscriptionService.updatePlan(tier, updatePlanDto);
+    return this.subscriptionService.updatePlan(tier as PlanTier, updatePlanDto);
   }
 
   @Delete('plans/:tier')
@@ -173,7 +173,7 @@ export class SubscriptionController {
   @ApiOperation({ summary: 'Delete a subscription plan' })
   @ApiResponse({ status: 200, description: 'Plan deleted successfully' })
   async deletePlan(@Param('tier') tier: string): Promise<{ message: string }> {
-    return this.subscriptionService.deletePlan(tier);
+    return this.subscriptionService.deletePlan(tier as PlanTier);
   }
 
   @Post('export')

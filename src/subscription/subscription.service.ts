@@ -906,7 +906,7 @@ export class SubscriptionService {
       this.logger.log(`Usage recorded: ${JSON.stringify(usageEvent)}`);
 
       // Check if usage exceeds plan limits
-      await this.checkUsageLimits(subscription, recordUsageDto.metricType, recordUsageDto.value);
+      await this.checkUsageLimits(subscription, recordUsageDto.metricType as UsageMetricType, recordUsageDto.value);
 
       return { message: 'Usage recorded successfully' };
     } catch (error) {

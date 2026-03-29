@@ -415,7 +415,7 @@ export class UserService {
         throw new BadRequestException('Aucun mot de passe local defini. Utilisez la reinitialisation de mot de passe.');
       }
 
-      const passwordOk = await this.verifyPassword(deleteAccountDto.currentPassword, userPassword);
+      const passwordOk = await this.verifyPassword(deleteAccountDto.currentPassword || '', userPassword);
       if (!passwordOk) {
         throw new UnauthorizedException('Mot de passe actuel incorrect');
       }

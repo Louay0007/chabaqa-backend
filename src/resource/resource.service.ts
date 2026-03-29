@@ -1,7 +1,7 @@
 import { Injectable, BadRequestException, ConflictException, NotFoundException, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { Resource, ResourceDocument, ResourceType, ArticleContent, VideoContent, GuideContent } from '../schema/resource.schema';
+import { Resource, ResourceDocument, ResourceType, ArticleContent, VideoContent, GuideContent, ContentElement, GuideSection } from '../schema/resource.schema';
 import { CreateResourceDto, CreateArticleContentDto, CreateVideoContentDto, CreateGuideContentDto } from './dto/create-resource.dto';
 
 /**
@@ -25,7 +25,7 @@ export class ResourceService {
   ): Promise<ResourceDocument> {
     try {
       // Validation conditionnelle du contenu selon le type
-      this.validateContentByType(createResourceDto.type, createResourceDto.content);
+      this.validateContentByType(createResourceDto.type as ResourceType, createResourceDto.content);
 
       // Génération du slug
       const slug = createResourceDto.slug || this.generateSlug(createResourceDto.titre);
@@ -42,7 +42,7 @@ export class ResourceService {
         communityId: createResourceDto.communityId 
           ? new Types.ObjectId(createResourceDto.communityId) 
           : undefined,
-        content: this.processContent(createResourceDto.type, createResourceDto.content),
+        content: this.processContent(createResourceDto.type as ResourceType, createResourceDto.content),
         // Dates de création et mise à jour seront gérées par timestamps
       };
 
@@ -212,7 +212,7 @@ export class ResourceService {
     const excerpt = content.excerpt || this.generateExcerpt(sortedElements);
 
     return {
-      elements: sortedElements,
+      elements: sortedElements as ContentElement[],
       excerpt,
       tags: content.tags || [],
       seoMetadata: content.seoMetadata || {}
@@ -237,7 +237,7 @@ export class ResourceService {
       quality: content.quality,
       subtitles: content.subtitles || [],
       videoMetadata: content.videoMetadata || {},
-      description: processedDescription,
+      description: processedDescription as ContentElement[],
       chapters: content.chapters || []
     };
   }
@@ -279,9 +279,9 @@ export class ResourceService {
     })) || [];
 
     return {
-      sections: sortedSections,
-      introduction: processedIntroduction,
-      conclusion: processedConclusion,
+      sections: sortedSections as GuideSection[],
+      introduction: processedIntroduction as ContentElement[],
+      conclusion: processedConclusion as ContentElement[],
       guideMetadata: content.guideMetadata || {}
     };
   }
