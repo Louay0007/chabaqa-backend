@@ -109,17 +109,16 @@ export class AnalyticsScheduler implements OnModuleInit {
         const from = weekStart;
         const to = new Date();
 
-        const overview = await this.analyticsService.getOverview(creatorId, from, to);
-        const ovData = overview?.overview ?? overview ?? {};
+        const ovData = await this.analyticsService.getOverview(creatorId, from, to);
 
         const highlights = [
-          { metric: 'views', value: ovData.totalViews ?? 0, change: 0 },
-          { metric: 'completes', value: ovData.totalCompletes ?? 0, change: 0 },
-          { metric: 'revenue', value: ovData.totalRevenue ?? 0, change: 0 },
-          { metric: 'uniqueUsers', value: ovData.totalUniqueUsers ?? 0, change: 0 },
+          { metric: 'views', value: ovData?.views ?? 0, change: 0 },
+          { metric: 'completes', value: ovData?.completes ?? 0, change: 0 },
+          { metric: 'revenue', value: ovData?.revenue ?? 0, change: 0 },
+          { metric: 'starts', value: ovData?.starts ?? 0, change: 0 },
         ];
 
-        const summary = `This week you had ${ovData.totalViews ?? 0} views, ${ovData.totalCompletes ?? 0} completions, and earned ${ovData.totalRevenue ?? 0} TND in revenue across all your content.`;
+        const summary = `This week you had ${ovData?.views ?? 0} views, ${ovData?.completes ?? 0} completions, and ${ovData?.starts ?? 0} starts across all your content.`;
 
         await this.weeklyReportModel.findOneAndUpdate(
           { creatorId: new Types.ObjectId(creatorId), weekStart },
