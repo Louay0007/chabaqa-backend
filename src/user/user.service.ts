@@ -402,19 +402,23 @@ export class UserService {
     }
 
     const userObjectId = new Types.ObjectId(normalizedId);
-    const user = await this.userModel.findById(userObjectId).select('+password');
+    const user = await this.userModel.findById(userObjectId).select('+password +hasLocalPassword');
     if (!user) {
       throw new NotFoundException(`User #${normalizedId} not found`);
     }
 
-    const userPassword = String((user as any).password || '');
-    if (!userPassword) {
-      throw new BadRequestException('Aucun mot de passe local defini. Utilisez la reinitialisation de mot de passe.');
-    }
+    const hasLocalPassword = (user as any).hasLocalPassword !== false;
 
-    const passwordOk = await this.verifyPassword(deleteAccountDto.currentPassword, userPassword);
-    if (!passwordOk) {
-      throw new UnauthorizedException('Mot de passe actuel incorrect');
+    if (hasLocalPassword) {
+      const userPassword = String((user as any).password || '');
+      if (!userPassword) {
+        throw new BadRequestException('Aucun mot de passe local defini. Utilisez la reinitialisation de mot de passe.');
+      }
+
+      const passwordOk = await this.verifyPassword(deleteAccountDto.currentPassword, userPassword);
+      if (!passwordOk) {
+        throw new UnauthorizedException('Mot de passe actuel incorrect');
+      }
     }
 
     console.log(`🗑️ [DELETE ACCOUNT] Starting deletion for user ${normalizedId}`);
@@ -711,28 +715,39 @@ export class UserService {
 
   // update user password
   async updateUserPassword(id: string, changePasswordDto: ChangePasswordDto): Promise<void> {
-    const user = await this.userModel.findById(id).select('+password');
+    const user = await this.userModel.findById(id).select('+password +authProvider +hasLocalPassword');
     if (!user) {
       throw new NotFoundException(`User #${id} not found`);
     }
 
     const userPassword = String((user as any).password || '');
-    if (!userPassword) {
-      throw new BadRequestException('Aucun mot de passe local defini. Utilisez la reinitialisation de mot de passe.');
-    }
+    const hasLocalPassword = (user as any).hasLocalPassword !== false;
 
-    const currentPasswordValid = await this.verifyPassword(changePasswordDto.currentPassword, userPassword);
-    if (!currentPasswordValid) {
-      throw new UnauthorizedException('Mot de passe actuel incorrect');
-    }
+    if (hasLocalPassword) {
+      // User has a local password -> currentPassword is REQUIRED
+      if (!changePasswordDto.currentPassword) {
+        throw new BadRequestException('Le mot de passe actuel est requis');
+      }
+      if (!userPassword) {
+        throw new BadRequestException('Aucun mot de passe local defini. Utilisez la reinitialisation de mot de passe.');
+      }
 
-    const isSamePassword = await this.verifyPassword(changePasswordDto.newPassword, userPassword);
-    if (isSamePassword) {
-      throw new BadRequestException('Le nouveau mot de passe doit etre different du mot de passe actuel');
+      const currentPasswordValid = await this.verifyPassword(changePasswordDto.currentPassword, userPassword);
+      if (!currentPasswordValid) {
+        throw new UnauthorizedException('Mot de passe actuel incorrect');
+      }
+
+      const isSamePassword = await this.verifyPassword(changePasswordDto.newPassword, userPassword);
+      if (isSamePassword) {
+        throw new BadRequestException('Le nouveau mot de passe doit etre different du mot de passe actuel');
+      }
     }
 
     const hashedPassword = await this.hashPassword(changePasswordDto.newPassword);
-    await this.userModel.findByIdAndUpdate(id, { password: hashedPassword });
+    await this.userModel.findByIdAndUpdate(id, {
+      password: hashedPassword,
+      hasLocalPassword: true,
+    });
   }
 
   /**

@@ -4,7 +4,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import * as bcrypt from 'bcryptjs';
 import { OAuth2Client } from 'google-auth-library';
-import { User, UserDocument } from '../schema/user.schema';
+import { User, UserDocument, AuthProvider } from '../schema/user.schema';
 import { LoginDto } from '../dto-user/login.dto';
 import { LoginResponseDto } from '../dto-user/login-response.dto';
 import { EmailService } from '../common/services/email.service';
@@ -99,6 +99,8 @@ export class AuthService {
       role: user.role,
       avatar: this.uploadService.ensureAbsoluteUrl(user.profile_picture || user.photo_profil || ''),
       createdAt: user.createdAt,
+      authProvider: (user as any).authProvider || 'local',
+      hasLocalPassword: (user as any).hasLocalPassword !== false,
     };
   }
 
@@ -143,6 +145,8 @@ export class AuthService {
         email: normalizedEmail,
         role: 'user',
         password: passwordHash,
+        authProvider: AuthProvider.GOOGLE,
+        hasLocalPassword: false,
       });
     }
 

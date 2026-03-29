@@ -11,6 +11,14 @@ export enum UserRole {
 }
 
 /**
+ * Enumération des fournisseurs d'authentification
+ */
+export enum AuthProvider {
+  LOCAL = 'local',
+  GOOGLE = 'google',
+}
+
+/**
  * Interface pour les méthodes d'instance du document User
  */
 export interface UserDocument extends Document {
@@ -19,6 +27,8 @@ export interface UserDocument extends Document {
   username: string;
   email: string;
   password: string;
+  authProvider: AuthProvider;
+  hasLocalPassword: boolean;
   role: UserRole;
   createdAt: Date;
   createdCommunities: Types.ObjectId[];
@@ -127,6 +137,24 @@ export class User {
     minlength: 8
   })
   password: string;
+
+  /**
+   * Fournisseur d'authentification utilisé pour créer ce compte
+   */
+  @Prop({
+    type: String,
+    enum: AuthProvider,
+    default: AuthProvider.LOCAL,
+  })
+  authProvider: AuthProvider;
+
+  /**
+   * Indique si l'utilisateur a défini un mot de passe local qu'il connaît.
+   * Les utilisateurs Google OAuth commencent avec hasLocalPassword=false (ils ont un hash aléatoire).
+   * Une fois qu'ils définissent un mot de passe via change-password, cela passe à true.
+   */
+  @Prop({ default: true })
+  hasLocalPassword: boolean;
 
   /**
    * Rôle de l'utilisateur dans le système
