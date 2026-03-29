@@ -339,6 +339,7 @@ export class EventService {
     attendee: {
       name: string;
       email: string;
+      profilePicture?: string;
       ticketType: string;
       registeredAt: string;
       checkedIn: boolean;
@@ -401,6 +402,7 @@ export class EventService {
         registeredAt: attendee.registeredAt?.toISOString?.() || String(attendee.registeredAt),
         checkedIn: Boolean(attendee.checkedIn),
         checkedInAt: attendee.checkedInAt?.toISOString?.() || undefined,
+        profilePicture: (user as any)?.profilePicture || undefined,
       },
       ticketInfo: ticket ? {
         name: ticket.name,
