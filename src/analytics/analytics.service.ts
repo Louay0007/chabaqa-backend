@@ -2,6 +2,8 @@ import { ForbiddenException, Injectable, Logger, NotFoundException } from '@nest
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { AnalyticsDaily, AnalyticsDailyDocument } from '../schema/analytics-daily.schema';
+import { AnalyticsRetention, AnalyticsRetentionDocument } from '../schema/analytics-retention.schema';
+import { AnalyticsWeeklyReport, AnalyticsWeeklyReportDocument } from '../schema/analytics-weekly-report.schema';
 import { SubscriptionService } from '../subscription/subscription.service';
 import { PlanTier } from '../schema/plan.schema';
 import { TrackingAction, TrackingActionType } from '../schema/content-tracking.schema';
@@ -23,6 +25,8 @@ export class AnalyticsService {
 
   constructor(
     @InjectModel(AnalyticsDaily.name) private readonly dailyModel: Model<AnalyticsDailyDocument>,
+    @InjectModel(AnalyticsRetention.name) private readonly retentionModel: Model<AnalyticsRetentionDocument>,
+    @InjectModel(AnalyticsWeeklyReport.name) private readonly weeklyReportModel: Model<AnalyticsWeeklyReportDocument>,
     private readonly subscriptionService: SubscriptionService,
     @InjectConnection() private readonly dbConnection: Connection,
     private readonly ga4ReportingService: Ga4ReportingService,
@@ -3695,4 +3699,295 @@ export class AnalyticsService {
       } : 'No courses found'
     };
   }
+
+  // ═══════════════════════════════════════════════════════════
+  // Phase 3: New Analytics Endpoints
+  // ═══════════════════════════════════════════════════════════
+
+  async getRevenue(creatorId: string, from: Date, to: Date, communityId?: string, communitySlug?: string, contentType?: string, contentId?: string) {
+    const { from: clampedFrom, to: clampedTo } = await this.clampDateRangeForPlan(creatorId, from, to);
+    const cacheKeyStr = this.cacheKey(creatorId, clampedFrom.toISOString(), clampedTo.toISOString(), `revenue:${contentType || 'all'}:${contentId || 'all'}`);
+    const cached = await this.getCache<any>(cacheKeyStr);
+    if (cached) return cached;
+
+    const creatorObjId = this.getCreatorObjectId(creatorId);
+    const { communityIdStrings } = await this.resolveCommunityScope(creatorId, communityId, communitySlug);
+
+    const match: Record<string, any> = {
+      creatorId: creatorObjId,
+      date: { $gte: clampedFrom, $lte: clampedTo },
+      revenueAttributed: { $gt: 0 },
+    };
+    if (communityIdStrings.length > 0) this.setDailyCommunityFilter(match, communityIdStrings);
+    if (contentType) match.contentType = contentType;
+    if (contentId) match.contentId = contentId;
+
+    const pipeline: any[] = [
+      { $match: match },
+      {
+        $group: {
+          _id: { contentType: '$contentType', contentId: '$contentId' },
+          revenue: { $sum: '$revenueAttributed' },
+          views: { $sum: '$views' },
+          starts: { $sum: '$starts' },
+          completes: { $sum: '$completes' },
+          currency: { $first: '$currency' },
+        },
+      },
+      { $sort: { revenue: -1 } },
+    ];
+
+    const byContent = await this.dailyModel.aggregate(pipeline).exec();
+
+    const trendPipeline: any[] = [
+      { $match: match },
+      {
+        $group: {
+          _id: { $dateToString: { format: '%Y-%m-%d', date: '$date' } },
+          revenue: { $sum: '$revenueAttributed' },
+          orders: { $sum: '$completes' },
+        },
+      },
+      { $sort: { _id: 1 } },
+    ];
+
+    const trend = await this.dailyModel.aggregate(trendPipeline).exec();
+    const totalRevenue = byContent.reduce((sum, r) => sum + (r.revenue || 0), 0);
+    const totalOrders = byContent.reduce((sum, r) => sum + (r.completes || 0), 0);
+
+    const result = {
+      totalRevenue,
+      currency: byContent[0]?.currency || 'TND',
+      totalOrders,
+      avgOrderValue: totalOrders > 0 ? Math.round((totalRevenue / totalOrders) * 100) / 100 : 0,
+      byContent: byContent.map((r) => ({
+        contentType: r._id.contentType,
+        contentId: r._id.contentId,
+        revenue: r.revenue,
+        views: r.views,
+        starts: r.starts,
+        completes: r.completes,
+        revenueShare: totalRevenue > 0 ? Math.round((r.revenue / totalRevenue) * 1000) / 10 : 0,
+      })),
+      trend: trend.map((t) => ({ date: t._id, revenue: t.revenue, orders: t.orders })),
+    };
+
+    this.setCache(cacheKeyStr, result, 5 * 60 * 1000);
+    return result;
+  }
+
+  async getGeography(creatorId: string, from: Date, to: Date, granularity: 'country' | 'city', communityId?: string, communitySlug?: string) {
+    const { from: clampedFrom, to: clampedTo } = await this.clampDateRangeForPlan(creatorId, from, to);
+    const cacheKeyStr = this.cacheKey(creatorId, clampedFrom.toISOString(), clampedTo.toISOString(), `geo:${granularity}`);
+    const cached = await this.getCache<any>(cacheKeyStr);
+    if (cached) return cached;
+
+    const creatorObjId = this.getCreatorObjectId(creatorId);
+    const { communityIdStrings } = await this.resolveCommunityScope(creatorId, communityId, communitySlug);
+
+    const match: Record<string, any> = {
+      creatorId: creatorObjId,
+      date: { $gte: clampedFrom, $lte: clampedTo },
+    };
+    if (communityIdStrings.length > 0) this.setDailyCommunityFilter(match, communityIdStrings);
+
+    const pipeline: any[] = [
+      { $match: match },
+      {
+        $project: {
+          countryViews: { $objectToArray: { $ifNull: ['$countryViews', {}] } },
+          views: 1,
+        },
+      },
+      { $unwind: { path: '$countryViews', preserveNullAndEmptyArrays: false } },
+      {
+        $group: {
+          _id: '$countryViews.k',
+          views: { $sum: '$countryViews.v' },
+        },
+      },
+      { $sort: { views: -1 } },
+    ];
+
+    const rows = await this.dailyModel.aggregate(pipeline).exec();
+    const totalViews = rows.reduce((s, r) => s + r.views, 0);
+
+    const result = {
+      granularity,
+      data: rows.map((r) => ({
+        code: r._id,
+        name: r._id,
+        views: r.views,
+        share: totalViews > 0 ? Math.round((r.views / totalViews) * 1000) / 10 : 0,
+      })),
+    };
+
+    this.setCache(cacheKeyStr, result, 30 * 60 * 1000);
+    return result;
+  }
+
+  async getRetention(creatorId: string, from: Date, to: Date, period: 'weekly' | 'monthly', communityId?: string) {
+    const { from: clampedFrom, to: clampedTo } = await this.clampDateRangeForPlan(creatorId, from, to);
+    const cacheKeyStr = this.cacheKey(creatorId, clampedFrom.toISOString(), clampedTo.toISOString(), `retention:${period}`);
+    const cached = await this.getCache<any>(cacheKeyStr);
+    if (cached) return cached;
+
+    const creatorObjId = this.getCreatorObjectId(creatorId);
+    const match: Record<string, any> = {
+      creatorId: creatorObjId,
+      period,
+      cohortStart: { $gte: clampedFrom, $lte: clampedTo },
+    };
+    if (communityId) match.communityId = communityId;
+
+    const rows = await this.retentionModel.find(match).sort({ cohortStart: -1, week: 1 }).lean();
+
+    const cohortMap = new Map<string, { cohortLabel: string; cohortStart: string; cohortSize: number; weeks: any[] }>();
+    for (const row of rows) {
+      const key = row.cohortStart.toISOString();
+      if (!cohortMap.has(key)) {
+        cohortMap.set(key, {
+          cohortLabel: period === 'weekly' ? \`Week of \${row.cohortStart.toISOString().slice(0, 10)}\` : row.cohortStart.toISOString().slice(0, 7),
+          cohortStart: row.cohortStart.toISOString().slice(0, 10),
+          cohortSize: row.cohortSize,
+          weeks: [],
+        });
+      }
+      cohortMap.get(key)!.weeks.push({ week: row.week, retained: row.retained, rate: row.retentionRate });
+    }
+
+    const result = { cohorts: Array.from(cohortMap.values()) };
+    this.setCache(cacheKeyStr, result, 60 * 60 * 1000);
+    return result;
+  }
+
+  async getCompare(creatorId: string, from: Date, to: Date, compareFrom: Date, compareTo: Date, metric: string, communityId?: string, communitySlug?: string) {
+    const { from: clampedFrom, to: clampedTo } = await this.clampDateRangeForPlan(creatorId, from, to);
+    const creatorObjId = this.getCreatorObjectId(creatorId);
+    const { communityIdStrings } = await this.resolveCommunityScope(creatorId, communityId, communitySlug);
+
+    const aggregateForRange = async (rangeFrom: Date, rangeTo: Date) => {
+      const match: Record<string, any> = {
+        creatorId: creatorObjId,
+        date: { $gte: rangeFrom, $lte: rangeTo },
+      };
+      if (communityIdStrings.length > 0) this.setDailyCommunityFilter(match, communityIdStrings);
+
+      const metricField = \`$\${metric}\`;
+      const pipeline: any[] = [
+        { $match: match },
+        {
+          $group: {
+            _id: { $dateToString: { format: '%Y-%m-%d', date: '$date' } },
+            value: { $sum: metricField },
+          },
+        },
+        { $sort: { _id: 1 } },
+      ];
+      return this.dailyModel.aggregate(pipeline).exec();
+    };
+
+    const [currentTrend, previousTrend] = await Promise.all([
+      aggregateForRange(clampedFrom, clampedTo),
+      aggregateForRange(compareFrom, compareTo),
+    ]);
+
+    const currentTotal = currentTrend.reduce((s, r) => s + (r.value || 0), 0);
+    const previousTotal = previousTrend.reduce((s, r) => s + (r.value || 0), 0);
+    const change = previousTotal > 0 ? Math.round(((currentTotal - previousTotal) / previousTotal) * 1000) / 10 : 0;
+
+    return {
+      metric,
+      current: { value: currentTotal, trend: currentTrend.map((t) => ({ date: t._id, value: t.value })) },
+      previous: { value: previousTotal, trend: previousTrend.map((t) => ({ date: t._id, value: t.value })) },
+      change,
+      changeDirection: change >= 0 ? 'up' : 'down',
+    };
+  }
+
+  async getSessionQuality(creatorId: string, sessionId: string, from: Date, to: Date) {
+    const { from: clampedFrom, to: clampedTo } = await this.clampDateRangeForPlan(creatorId, from, to);
+    const creatorObjId = this.getCreatorObjectId(creatorId);
+
+    const match: Record<string, any> = {
+      creatorId: creatorObjId,
+      contentType: 'session',
+      contentId: sessionId,
+      date: { $gte: clampedFrom, $lte: clampedTo },
+    };
+
+    const pipeline: any[] = [
+      { $match: match },
+      {
+        $group: {
+          _id: null,
+          totalBookings: { $sum: '$starts' },
+          showUps: { $sum: '$sessionShowUps' },
+          noShows: { $sum: '$sessionNoShows' },
+          rebookings: { $sum: '$sessionRebookings' },
+          avgRating: { $avg: '$avgRating' },
+          completes: { $sum: '$completes' },
+          revenue: { $sum: '$revenueAttributed' },
+        },
+      },
+    ];
+
+    const [agg] = await this.dailyModel.aggregate(pipeline).exec();
+    const totalBookings = agg?.totalBookings || 0;
+
+    return {
+      sessionId,
+      totalBookings,
+      showUpRate: totalBookings > 0 ? Math.round((agg?.showUps / totalBookings) * 1000) / 10 : 0,
+      noShowRate: totalBookings > 0 ? Math.round((agg?.noShows / totalBookings) * 1000) / 10 : 0,
+      rebookingRate: totalBookings > 0 ? Math.round((agg?.rebookings / totalBookings) * 1000) / 10 : 0,
+      avgRating: Math.round((agg?.avgRating || 0) * 10) / 10,
+      completedSessions: agg?.completes || 0,
+      revenue: agg?.revenue || 0,
+    };
+  }
+
+  async getChallengeStreaks(creatorId: string, challengeId: string, from: Date, to: Date) {
+    const { from: clampedFrom, to: clampedTo } = await this.clampDateRangeForPlan(creatorId, from, to);
+    const creatorObjId = this.getCreatorObjectId(creatorId);
+
+    const match: Record<string, any> = {
+      creatorId: creatorObjId,
+      contentType: 'challenge',
+      contentId: challengeId,
+      date: { $gte: clampedFrom, $lte: clampedTo },
+    };
+
+    const pipeline: any[] = [
+      { $match: match },
+      {
+        $group: {
+          _id: null,
+          totalParticipants: { $sum: '$uniqueUsers' },
+          totalCompletes: { $sum: '$completes' },
+          totalStarts: { $sum: '$starts' },
+          activeStreaks: { $max: '$activeStreaks' },
+          maxStreakDays: { $max: '$maxStreakDays' },
+        },
+      },
+    ];
+
+    const [agg] = await this.dailyModel.aggregate(pipeline).exec();
+    const participants = agg?.totalParticipants || 0;
+
+    return {
+      challengeId,
+      activeChallengers: participants,
+      dailyActiveRate: participants > 0 ? Math.round(((agg?.activeStreaks || 0) / participants) * 1000) / 10 : 0,
+      avgStreakDays: agg?.activeStreaks ? Math.round((agg.maxStreakDays || 0) / Math.max(agg.activeStreaks, 1) * 10) / 10 : 0,
+      maxStreakDays: agg?.maxStreakDays || 0,
+      completionRate: agg?.totalStarts > 0 ? Math.round(((agg?.totalCompletes || 0) / agg.totalStarts) * 1000) / 10 : 0,
+    };
+  }
+
+  async getLatestWeeklyReport(creatorId: string) {
+    const creatorObjId = this.getCreatorObjectId(creatorId);
+    return this.weeklyReportModel.findOne({ creatorId: creatorObjId }).sort({ weekStart: -1 }).lean();
+  }
+
 }

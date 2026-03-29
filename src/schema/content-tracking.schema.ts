@@ -31,7 +31,18 @@ export enum TrackingActionType {
   DOWNLOAD = 'download',
   BOOKMARK = 'bookmark',
   COMMENT = 'comment',
-  RATE = 'rate'
+  RATE = 'rate',
+  PROGRESS = 'progress',
+  SESSION_SHOW = 'session_show',
+  SESSION_NOSHOW = 'session_noshow',
+  SESSION_REBOOK = 'session_rebook',
+  CHALLENGE_STREAK = 'challenge_streak',
+  AFFILIATE_CLICK = 'affiliate_click',
+  AFFILIATE_CONVERT = 'affiliate_convert',
+  EMAIL_OPEN = 'email_open',
+  EMAIL_CLICK = 'email_click',
+  AB_IMPRESSION = 'ab_impression',
+  AB_CONVERT = 'ab_convert',
 }
 
 /**

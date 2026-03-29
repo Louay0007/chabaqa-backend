@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Post, Query, UseGuards, Req } from '@nestjs/common';
+import { BadRequestException, Body, Controller, ForbiddenException, Get, Param, Post, Query, UseGuards, Req } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AnalyticsService } from './analytics.service';
@@ -479,6 +479,168 @@ export class AnalyticsController {
     const { fromDate, toDate } = this.parseDateRange(from, to);
     const data = await this.analyticsService.getCourseAnalytics(creatorId, courseId, fromDate, toDate);
     return { success: true, data };
+  }
+
+
+  // ═══════════════════════════════════════════════════════
+  // Phase 3: New Endpoints
+  // ═══════════════════════════════════════════════════════
+
+  @Get('revenue')
+  @UseGuards(CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.ANALYTICS_VIEW)
+  @OptionalCommunityPermission()
+  @ApiOperation({ summary: 'Revenue attribution per content (Growth+)' })
+  @ApiQuery({ name: 'from', required: false })
+  @ApiQuery({ name: 'to', required: false })
+  @ApiQuery({ name: 'communityId', required: false })
+  @ApiQuery({ name: 'communitySlug', required: false })
+  @ApiQuery({ name: 'contentType', required: false })
+  @ApiQuery({ name: 'contentId', required: false })
+  async getRevenue(
+    @Req() req,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('communityId') communityId?: string,
+    @Query('communitySlug') communitySlug?: string,
+    @Query('contentType') contentType?: string,
+    @Query('contentId') contentId?: string,
+  ) {
+    const user = req.user;
+    const creatorId = user.sub || user._id || user.userId;
+    const { fromDate, toDate } = this.parseDateRange(from, to);
+    const filters = this.parseCommunityFilters(communityId, communitySlug);
+    return this.analyticsService.getRevenue(creatorId, fromDate, toDate, filters.communityId, filters.communitySlug, contentType?.trim(), contentId?.trim());
+  }
+
+  @Get('geography')
+  @UseGuards(CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.ANALYTICS_VIEW)
+  @OptionalCommunityPermission()
+  @ApiOperation({ summary: 'Geographic breakdown (Growth+)' })
+  @ApiQuery({ name: 'from', required: false })
+  @ApiQuery({ name: 'to', required: false })
+  @ApiQuery({ name: 'communityId', required: false })
+  @ApiQuery({ name: 'communitySlug', required: false })
+  @ApiQuery({ name: 'granularity', required: false, enum: ['country', 'city'] })
+  async getGeography(
+    @Req() req,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('communityId') communityId?: string,
+    @Query('communitySlug') communitySlug?: string,
+    @Query('granularity') granularity?: string,
+  ) {
+    const user = req.user;
+    const creatorId = user.sub || user._id || user.userId;
+    const { fromDate, toDate } = this.parseDateRange(from, to);
+    const filters = this.parseCommunityFilters(communityId, communitySlug);
+    const gran = (granularity === 'city' ? 'city' : 'country') as 'country' | 'city';
+    return this.analyticsService.getGeography(creatorId, fromDate, toDate, gran, filters.communityId, filters.communitySlug);
+  }
+
+  @Get('retention')
+  @UseGuards(CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.ANALYTICS_VIEW)
+  @OptionalCommunityPermission()
+  @ApiOperation({ summary: 'Retention cohort analysis (Growth+)' })
+  @ApiQuery({ name: 'from', required: false })
+  @ApiQuery({ name: 'to', required: false })
+  @ApiQuery({ name: 'period', required: false, enum: ['weekly', 'monthly'] })
+  @ApiQuery({ name: 'communityId', required: false })
+  async getRetention(
+    @Req() req,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('period') period?: string,
+    @Query('communityId') communityId?: string,
+  ) {
+    const user = req.user;
+    const creatorId = user.sub || user._id || user.userId;
+    const { fromDate, toDate } = this.parseDateRange(from, to);
+    const p = (period === 'monthly' ? 'monthly' : 'weekly') as 'weekly' | 'monthly';
+    return this.analyticsService.getRetention(creatorId, fromDate, toDate, p, communityId?.trim());
+  }
+
+  @Get('compare')
+  @UseGuards(CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.ANALYTICS_VIEW)
+  @OptionalCommunityPermission()
+  @ApiOperation({ summary: 'Comparative period analysis (Growth+)' })
+  @ApiQuery({ name: 'from', required: true })
+  @ApiQuery({ name: 'to', required: true })
+  @ApiQuery({ name: 'compareFrom', required: true })
+  @ApiQuery({ name: 'compareTo', required: true })
+  @ApiQuery({ name: 'metric', required: true, enum: ['views', 'revenue', 'completes', 'uniqueUsers', 'starts', 'watchTime'] })
+  @ApiQuery({ name: 'communityId', required: false })
+  @ApiQuery({ name: 'communitySlug', required: false })
+  async getCompare(
+    @Req() req,
+    @Query('from') from: string,
+    @Query('to') to: string,
+    @Query('compareFrom') compareFrom: string,
+    @Query('compareTo') compareTo: string,
+    @Query('metric') metric: string,
+    @Query('communityId') communityId?: string,
+    @Query('communitySlug') communitySlug?: string,
+  ) {
+    const user = req.user;
+    const creatorId = user.sub || user._id || user.userId;
+    const { fromDate, toDate } = this.parseDateRange(from, to);
+    const compFrom = new Date(compareFrom);
+    const compTo = new Date(compareTo);
+    if (Number.isNaN(compFrom.getTime()) || Number.isNaN(compTo.getTime())) {
+      throw new BadRequestException('Invalid compare date parameters');
+    }
+    const allowed = ['views', 'revenueAttributed', 'completes', 'uniqueUsers', 'starts', 'watchTime'];
+    const metricField = metric === 'revenue' ? 'revenueAttributed' : metric;
+    if (!allowed.includes(metricField)) {
+      throw new BadRequestException('Invalid metric parameter');
+    }
+    const filters = this.parseCommunityFilters(communityId, communitySlug);
+    return this.analyticsService.getCompare(creatorId, fromDate, toDate, compFrom, compTo, metricField, filters.communityId, filters.communitySlug);
+  }
+
+  @Get('sessions/:sessionId/quality')
+  @ApiOperation({ summary: 'Session quality metrics (Growth+)' })
+  @ApiQuery({ name: 'from', required: false })
+  @ApiQuery({ name: 'to', required: false })
+  async getSessionQuality(
+    @Req() req,
+    @Param('sessionId') sessionId: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    const user = req.user;
+    const creatorId = user.sub || user._id || user.userId;
+    if (!sessionId?.trim()) throw new BadRequestException('sessionId is required');
+    const { fromDate, toDate } = this.parseDateRange(from, to);
+    return this.analyticsService.getSessionQuality(creatorId, sessionId.trim(), fromDate, toDate);
+  }
+
+  @Get('challenges/:challengeId/streaks')
+  @ApiOperation({ summary: 'Challenge streak analytics (Growth+)' })
+  @ApiQuery({ name: 'from', required: false })
+  @ApiQuery({ name: 'to', required: false })
+  async getChallengeStreaks(
+    @Req() req,
+    @Param('challengeId') challengeId: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    const user = req.user;
+    const creatorId = user.sub || user._id || user.userId;
+    if (!challengeId?.trim()) throw new BadRequestException('challengeId is required');
+    const { fromDate, toDate } = this.parseDateRange(from, to);
+    return this.analyticsService.getChallengeStreaks(creatorId, challengeId.trim(), fromDate, toDate);
+  }
+
+  @Get('weekly-report')
+  @ApiOperation({ summary: 'Latest weekly AI analytics report (Growth+)' })
+  async getWeeklyReport(@Req() req) {
+    const user = req.user;
+    const creatorId = user.sub || user._id || user.userId;
+    return this.analyticsService.getLatestWeeklyReport(creatorId);
   }
 
   @Get('debug-status')

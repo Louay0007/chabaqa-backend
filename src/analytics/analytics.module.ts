@@ -1,6 +1,8 @@
 import { Module, Global } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AnalyticsDaily, AnalyticsDailySchema } from '../schema/analytics-daily.schema';
+import { AnalyticsRetention, AnalyticsRetentionSchema } from '../schema/analytics-retention.schema';
+import { AnalyticsWeeklyReport, AnalyticsWeeklyReportSchema } from '../schema/analytics-weekly-report.schema';
 import { AnalyticsService } from './analytics.service';
 import { AnalyticsController } from './analytics.controller';
 import { SubscriptionModule } from '../subscription/subscription.module';
@@ -20,6 +22,8 @@ import { CreatorInsightsService } from './creator-insights.service';
       { name: 'Cours', schema: CoursSchema },
       { name: 'CourseEnrollment', schema: CourseEnrollmentSchema },
       { name: Subscription.name, schema: SubscriptionSchema },
+      { name: AnalyticsRetention.name, schema: AnalyticsRetentionSchema },
+      { name: AnalyticsWeeklyReport.name, schema: AnalyticsWeeklyReportSchema },
     ]),
   ],
   controllers: [AnalyticsController],
