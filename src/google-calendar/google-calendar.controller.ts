@@ -1,5 +1,6 @@
-import { Controller, Get, Post, Body, Query, Request, UseGuards, HttpCode, HttpStatus, Logger } from '@nestjs/common';
+import { Controller, Get, Post, Body, Query, Request, Res, UseGuards, HttpCode, HttpStatus, Logger } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery, ApiBody } from '@nestjs/swagger';
+import { Response } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { GoogleCalendarService } from './google-calendar.service';
 
@@ -50,6 +51,7 @@ export class GoogleCalendarController {
   /**
    * Handle Google OAuth callback - PUBLIC endpoint (no JWT required)
    * This is called by Google's redirect, so we use the state parameter for user identification
+   * Returns HTML page that signals result to parent window and auto-closes
    */
   @Get('callback')
   @ApiOperation({
@@ -80,16 +82,57 @@ export class GoogleCalendarController {
   @ApiResponse({ status: 400, description: 'Bad request - invalid code or failed to connect' })
   async handleCallbackGet(
     @Query('code') code: string,
-    @Query('state') state: string
-  ): Promise<{ success: boolean; message: string }> {
+    @Query('state') state: string,
+    @Res() res: Response
+  ): Promise<void> {
     this.logger.log(`[handleCallbackGet] Received callback with code: ${code?.substring(0, 10)}..., state (userId): ${state}`);
     
+    // Helper to return HTML result page
+    const sendResultPage = (success: boolean, message: string) => {
+      const eventType = success ? 'GOOGLE_CALENDAR_SUCCESS' : 'GOOGLE_CALENDAR_ERROR';
+      const redirectQs = success ? 'google_success=true' : 'google_error=failed';
+      const safeMessage = message.replace(/'/g, "\\'").replace(/\\/g, '\\\\');
+      
+      res.setHeader('Content-Type', 'text/html');
+      res.setHeader('Cross-Origin-Opener-Policy', 'unsafe-none');
+      res.setHeader('Cross-Origin-Embedder-Policy', 'unsafe-none');
+      res.send(`<!DOCTYPE html>
+<html><head><title>Google Calendar - ${success ? 'Connected' : 'Error'}</title>
+<style>
+  body{font-family:system-ui,sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#f5f5f5}
+  .c{text-align:center;padding:20px}
+  .success{color:#16a34a}
+  .err{color:#dc2626}
+</style>
+</head>
+<body>
+<div class="c">
+<p class="${success ? 'success' : 'err'}">${success ? 'Google Calendar connected successfully!' : message}</p>
+<p>This window should close automatically.</p>
+</div>
+<script>
+  localStorage.removeItem('google_calendar_oauth_pending');
+  localStorage.removeItem('google_calendar_oauth_token');
+  localStorage.setItem('google_calendar_oauth_result',JSON.stringify({type:'${eventType}',message:'${safeMessage}'}));
+  setTimeout(function(){try{window.close()}catch(e){}},1200);
+  setTimeout(function(){window.location.href='/creator/sessions?${redirectQs}'},2500);
+</script>
+</body></html>`);
+    };
+
     if (!code || !state) {
-      throw new Error('Missing code or state parameter');
+      sendResultPage(false, 'Missing code or state parameter');
+      return;
     }
     
-    // State contains the user ID (set in getAuthUrl)
-    return this.googleCalendarService.handleCallback(code, state);
+    try {
+      // State contains the user ID (set in getAuthUrl)
+      const result = await this.googleCalendarService.handleCallback(code, state);
+      sendResultPage(result.success, result.message);
+    } catch (error: any) {
+      this.logger.error(`[handleCallbackGet] Error: ${error.message}`);
+      sendResultPage(false, error.message || 'Failed to connect Google Calendar');
+    }
   }
 
   /**
