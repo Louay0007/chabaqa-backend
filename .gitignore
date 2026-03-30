@@ -57,8 +57,10 @@ tmp/
 temp/
 *.tmp
 
-# Uploads - only videos (keep images)
+# Uploads - ignore all images and videos
 uploads/video/
+uploads/image/
+uploads/images/
 
 
 # Misc
