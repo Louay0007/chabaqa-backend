@@ -90,7 +90,6 @@ export class GoogleCalendarController {
     // Helper to return HTML result page
     const sendResultPage = (success: boolean, message: string) => {
       const eventType = success ? 'GOOGLE_CALENDAR_SUCCESS' : 'GOOGLE_CALENDAR_ERROR';
-      const redirectQs = success ? 'google_success=true' : 'google_error=failed';
       const safeMessage = message.replace(/'/g, "\\'").replace(/\\/g, '\\\\');
       
       res.setHeader('Content-Type', 'text/html');
@@ -101,21 +100,45 @@ export class GoogleCalendarController {
 <style>
   body{font-family:system-ui,sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#f5f5f5}
   .c{text-align:center;padding:20px}
-  .success{color:#16a34a}
-  .err{color:#dc2626}
+  .success{color:#16a34a;font-size:18px;font-weight:600}
+  .err{color:#dc2626;font-size:18px}
+  .sub{color:#666;margin-top:10px}
 </style>
 </head>
 <body>
 <div class="c">
-<p class="${success ? 'success' : 'err'}">${success ? 'Google Calendar connected successfully!' : message}</p>
-<p>This window should close automatically.</p>
+<p class="${success ? 'success' : 'err'}">${success ? '✓ Google Calendar connected successfully!' : message}</p>
+<p class="sub">You can close this window now.</p>
 </div>
 <script>
+(function(){
+  // Signal to parent window via localStorage
+  var result = JSON.stringify({type:'${eventType}',message:'${safeMessage}'});
   localStorage.removeItem('google_calendar_oauth_pending');
   localStorage.removeItem('google_calendar_oauth_token');
-  localStorage.setItem('google_calendar_oauth_result',JSON.stringify({type:'${eventType}',message:'${safeMessage}'}));
-  setTimeout(function(){try{window.close()}catch(e){}},1200);
-  setTimeout(function(){window.location.href='/creator/sessions?${redirectQs}'},2500);
+  
+  // Set result multiple times to ensure storage event fires
+  localStorage.setItem('google_calendar_oauth_result', result);
+  
+  // Force storage event by toggling
+  setTimeout(function(){
+    localStorage.removeItem('google_calendar_oauth_result');
+    localStorage.setItem('google_calendar_oauth_result', result);
+  }, 100);
+  
+  // Try to close window (may not work due to browser security)
+  setTimeout(function(){
+    try { window.close(); } catch(e) {}
+  }, 1500);
+  
+  // Keep trying to close
+  var closeAttempts = 0;
+  var closeInterval = setInterval(function(){
+    closeAttempts++;
+    try { window.close(); } catch(e) {}
+    if (closeAttempts > 10) clearInterval(closeInterval);
+  }, 1000);
+})();
 </script>
 </body></html>`);
     };
