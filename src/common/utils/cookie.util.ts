@@ -37,7 +37,7 @@ export class CookieUtil {
   static readonly ACCESS_TOKEN_CONFIG = {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production', // HTTPS en production
-    sameSite: process.env.NODE_ENV === 'production' ? 'strict' as const : 'lax' as const,
+    sameSite: 'lax' as const,
     maxAge: 2 * 60 * 60 * 1000, // 2 heures (correspond à la durée du JWT)
     path: '/',
     domain: CookieUtil.getCookieDomain(),
@@ -49,7 +49,7 @@ export class CookieUtil {
   static readonly REFRESH_TOKEN_CONFIG = {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production', // HTTPS en production
-    sameSite: process.env.NODE_ENV === 'production' ? 'strict' as const : 'lax' as const,
+    sameSite: 'lax' as const,
     maxAge: 7 * 24 * 60 * 60 * 1000, // 7 jours (correspond à la durée du JWT standard)
     path: '/',
     domain: CookieUtil.getCookieDomain(),
