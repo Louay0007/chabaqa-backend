@@ -67,6 +67,19 @@ export function isCorsOriginAllowed(origin: string | undefined, allowlist: strin
     return true;
   }
 
+  // Allow Expo Go and EAS Update proxy origins used during development
+  if (/^https:\/\/[a-z0-9-]+\.exp\.direct$/.test(normalized)) {
+    return true;
+  }
+
+  // Allow ngrok tunnels (used for local mobile testing)
+  if (/^https:\/\/[a-z0-9-]+\.ngrok(-free)?\.app$/.test(normalized)) {
+    return true;
+  }
+  if (/^https:\/\/[a-z0-9-]+\.ngrok\.io$/.test(normalized)) {
+    return true;
+  }
+
   return allowlist.includes(normalized);
 }
 
