@@ -10,13 +10,28 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { ConfigService } from '@nestjs/config';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PaymentMethodService } from './payment-method.service';
 
 @ApiTags('Payment Methods')
 @Controller('payment-methods')
 export class PaymentMethodController {
-  constructor(private readonly pmService: PaymentMethodService) {}
+  constructor(
+    private readonly pmService: PaymentMethodService,
+    private readonly configService: ConfigService,
+  ) {}
+
+  /** Returns the Stripe publishable key — safe to expose to frontend */
+  @Get('config')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Get Stripe publishable key for frontend' })
+  getConfig() {
+    return {
+      publishableKey: this.configService.get<string>('STRIPE_PUBLISHABLE_KEY') || '',
+    };
+  }
 
   @Post('setup-intent')
   @UseGuards(JwtAuthGuard)
