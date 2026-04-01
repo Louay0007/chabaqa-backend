@@ -71,6 +71,90 @@ export class PaymentMethodService {
   }
 
   /**
+   * Create a Stripe Checkout Session in "setup" mode.
+   * This is a redirect-based flow — no publishable key needed on frontend.
+   * Frontend just redirects to the returned URL.
+   */
+  async createSetupSession(creatorId: string, successUrl: string, cancelUrl: string) {
+    const stripe = this.ensureStripe();
+    const sub = await this.subModel.findOne({ creatorId: new Types.ObjectId(creatorId) }).lean();
+
+    let customerId = sub?.providerCustomerId;
+    if (!customerId) {
+      const customer = await stripe.customers.create({ metadata: { creatorId } });
+      customerId = customer.id;
+      if (sub) {
+        await this.subModel.updateOne(
+          { creatorId: new Types.ObjectId(creatorId) },
+          { provider: 'stripe', providerCustomerId: customerId },
+        );
+      }
+    }
+
+    const session = await stripe.checkout.sessions.create({
+      mode: 'setup',
+      customer: customerId,
+      payment_method_types: ['card'],
+      success_url: successUrl,
+      cancel_url: cancelUrl,
+      metadata: { creatorId },
+    });
+
+    return { url: session.url, sessionId: session.id };
+  }
+
+  /**
+   * Called after Stripe Checkout Setup session completes (via success_url redirect).
+   * Retrieves the payment method from the session and saves it to DB.
+   */
+  async handleSetupSessionComplete(sessionId: string) {
+    const stripe = this.ensureStripe();
+    const session = await stripe.checkout.sessions.retrieve(sessionId, {
+      expand: ['setup_intent', 'setup_intent.payment_method'],
+    });
+
+    const creatorId = session.metadata?.creatorId;
+    if (!creatorId) throw new Error('No creatorId in session metadata');
+
+    const si = session.setup_intent as Stripe.SetupIntent;
+    if (!si || si.status !== 'succeeded') {
+      throw new Error('SetupIntent not succeeded');
+    }
+
+    const pm = si.payment_method as Stripe.PaymentMethod;
+    if (!pm) throw new Error('No payment method on setup intent');
+
+    // Unset previous default
+    await this.pmModel.updateMany({ creatorId: new Types.ObjectId(creatorId) }, { isDefault: false });
+
+    const saved = await this.pmModel.create({
+      creatorId: new Types.ObjectId(creatorId),
+      provider: 'stripe',
+      providerCustomerId: session.customer as string,
+      providerPaymentMethodId: pm.id,
+      brand: pm.card?.brand,
+      last4: pm.card?.last4,
+      expMonth: pm.card?.exp_month,
+      expYear: pm.card?.exp_year,
+      isDefault: true,
+    });
+
+    await this.subModel.updateOne(
+      { creatorId: new Types.ObjectId(creatorId) },
+      {
+        hasPaymentMethod: true,
+        defaultPaymentMethodId: saved._id,
+        provider: 'stripe',
+        providerCustomerId: session.customer as string,
+        paymentBrand: pm.card?.brand?.toUpperCase(),
+        paymentLast4: pm.card?.last4,
+      },
+    );
+
+    return { success: true, card: { brand: pm.card?.brand, last4: pm.card?.last4 } };
+  }
+
+  /**
    * After SetupIntent completes on frontend, confirm and save the payment method.
    */
   async confirmPaymentMethod(creatorId: string, setupIntentId: string) {

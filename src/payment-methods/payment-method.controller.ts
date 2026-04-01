@@ -6,6 +6,7 @@ import {
   Patch,
   Param,
   Body,
+  Query,
   Request,
   UseGuards,
 } from '@nestjs/common';
@@ -54,6 +55,34 @@ export class PaymentMethodController {
   ) {
     const creatorId = req.user._id || req.user.sub;
     return this.pmService.confirmPaymentMethod(creatorId, setupIntentId);
+  }
+
+  /** Create a Stripe Checkout Session in setup mode (redirect, no publishable key needed) */
+  @Post('setup-session')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Create Stripe Checkout setup session (redirect-based card save)' })
+  async createSetupSession(
+    @Request() req: any,
+    @Body('successUrl') successUrl: string,
+    @Body('cancelUrl') cancelUrl: string,
+  ) {
+    const creatorId = req.user._id || req.user.sub;
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    return this.pmService.createSetupSession(
+      creatorId,
+      successUrl || `${frontendUrl}/en/creator/plan/billing/add-card?setup=success`,
+      cancelUrl || `${frontendUrl}/en/creator/plan/billing/add-card`,
+    );
+  }
+
+  /** Called from success redirect — finalizes the saved card */
+  @Post('setup-session/complete')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Finalize card save after Checkout setup session' })
+  async completeSetupSession(@Body('sessionId') sessionId: string) {
+    return this.pmService.handleSetupSessionComplete(sessionId);
   }
 
   @Get()
