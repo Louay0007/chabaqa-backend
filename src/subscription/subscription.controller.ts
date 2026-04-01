@@ -96,6 +96,27 @@ export class SubscriptionController {
     return this.subscriptionService.getTrialRemaining(creatorId);
   }
 
+  @Get('storage')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Get storage usage for current creator (used bytes, limit, percentage)' })
+  @ApiResponse({ status: 200, description: 'Storage usage returned successfully' })
+  async getStorageUsage(@Request() req: any) {
+    const creatorId = req.user._id || req.user.sub;
+    return this.subscriptionService.getStorageUsage(creatorId);
+  }
+
+  @Post('reactivate')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Reactivate a subscription that was set to cancel at period end' })
+  @ApiResponse({ status: 200, description: 'Subscription reactivated successfully' })
+  @ApiResponse({ status: 400, description: 'Subscription is not set to cancel' })
+  async reactivate(@Request() req: any) {
+    const creatorId = req.user._id || req.user.sub;
+    return this.subscriptionService.reactivateSubscription(creatorId);
+  }
+
   // New endpoints for comprehensive subscription management
 
   @Get('stats')

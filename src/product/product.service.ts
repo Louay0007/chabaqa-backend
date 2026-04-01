@@ -914,8 +914,8 @@ export class ProductService {
     throw new BadRequestException('Ce fichier n\'est plus disponible');
   }
 
-  const FREE_MODE = process.env.FREE_MODE === 'true';
-  if (FREE_MODE) {
+  const ENFORCEMENT_OFF = process.env.PLAN_ENFORCEMENT_MODE !== 'true';
+  if (ENFORCEMENT_OFF) {
     file.downloadCount += 1;
     await product.save();
     return {
@@ -1282,8 +1282,8 @@ export class ProductService {
         throw new NotFoundException('Product not found');
       }
 
-      const FREE_MODE = process.env.FREE_MODE === 'true';
-      if (FREE_MODE) {
+      const ENFORCEMENT_OFF_CHECK = process.env.PLAN_ENFORCEMENT_MODE !== 'true';
+      if (ENFORCEMENT_OFF_CHECK) {
         return {
           purchased: true,
           purchase: {

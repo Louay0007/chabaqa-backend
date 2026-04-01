@@ -1078,9 +1078,9 @@ export class EventService {
     // }
 
     // Si billet payant, vérifier le paiement avant d'inscrire
-    const FREE_MODE = process.env.FREE_MODE === 'true';
+    const ENFORCEMENT_OFF = process.env.PLAN_ENFORCEMENT_MODE !== 'true';
     let hasPaidOrder = false;
-    if (ticket.price && ticket.price > 0 && !FREE_MODE) {
+    if (ticket.price && ticket.price > 0 && !ENFORCEMENT_OFF) {
       const existingPaidOrder = await this.orderModel.findOne({
         buyerId: new Types.ObjectId(userId),
         contentType: TrackableContentType.EVENT,
@@ -1111,7 +1111,7 @@ export class EventService {
     ticket.sold += 1;
     
     // Legacy path: créer une commande payée automatiquement si le garde PAYMENT_REQUIRED est désactivé
-    if (ticket.price && ticket.price > 0 && !FREE_MODE && !hasPaidOrder) {
+    if (ticket.price && ticket.price > 0 && !ENFORCEMENT_OFF && !hasPaidOrder) {
       let effective = ticket.price;
       let discountDT = 0;
       let appliedCode: string | undefined;

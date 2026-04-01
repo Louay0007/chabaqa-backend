@@ -1,33 +1,18 @@
 import { Response } from 'express';
 
 export class CookieUtil {
-  private static getCookieDomain(): string | undefined {
-    if (process.env.NODE_ENV !== 'production') {
-      return undefined;
-    }
-
-    const candidates = [
+  private static isSecure(): boolean {
+    const urls = [
       process.env.FRONTEND_URL,
-      process.env.NEXT_PUBLIC_APP_URL,
       process.env.SERVER_URL,
+      process.env.NEXT_PUBLIC_APP_URL,
     ].filter(Boolean) as string[];
+    // Use Secure flag only when actually running over HTTPS
+    return urls.some(u => u.startsWith('https://'));
+  }
 
-    for (const value of candidates) {
-      try {
-        const hostname = new URL(value).hostname;
-        if (hostname === 'localhost' || /^\d+\.\d+\.\d+\.\d+$/.test(hostname)) {
-          continue;
-        }
-
-        const parts = hostname.split('.');
-        if (parts.length >= 2) {
-          return `.${parts.slice(-2).join('.')}`;
-        }
-      } catch {
-        continue;
-      }
-    }
-
+  private static getCookieDomain(): string | undefined {
+    // Demo uses IP:port - no domain needed
     return undefined;
   }
 
@@ -36,7 +21,7 @@ export class CookieUtil {
    */
   static readonly ACCESS_TOKEN_CONFIG = {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production', // HTTPS en production
+    secure: CookieUtil.isSecure(), // HTTPS en production
     sameSite: 'lax' as const,
     maxAge: 2 * 60 * 60 * 1000, // 2 heures (correspond à la durée du JWT)
     path: '/',
@@ -48,7 +33,7 @@ export class CookieUtil {
    */
   static readonly REFRESH_TOKEN_CONFIG = {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production', // HTTPS en production
+    secure: CookieUtil.isSecure(), // HTTPS en production
     sameSite: 'lax' as const,
     maxAge: 7 * 24 * 60 * 60 * 1000, // 7 jours (correspond à la durée du JWT standard)
     path: '/',

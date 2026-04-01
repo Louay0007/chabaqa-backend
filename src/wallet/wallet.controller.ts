@@ -38,14 +38,15 @@ export class WalletController {
   }
 
   /**
-   * Check if FREE_MODE is enabled
+   * Check if plan enforcement is active
    */
   @Get('free-mode-check')
   async checkFreeMode() {
-    const freeMode = process.env.FREE_MODE === 'true';
+    const enforcementOn = process.env.PLAN_ENFORCEMENT_MODE === 'true';
     return {
-      freeMode,
-      message: freeMode ? 'FREE MODE enabled - all content is free' : 'Payment required for paid content'
+      freeMode: !enforcementOn,
+      enforcementOn,
+      message: enforcementOn ? 'Payment required for paid content' : 'Enforcement off - all content is free'
     };
   }
 

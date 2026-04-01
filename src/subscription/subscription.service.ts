@@ -3,6 +3,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Subscription, SubscriptionDocument, SubscriptionStatus } from '../schema/subscription.schema';
 import { Plan, PlanDocument, PlanTier } from '../schema/plan.schema';
+import { StorageUsage, StorageUsageDocument } from '../schema/storage-usage.schema';
 import { 
   CreateSubscriptionDto, 
   UpdateSubscriptionDto, 
@@ -29,6 +30,7 @@ export class SubscriptionService {
   constructor(
     @InjectModel(Subscription.name) private readonly subModel: Model<SubscriptionDocument>,
     @InjectModel(Plan.name) private readonly planModel: Model<PlanDocument>,
+    @InjectModel(StorageUsage.name) private readonly storageModel: Model<StorageUsageDocument>,
   ) {}
 
   async startTrialForCreator(creatorId: string | Types.ObjectId) {
@@ -999,6 +1001,61 @@ export class SubscriptionService {
       default:
         break;
     }
+  }
+
+  // ============ STORAGE USAGE ============
+
+  async getStorageUsage(creatorId: string | Types.ObjectId) {
+    const sub = await this.subModel
+      .findOne({ creatorId: new Types.ObjectId(creatorId as any) })
+      .lean();
+    const storageDoc = await this.storageModel
+      .findOne({ userId: new Types.ObjectId(creatorId as any) })
+      .lean();
+
+    const usedBytes = storageDoc?.usedBytes ?? 0;
+    const limitGB = sub?.storageGB ?? 5;
+    const limitBytes = limitGB * 1024 * 1024 * 1024;
+    const usedGB = usedBytes / (1024 * 1024 * 1024);
+    const percentUsed = limitBytes > 0 ? Math.min(100, (usedBytes / limitBytes) * 100) : 0;
+    const remainingGB = Math.max(0, limitGB - usedGB);
+
+    return {
+      usedBytes,
+      usedGB: parseFloat(usedGB.toFixed(2)),
+      limitGB,
+      limitBytes,
+      percentUsed: parseFloat(percentUsed.toFixed(1)),
+      remainingGB: parseFloat(remainingGB.toFixed(2)),
+      isNearLimit: percentUsed >= 80,
+      isAtLimit: percentUsed >= 100,
+    };
+  }
+
+  // ============ REACTIVATE ============
+
+  async reactivateSubscription(creatorId: string | Types.ObjectId) {
+    const sub = await this.subModel.findOne({
+      creatorId: new Types.ObjectId(creatorId as any),
+    });
+
+    if (!sub) {
+      throw new NotFoundException('Aucune souscription trouvée');
+    }
+
+    if (!sub.cancelAtPeriodEnd) {
+      throw new BadRequestException('La souscription n\'est pas programmée pour annulation');
+    }
+
+    sub.cancelAtPeriodEnd = false;
+    await sub.save();
+
+    this.logger.log(`Subscription reactivated for creator ${creatorId}`);
+
+    return {
+      message: 'Souscription réactivée avec succès',
+      subscription: sub,
+    };
   }
 }
 
