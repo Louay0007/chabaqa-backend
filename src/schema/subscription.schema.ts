@@ -105,6 +105,31 @@ export class Subscription {
   // Billing method presence (card/mandate set up with provider)
   @Prop({ type: Boolean, default: false })
   hasPaymentMethod: boolean;
+
+  // Reference to default payment method
+  @Prop({ type: Types.ObjectId, ref: 'PaymentMethod' })
+  defaultPaymentMethodId?: Types.ObjectId;
+
+  // Billing cycle
+  @Prop({ type: String, enum: ['monthly', 'yearly'], default: 'monthly' })
+  billingCycle: string;
+
+  // Charge tracking
+  @Prop({ type: Date })
+  lastChargedAt?: Date;
+
+  @Prop({ type: String, enum: ['success', 'failed', 'pending'] })
+  lastChargeStatus?: string;
+
+  @Prop({ type: Number })
+  lastChargeAmount?: number;
+
+  // Retry tracking for failed charges
+  @Prop({ type: Number, default: 0 })
+  retryCount: number;
+
+  @Prop({ type: Date })
+  retryNextAt?: Date;
 }
 
 export const SubscriptionSchema = SchemaFactory.createForClass(Subscription);

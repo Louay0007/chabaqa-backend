@@ -56,12 +56,12 @@ export class SubscriptionScheduler {
         trialEndsAt: { $lt: now },
         hasPaymentMethod: false,
       },
-      { $set: { status: SubscriptionStatus.PAST_DUE } },
+      { $set: { status: SubscriptionStatus.INCOMPLETE } },
     );
 
     if (result.modifiedCount > 0) {
       this.logger.warn(
-        `Expired ${result.modifiedCount} trial subscription(s) without payment method`,
+        `Set ${result.modifiedCount} trial subscription(s) without payment method to INCOMPLETE`,
       );
     }
   }
