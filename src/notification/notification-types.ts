@@ -32,6 +32,12 @@ export enum NotificationType {
 
   // System
   SYSTEM_ERROR = 'system_error',
+
+  // Channels
+  CHANNEL_MENTION = 'channel_mention',
+  CHANNEL_REPLY = 'channel_reply',
+  CHANNEL_CREATED = 'channel_created',
+  CHANNEL_ALL_MESSAGE = 'channel_all_message',
 }
 
 /**
@@ -47,16 +53,48 @@ export const DEFAULT_CHANNEL_PREFERENCES: Record<
   [NotificationType.NEW_DM_MESSAGE]: { inApp: true, email: false, push: true },
   [NotificationType.EVENT_REMINDER]: { inApp: true, email: true, push: true },
   [NotificationType.EVENT_CREATED]: { inApp: true, email: true, push: false },
-  [NotificationType.NEW_COMMUNITY_MEMBER]: { inApp: true, email: true, push: true },
+  [NotificationType.NEW_COMMUNITY_MEMBER]: {
+    inApp: true,
+    email: true,
+    push: true,
+  },
   [NotificationType.MEMBER_JOINED]: { inApp: true, email: false, push: false },
   [NotificationType.COURSE_CREATED]: { inApp: true, email: true, push: false },
   [NotificationType.COURSE_ENROLLED]: { inApp: true, email: true, push: true },
-  [NotificationType.CHALLENGE_CREATED]: { inApp: true, email: true, push: false },
-  [NotificationType.CHALLENGE_COMPLETED]: { inApp: true, email: true, push: true },
-  [NotificationType.PRODUCT_PURCHASED]: { inApp: true, email: true, push: true },
+  [NotificationType.CHALLENGE_CREATED]: {
+    inApp: true,
+    email: true,
+    push: false,
+  },
+  [NotificationType.CHALLENGE_COMPLETED]: {
+    inApp: true,
+    email: true,
+    push: true,
+  },
+  [NotificationType.PRODUCT_PURCHASED]: {
+    inApp: true,
+    email: true,
+    push: true,
+  },
   [NotificationType.PAYMENT_RECEIVED]: { inApp: true, email: true, push: true },
-  [NotificationType.ANALYTICS_UPDATE]: { inApp: true, email: false, push: false },
+  [NotificationType.ANALYTICS_UPDATE]: {
+    inApp: true,
+    email: false,
+    push: false,
+  },
   [NotificationType.SYSTEM_ERROR]: { inApp: true, email: true, push: false },
+  [NotificationType.CHANNEL_MENTION]: { inApp: true, email: false, push: true },
+  [NotificationType.CHANNEL_REPLY]: { inApp: true, email: false, push: false },
+  [NotificationType.CHANNEL_CREATED]: {
+    inApp: true,
+    email: false,
+    push: false,
+  },
+  [NotificationType.CHANNEL_ALL_MESSAGE]: {
+    inApp: true,
+    email: false,
+    push: false,
+  },
 };
 
 /** Types that always force in-app + push regardless of user preferences. */

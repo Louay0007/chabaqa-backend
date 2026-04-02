@@ -6,6 +6,7 @@ import { NotificationModule } from '../notification/notification.module';
 import { DmModule } from '../dm/dm.module';
 import { LiveSupportModule } from '../live-support/live-support.module';
 import { CommunityPageContentModule } from '../community-page-content/community-page-content.module';
+import { ChannelModule } from '../channel/channel.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { CommunityPageContentModule } from '../community-page-content/community-
     DmModule,
     LiveSupportModule,
     CommunityPageContentModule,
+    ChannelModule,
   ],
   exports: [
     CommunityAffCreaJoinModule,
@@ -25,6 +27,7 @@ import { CommunityPageContentModule } from '../community-page-content/community-
     DmModule,
     LiveSupportModule,
     CommunityPageContentModule,
+    ChannelModule,
   ],
 })
 export class CommunityDomainModule {}

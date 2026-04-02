@@ -47,6 +47,10 @@ export enum CommunityPermission {
   FINANCE_VIEW = 'finance.view',
   AFFILIATES_MANAGE = 'affiliates.manage',
   SUPPORT_MANAGE = 'support.manage',
+  CHANNELS_VIEW = 'channels.view',
+  CHANNELS_SEND = 'channels.send',
+  CHANNELS_MANAGE = 'channels.manage',
+  CHANNELS_MODERATE = 'channels.moderate',
 }
 
 // ---------------------------------------------------------------------------
@@ -67,16 +71,25 @@ export const ROLE_PERMISSIONS: Record<CommunityRole, CommunityPermission[]> = {
     CommunityPermission.FINANCE_VIEW,
     CommunityPermission.AFFILIATES_MANAGE,
     CommunityPermission.SUPPORT_MANAGE,
+    CommunityPermission.CHANNELS_VIEW,
+    CommunityPermission.CHANNELS_SEND,
+    CommunityPermission.CHANNELS_MANAGE,
+    CommunityPermission.CHANNELS_MODERATE,
   ],
 
   [CommunityRole.MODERATOR]: [
     CommunityPermission.MEMBERS_VIEW,
     CommunityPermission.POSTS_MODERATE,
+    CommunityPermission.CHANNELS_VIEW,
+    CommunityPermission.CHANNELS_SEND,
+    CommunityPermission.CHANNELS_MODERATE,
   ],
 
   [CommunityRole.SUPPORT]: [
     CommunityPermission.MEMBERS_VIEW,
     CommunityPermission.SUPPORT_MANAGE,
+    CommunityPermission.CHANNELS_VIEW,
+    CommunityPermission.CHANNELS_SEND,
   ],
 
   [CommunityRole.MEMBER]: [],
