@@ -3,6 +3,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Order, OrderDocument } from '../../schema/order.schema';
 import { PaymentAuditService } from './payment-audit.service';
+import { PromoService } from './promo.service';
 
 type ClaimState = 'claimed' | 'completed' | 'requires_booking' | 'processing' | 'missing' | 'unclaimed';
 
@@ -11,6 +12,7 @@ export class PaymentFulfillmentService {
   constructor(
     @InjectModel(Order.name) private readonly orderModel: Model<OrderDocument>,
     private readonly paymentAuditService: PaymentAuditService,
+    private readonly promoService: PromoService,
   ) {}
 
   async claimForProcessing(
@@ -107,6 +109,17 @@ export class PaymentFulfillmentService {
     order.status = 'paid';
     order.metadata = nextMetadata;
     await order.save(session ? { session } : undefined);
+    
+    // Increment promo code redemption count if a promo code was used
+    if (order.promoCode) {
+      try {
+        await this.promoService.incrementRedemptionCount(order.promoCode);
+      } catch (error) {
+        // Log error but don't fail the fulfillment
+        console.error(`Failed to increment promo code redemption count for ${order.promoCode}:`, error);
+      }
+    }
+    
     await this.paymentAuditService.log(
       {
         orderId: order._id,
@@ -117,6 +130,7 @@ export class PaymentFulfillmentService {
         metadata: {
           fulfillmentStatus: nextMetadata.fulfillmentStatus,
           fulfillmentCompletedAt: nextMetadata.fulfillmentCompletedAt,
+          promoCode: order.promoCode || undefined,
         },
       },
       session,

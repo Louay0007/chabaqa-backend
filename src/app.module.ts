@@ -62,6 +62,7 @@ import { AffiliateModule } from './affiliate/affiliate.module';
 import { CommunityAccessModule } from './community-access/community-access.module';
 import { VideoModule } from './video/video.module';
 import { PaymentMethodModule } from './payment-methods/payment-method.module';
+import { PromoCodeModule } from './promo-code/promo-code.module';
 
 // Import new admin schemas
 import { AdminUser, AdminUserSchema } from './admin/schemas/admin-user.schema';
@@ -174,6 +175,7 @@ import { PaymentAuditLog, PaymentAuditLogSchema } from './schema/payment-audit-l
     CommunityAccessModule,
     VideoModule,
     PaymentMethodModule,
+    PromoCodeModule,
   ],
   controllers: [AppController, UserController, TrackingController, PaymentController],
   providers: [

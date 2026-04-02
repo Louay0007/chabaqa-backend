@@ -76,6 +76,19 @@ export class PromoService {
       finalAmountDT,
     };
   }
+
+  /**
+   * Increment redemption count when a promo code is successfully used
+   * Should be called after payment is confirmed
+   */
+  async incrementRedemptionCount(code: string): Promise<void> {
+    if (!code) return;
+    
+    await this.promoModel.updateOne(
+      { code: code.trim().toUpperCase() },
+      { $inc: { redemptionsCount: 1 } }
+    );
+  }
 }
 
 
