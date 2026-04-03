@@ -1,34 +1,59 @@
-import { Injectable, ConflictException, NotFoundException, InternalServerErrorException, ForbiddenException, BadRequestException, OnModuleInit, HttpException, HttpStatus } from '@nestjs/common';
+import {
+  Injectable,
+  ConflictException,
+  NotFoundException,
+  InternalServerErrorException,
+  ForbiddenException,
+  BadRequestException,
+  OnModuleInit,
+  HttpException,
+  HttpStatus,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Connection, Model, Types } from 'mongoose';
 import { Community, CommunityDocument } from '../schema/community.schema';
 import { User, UserDocument, UserRole } from '../schema/user.schema';
 import { CreateCommunityDto } from '../dto-community/create-community.dto';
-import { JoinCommunityDto, JoinByInviteDto, GenerateInviteDto } from '../dto-community/join-community.dto';
+import {
+  JoinCommunityDto,
+  JoinByInviteDto,
+  GenerateInviteDto,
+} from '../dto-community/join-community.dto';
 import { UpdateCommunityCustomizationDto } from '../dto-community/update-community-customization.dto';
 import { UploadService } from '../upload/upload.service';
 import { PolicyService } from '../common/services/policy.service';
 import { PromoService } from '../common/services/promo.service';
 import { FeeService } from '../common/services/fee.service';
-import { TrackableContentType, ContentProgressDocument, TrackingActionType } from '../schema/content-tracking.schema';
+import {
+  TrackableContentType,
+  ContentProgressDocument,
+  TrackingActionType,
+} from '../schema/content-tracking.schema';
 import { NotificationService } from '../notification/notification.service';
 import { ContentTrackingService } from '../common/services/content-tracking.service';
 import { PaginatedResponseDto } from '../common/dto/paginated-response.dto';
 import { CacheService } from '../common/services/cache.service';
 import { Post, PostDocument } from '../schema/post.schema';
 import { EmailCampaignService } from '../email-campaign/email-campaign.service';
-import { CommunityStaff, CommunityStaffDocument } from '../schema/community-staff.schema';
+import { DmService } from '../dm/dm.service';
+import {
+  CommunityStaff,
+  CommunityStaffDocument,
+} from '../schema/community-staff.schema';
 
 @Injectable()
 export class CommunityAffCreaJoinService implements OnModuleInit {
   constructor(
-    @InjectModel(Community.name) private communityModel: Model<CommunityDocument>,
+    @InjectModel(Community.name)
+    private communityModel: Model<CommunityDocument>,
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     @InjectModel('Order') private orderModel: Model<any>,
-    @InjectModel('ContentProgress') private contentProgressModel: Model<ContentProgressDocument>,
+    @InjectModel('ContentProgress')
+    private contentProgressModel: Model<ContentProgressDocument>,
     @InjectModel('TrackingAction') private trackingActionModel: Model<any>,
     @InjectModel(Post.name) private postModel: Model<PostDocument>,
-    @InjectModel(CommunityStaff.name) private staffModel: Model<CommunityStaffDocument>,
+    @InjectModel(CommunityStaff.name)
+    private staffModel: Model<CommunityStaffDocument>,
     private readonly uploadService: UploadService,
     private readonly policyService: PolicyService,
     private readonly promoService: PromoService,
@@ -37,7 +62,8 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
     private readonly trackingService: ContentTrackingService,
     private readonly cacheService: CacheService,
     private readonly emailCampaignService: EmailCampaignService,
-  ) { }
+    private readonly dmService: DmService,
+  ) {}
 
   async onModuleInit(): Promise<void> {
     await this.repairInviteCodeIndex();
@@ -47,8 +73,14 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
     const message = String(error?.message || '');
     const code = Number(error?.code || error?.errorResponse?.code || 0);
     const keyPatternInvite =
-      Boolean(error?.keyPattern?.inviteCode) || Boolean(error?.errorResponse?.keyPattern?.inviteCode);
-    return code === 11000 && (keyPatternInvite || message.includes('inviteCode_1') || message.includes('inviteCode'));
+      Boolean(error?.keyPattern?.inviteCode) ||
+      Boolean(error?.errorResponse?.keyPattern?.inviteCode);
+    return (
+      code === 11000 &&
+      (keyPatternInvite ||
+        message.includes('inviteCode_1') ||
+        message.includes('inviteCode'))
+    );
   }
 
   private async repairInviteCodeIndex(): Promise<void> {
@@ -69,14 +101,19 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
           index.key.inviteCode === 1,
       ) as any | undefined;
 
-      const partial = (inviteIndex?.partialFilterExpression?.inviteCode || {}) as any;
+      const partial = (inviteIndex?.partialFilterExpression?.inviteCode ||
+        {}) as any;
       const hasDesiredInviteIndex =
         Boolean(inviteIndex) &&
         inviteIndex.unique === true &&
         partial.$type === 'string' &&
         partial.$ne === '';
 
-      if (inviteIndex && !hasDesiredInviteIndex && typeof inviteIndex.name === 'string') {
+      if (
+        inviteIndex &&
+        !hasDesiredInviteIndex &&
+        typeof inviteIndex.name === 'string'
+      ) {
         await collection.dropIndex(inviteIndex.name);
       }
 
@@ -97,8 +134,13 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
     }
   }
 
-  private getModelIfRegistered<T = any>(connection: Connection, modelName: string): Model<T> | null {
-    return connection.modelNames().includes(modelName) ? (connection.model(modelName) as Model<T>) : null;
+  private getModelIfRegistered<T = any>(
+    connection: Connection,
+    modelName: string,
+  ): Model<T> | null {
+    return connection.modelNames().includes(modelName)
+      ? (connection.model(modelName) as Model<T>)
+      : null;
   }
 
   private getFrontendBaseUrl(): string {
@@ -111,7 +153,10 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
   }
 
   private isPaidOrderRequired(): boolean {
-    return String(process.env.PAYMENTS_REQUIRE_PAID_ORDER || '').toLowerCase() === 'true';
+    return (
+      String(process.env.PAYMENTS_REQUIRE_PAID_ORDER || '').toLowerCase() ===
+      'true'
+    );
   }
 
   private buildPaymentRequiredException(params: {
@@ -137,7 +182,8 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
   }
 
   private async generateUniqueInviteCode(): Promise<string> {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    const chars =
+      'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
     for (let attempt = 0; attempt < 12; attempt++) {
       let code = '';
       for (let i = 0; i < 12; i++) {
@@ -150,10 +196,15 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
       }
     }
 
-    throw new InternalServerErrorException('Impossible de générer un code d\'invitation unique');
+    throw new InternalServerErrorException(
+      "Impossible de générer un code d'invitation unique",
+    );
   }
 
-  private async ensurePrivateInviteData(community: CommunityDocument, regenerate = false): Promise<boolean> {
+  private async ensurePrivateInviteData(
+    community: CommunityDocument,
+    regenerate = false,
+  ): Promise<boolean> {
     if (!community.isPrivate) {
       return false;
     }
@@ -180,7 +231,10 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
     return /^[0-9a-fA-F]{24}$/.test(trimmed) ? trimmed : null;
   }
 
-  private canViewInviteSecrets(community: CommunityDocument, viewerId?: string): boolean {
+  private canViewInviteSecrets(
+    community: CommunityDocument,
+    viewerId?: string,
+  ): boolean {
     const normalizedViewerId = this.normalizeViewerId(viewerId);
     if (!normalizedViewerId) {
       return false;
@@ -189,7 +243,9 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
     const viewerObjectId = new Types.ObjectId(normalizedViewerId);
     const isCreator = community.createur?.equals?.(viewerObjectId);
     const isAdmin = Array.isArray(community.admins)
-      ? community.admins.some((adminId: any) => adminId?.equals?.(viewerObjectId))
+      ? community.admins.some((adminId: any) =>
+          adminId?.equals?.(viewerObjectId),
+        )
       : false;
     return Boolean(isCreator || isAdmin);
   }
@@ -250,7 +306,9 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
       community?.creatorId,
       community?.createurId,
     ];
-    return creatorCandidates.some((candidate) => this.sameId(candidate, userId));
+    return creatorCandidates.some((candidate) =>
+      this.sameId(candidate, userId),
+    );
   }
 
   private resolveMemberDisplayName(user: any): string {
@@ -312,18 +370,19 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
     communityId?: string;
     creatorUsername?: string;
   }): Promise<void> {
-    const patterns = [
-      'http:/community-aff-crea-join*',
-      'http:/communities*',
-    ];
+    const patterns = ['http:/community-aff-crea-join*', 'http:/communities*'];
 
     if (params.communitySlug) {
       patterns.push(`http:/communities/${params.communitySlug}*`);
     }
 
     if (params.communityId) {
-      patterns.push(`http:/community-aff-crea-join/community/${params.communityId}*`);
-      patterns.push(`http:/community-aff-crea-join/members/${params.communityId}*`);
+      patterns.push(
+        `http:/community-aff-crea-join/community/${params.communityId}*`,
+      );
+      patterns.push(
+        `http:/community-aff-crea-join/members/${params.communityId}*`,
+      );
     }
 
     if (params.creatorUsername) {
@@ -342,10 +401,19 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
    * @param userId - ID de l'utilisateur créateur
    * @returns La communauté créée et l'utilisateur mis à jour
    */
-  async createCommunity(createCommunityDto: CreateCommunityDto, uploadedFiles: { logo?: string }, userId: string): Promise<{ community: any, user: UserDocument }> {
+  async createCommunity(
+    createCommunityDto: CreateCommunityDto,
+    uploadedFiles: { logo?: string },
+    userId: string,
+  ): Promise<{ community: any; user: UserDocument }> {
     try {
       // Debug: Log de l'ID utilisateur reçu
-      console.log('🔍 Debug - ID utilisateur reçu:', userId, 'Type:', typeof userId);
+      console.log(
+        '🔍 Debug - ID utilisateur reçu:',
+        userId,
+        'Type:',
+        typeof userId,
+      );
       console.log('🚀 Création de communauté avec logo intégré');
       console.log('   Logo:', uploadedFiles.logo);
       console.log('   Cover Image from DTO:', createCommunityDto.coverImage);
@@ -359,10 +427,13 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
 
       const communityDataAvecLogo = {
         ...sanitizedCreateCommunityDto,
-        logo: uploadedFiles.logo || sanitizedCreateCommunityDto.logo
+        logo: uploadedFiles.logo || sanitizedCreateCommunityDto.logo,
       };
-      
-      console.log('🖼️ [CREATE COMMUNITY] Cover image URL:', communityDataAvecLogo.coverImage);
+
+      console.log(
+        '🖼️ [CREATE COMMUNITY] Cover image URL:',
+        communityDataAvecLogo.coverImage,
+      );
 
       // Vérifier si l'utilisateur existe
       const user = await this.userModel.findById(userId);
@@ -373,28 +444,42 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
       }
 
       // Vérifier les quotas: nombre de communautés du créateur
-      const createdCount = await this.communityModel.countDocuments({ createur: new Types.ObjectId(userId) });
-      const canCreate = await this.policyService.canCreateAnotherCommunity(userId, createdCount);
+      const createdCount = await this.communityModel.countDocuments({
+        createur: new Types.ObjectId(userId),
+      });
+      const canCreate = await this.policyService.canCreateAnotherCommunity(
+        userId,
+        createdCount,
+      );
       if (!canCreate) {
-        throw new ForbiddenException('Limite de communautés atteinte pour votre plan. Veuillez mettre à niveau.');
+        throw new ForbiddenException(
+          'Limite de communautés atteinte pour votre plan. Veuillez mettre à niveau.',
+        );
       }
 
       // Vérifier si une communauté avec ce nom existe déjà
-      const existingCommunity = await this.communityModel.findOne({ name: communityDataAvecLogo.name });
+      const existingCommunity = await this.communityModel.findOne({
+        name: communityDataAvecLogo.name,
+      });
       if (existingCommunity) {
         throw new ConflictException('Une communauté avec ce nom existe déjà');
       }
 
       // Validation des liens sociaux - au moins un lien requis
       const socialLinks = communityDataAvecLogo.socialLinks || {};
-      console.log('🔍 [SERVICE] Social links:', JSON.stringify(socialLinks, null, 2));
+      console.log(
+        '🔍 [SERVICE] Social links:',
+        JSON.stringify(socialLinks, null, 2),
+      );
 
       const hasAtLeastOneLink = Object.values(socialLinks).some((link) => {
         return typeof link === 'string' && link.trim() !== '';
       });
 
       if (!hasAtLeastOneLink) {
-        throw new BadRequestException('Au moins un lien social est requis pour créer une communauté');
+        throw new BadRequestException(
+          'Au moins un lien social est requis pour créer une communauté',
+        );
       }
 
       // Générer un slug unique à partir du nom
@@ -422,7 +507,9 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
       const communityData = {
         name: communityDataAvecLogo.name,
         slug: uniqueSlug,
-        short_description: communityDataAvecLogo.bio || `Communauté ${communityDataAvecLogo.name}`,
+        short_description:
+          communityDataAvecLogo.bio ||
+          `Communauté ${communityDataAvecLogo.name}`,
         country: communityDataAvecLogo.country,
 
         // Mappage des paramètres d'accès
@@ -448,8 +535,16 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
           primaryColor: '#3b82f6',
           secondaryColor: '#1e40af',
           welcomeMessage: `Bienvenue dans ${communityDataAvecLogo.name} !`,
-          features: ['Cours exclusifs', 'Support communautaire', 'Ressources premium'],
-          benefits: ['Accès complet', 'Support prioritaire', 'Ressources exclusives'],
+          features: [
+            'Cours exclusifs',
+            'Support communautaire',
+            'Ressources premium',
+          ],
+          benefits: [
+            'Accès complet',
+            'Support prioritaire',
+            'Ressources exclusives',
+          ],
           template: 'modern',
           fontFamily: 'Inter',
           borderRadius: 12,
@@ -468,14 +563,16 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
           enableAnimations: true,
           enableParallax: false,
           logo: this.uploadService.ensureAbsoluteUrl(
-            communityDataAvecLogo.logo || 'https://via.placeholder.com/150'
+            communityDataAvecLogo.logo || 'https://via.placeholder.com/150',
           ),
           heroBackground: 'https://via.placeholder.com/1200x600',
           gallery: [],
           videoUrl: '',
           customSections: [],
           metaTitle: `${communityDataAvecLogo.name} - Communauté`,
-          metaDescription: communityDataAvecLogo.bio || `Rejoignez ${communityDataAvecLogo.name} pour apprendre et partager.`,
+          metaDescription:
+            communityDataAvecLogo.bio ||
+            `Rejoignez ${communityDataAvecLogo.name} pour apprendre et partager.`,
           customDomain: '',
           headerScripts: '',
         },
@@ -488,18 +585,28 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
 
         // Valeurs par défaut pour les champs requis du schéma avec URLs absolues
         logo: this.uploadService.ensureAbsoluteUrl(
-          communityDataAvecLogo.logo || socialLinks.website || socialLinks.instagram || socialLinks.facebook || 'https://via.placeholder.com/150'
+          communityDataAvecLogo.logo ||
+            socialLinks.website ||
+            socialLinks.instagram ||
+            socialLinks.facebook ||
+            'https://via.placeholder.com/150',
         ),
-        photo_de_couverture: communityDataAvecLogo.coverImage && communityDataAvecLogo.coverImage.trim() 
-          ? this.uploadService.ensureAbsoluteUrl(communityDataAvecLogo.coverImage)
-          : `https://ui-avatars.com/api/?name=${encodeURIComponent(communityDataAvecLogo.name)}&size=600&background=8e78fb&color=ffffff&format=png`,
+        photo_de_couverture:
+          communityDataAvecLogo.coverImage &&
+          communityDataAvecLogo.coverImage.trim()
+            ? this.uploadService.ensureAbsoluteUrl(
+                communityDataAvecLogo.coverImage,
+              )
+            : `https://ui-avatars.com/api/?name=${encodeURIComponent(communityDataAvecLogo.name)}&size=600&background=8e78fb&color=ffffff&format=png`,
         creatorAvatar: this.uploadService.ensureAbsoluteUrl(
-          user.profile_picture || 'https://via.placeholder.com/100'
+          user.profile_picture || 'https://via.placeholder.com/100',
         ),
         category: communityDataAvecLogo.category || 'Général',
-        priceType: communityDataAvecLogo.pricing?.priceType || (communityDataAvecLogo.joinFee === 'paid' ? 'one-time' : 'free'),
+        priceType:
+          communityDataAvecLogo.pricing?.priceType ||
+          (communityDataAvecLogo.joinFee === 'paid' ? 'one-time' : 'free'),
         image: this.uploadService.ensureAbsoluteUrl(
-          communityDataAvecLogo.image || 'https://via.placeholder.com/600x400'
+          communityDataAvecLogo.image || 'https://via.placeholder.com/600x400',
         ),
         tags: communityDataAvecLogo.tags || [communityDataAvecLogo.country],
         featured: false,
@@ -512,10 +619,17 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
         cours: [],
 
         // ============ Champs supplémentaires pour compatibilité frontend ============
-        longDescription: communityDataAvecLogo.longDescription || communityDataAvecLogo.bio || `Bienvenue dans ${communityDataAvecLogo.name}, une communauté dédiée à l'apprentissage et au partage.`,
-        coverImage: communityDataAvecLogo.coverImage && communityDataAvecLogo.coverImage.trim() 
-          ? this.uploadService.ensureAbsoluteUrl(communityDataAvecLogo.coverImage)
-          : `https://ui-avatars.com/api/?name=${encodeURIComponent(communityDataAvecLogo.name)}&size=600&background=8e78fb&color=ffffff&format=png`,
+        longDescription:
+          communityDataAvecLogo.longDescription ||
+          communityDataAvecLogo.bio ||
+          `Bienvenue dans ${communityDataAvecLogo.name}, une communauté dédiée à l'apprentissage et au partage.`,
+        coverImage:
+          communityDataAvecLogo.coverImage &&
+          communityDataAvecLogo.coverImage.trim()
+            ? this.uploadService.ensureAbsoluteUrl(
+                communityDataAvecLogo.coverImage,
+              )
+            : `https://ui-avatars.com/api/?name=${encodeURIComponent(communityDataAvecLogo.name)}&size=600&background=8e78fb&color=ffffff&format=png`,
         rating: 0,
         price: communityDataAvecLogo.joinFee === 'paid' ? feeAmount : 0,
         createdDate: new Date().toISOString(),
@@ -546,7 +660,7 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
           createdCommunities: savedCommunity._id,
           joinedCommunities: savedCommunity._id,
           adminCommunities: savedCommunity._id,
-        }
+        },
       };
 
       // Only upgrade role to CREATOR if the user is currently a regular USER
@@ -555,32 +669,43 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
         updateData.role = UserRole.CREATOR;
       }
 
-      const updatedUser = await this.userModel.findByIdAndUpdate(
-        userId,
-        updateData,
-        { new: true }
-      ).exec();
+      const updatedUser = await this.userModel
+        .findByIdAndUpdate(userId, updateData, { new: true })
+        .exec();
 
       if (!updatedUser) {
-        throw new InternalServerErrorException('Erreur lors de la mise à jour de l\'utilisateur');
+        throw new InternalServerErrorException(
+          "Erreur lors de la mise à jour de l'utilisateur",
+        );
       }
 
       console.log('✅ Rôle utilisateur mis à jour:', {
         userId: updatedUser?._id,
         newRole: updatedUser?.role,
-        createdCommunities: updatedUser?.createdCommunities?.length
+        createdCommunities: updatedUser?.createdCommunities?.length,
       });
 
       // Retourner la communauté avec les relations peuplées
       const populatedCommunity = await this.communityModel
         .findById(savedCommunity._id)
-        .populate('createur', 'name email profile_picture photo_profil avatar photo')
-        .populate('members', 'name email profile_picture photo_profil avatar photo')
-        .populate('admins', 'name email profile_picture photo_profil avatar photo')
+        .populate(
+          'createur',
+          'name email profile_picture photo_profil avatar photo',
+        )
+        .populate(
+          'members',
+          'name email profile_picture photo_profil avatar photo',
+        )
+        .populate(
+          'admins',
+          'name email profile_picture photo_profil avatar photo',
+        )
         .exec();
 
       if (!populatedCommunity) {
-        throw new InternalServerErrorException('Erreur lors de la récupération de la communauté créée');
+        throw new InternalServerErrorException(
+          'Erreur lors de la récupération de la communauté créée',
+        );
       }
 
       // Recalculer les rangs après la création
@@ -592,25 +717,35 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
       });
 
       // Transformer la réponse pour être 100% compatible avec le frontend
-      const transformedCommunity = this.transformCommunityForFrontend(populatedCommunity, {
-        includeInviteSecrets: true,
-      });
-      
+      const transformedCommunity = this.transformCommunityForFrontend(
+        populatedCommunity,
+        {
+          includeInviteSecrets: true,
+        },
+      );
+
       return {
         community: transformedCommunity,
-        user: updatedUser
+        user: updatedUser,
       };
-
     } catch (error) {
-      if (error instanceof ConflictException || error instanceof NotFoundException || error instanceof BadRequestException) {
+      if (
+        error instanceof ConflictException ||
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException
+      ) {
         throw error;
       }
       if (this.isInviteCodeDuplicateError(error)) {
-        throw new ConflictException('Conflit sur le code d\'invitation. Reessayez la creation de la communaute.');
+        throw new ConflictException(
+          "Conflit sur le code d'invitation. Reessayez la creation de la communaute.",
+        );
       }
 
       console.error('Erreur lors de la création de la communauté:', error);
-      throw new InternalServerErrorException('Erreur lors de la création de la communauté');
+      throw new InternalServerErrorException(
+        'Erreur lors de la création de la communauté',
+      );
     }
   }
 
@@ -657,11 +792,19 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
     return result;
   }
 
-  private normalizeCommunitySettings(communityName: string, rawSettings: any = {}) {
+  private normalizeCommunitySettings(
+    communityName: string,
+    rawSettings: any = {},
+  ) {
     const settings = rawSettings || {};
-    const primaryColor = typeof settings.primaryColor === 'string' ? settings.primaryColor : '#3b82f6';
+    const primaryColor =
+      typeof settings.primaryColor === 'string'
+        ? settings.primaryColor
+        : '#3b82f6';
     const secondaryColor =
-      typeof settings.secondaryColor === 'string' ? settings.secondaryColor : '#1e40af';
+      typeof settings.secondaryColor === 'string'
+        ? settings.secondaryColor
+        : '#1e40af';
     const normalizedDomain =
       typeof settings.customDomain === 'string'
         ? settings.customDomain.trim().toLowerCase()
@@ -671,14 +814,16 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
       primaryColor,
       secondaryColor,
       welcomeMessage:
-        typeof settings.welcomeMessage === 'string' && settings.welcomeMessage.trim()
+        typeof settings.welcomeMessage === 'string' &&
+        settings.welcomeMessage.trim()
           ? settings.welcomeMessage.trim().slice(0, 1000)
           : `Bienvenue dans ${communityName} !`,
       features: this.normalizeStringList(settings.features, 20, 160),
       benefits: this.normalizeStringList(settings.benefits, 20, 220),
       template: settings.template || 'modern',
       fontFamily: settings.fontFamily || 'Inter',
-      borderRadius: typeof settings.borderRadius === 'number' ? settings.borderRadius : 12,
+      borderRadius:
+        typeof settings.borderRadius === 'number' ? settings.borderRadius : 12,
       backgroundStyle: settings.backgroundStyle || 'gradient',
       heroLayout: settings.heroLayout || 'centered',
       headerStyle: settings.headerStyle || 'default',
@@ -699,7 +844,8 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
           ? this.uploadService.ensureAbsoluteUrl(settings.logo)
           : '',
       heroBackground:
-        typeof settings.heroBackground === 'string' && settings.heroBackground.trim()
+        typeof settings.heroBackground === 'string' &&
+        settings.heroBackground.trim()
           ? this.uploadService.ensureAbsoluteUrl(settings.heroBackground)
           : '',
       gallery: Array.isArray(settings.gallery)
@@ -720,17 +866,31 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
         tiktok: settings.socialLinks?.tiktok || '',
         website: settings.socialLinks?.website || '',
       },
-      customSections: Array.isArray(settings.customSections) ? settings.customSections : [],
+      customSections: Array.isArray(settings.customSections)
+        ? settings.customSections
+        : [],
       metaTitle:
         typeof settings.metaTitle === 'string' && settings.metaTitle.trim()
           ? settings.metaTitle
           : `${communityName} - Communauté`,
       metaDescription:
-        typeof settings.metaDescription === 'string' && settings.metaDescription.trim()
+        typeof settings.metaDescription === 'string' &&
+        settings.metaDescription.trim()
           ? settings.metaDescription
           : '',
       customDomain: normalizedDomain,
-      headerScripts: typeof settings.headerScripts === 'string' ? settings.headerScripts : '',
+      headerScripts:
+        typeof settings.headerScripts === 'string'
+          ? settings.headerScripts
+          : '',
+      welcomeDmEnabled:
+        typeof settings.welcomeDmEnabled === 'boolean'
+          ? settings.welcomeDmEnabled
+          : false,
+      welcomeDmMessage:
+        typeof settings.welcomeDmMessage === 'string'
+          ? settings.welcomeDmMessage.trim().slice(0, 2000)
+          : '',
     };
   }
 
@@ -738,13 +898,18 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
     community: CommunityDocument,
     options: { includeInviteSecrets?: boolean } = {},
   ): any {
-    const normalizedSettings = this.normalizeCommunitySettings(community.name, community.settings || {});
+    const normalizedSettings = this.normalizeCommunitySettings(
+      community.name,
+      community.settings || {},
+    );
     const includeInviteSecrets = Boolean(options.includeInviteSecrets);
     const membersArrayCount = Array.isArray((community as any).members)
       ? (community as any).members.length
       : 0;
     const storedMembersCount =
-      typeof (community as any).membersCount === 'number' ? (community as any).membersCount : 0;
+      typeof (community as any).membersCount === 'number'
+        ? (community as any).membersCount
+        : 0;
     const membersCount = Math.max(storedMembersCount, membersArrayCount, 0);
     const averageRatingValue =
       typeof (community as any).averageRating === 'number'
@@ -753,13 +918,15 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
           ? (community as any).rating
           : 0;
     const ratingCountValue =
-      typeof (community as any).ratingCount === 'number' ? (community as any).ratingCount : 0;
+      typeof (community as any).ratingCount === 'number'
+        ? (community as any).ratingCount
+        : 0;
 
     // Extract logo with proper fallback chain and ensure absolute URL
     const logoUrl = this.uploadService.ensureAbsoluteUrl(
       normalizedSettings.logo ||
-      community.logo ||
-      'https://via.placeholder.com/150?text=Community'
+        community.logo ||
+        'https://via.placeholder.com/150?text=Community',
     );
 
     // DEBUG: Log the raw creator data
@@ -770,7 +937,10 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
       profile_picture: (community.createur as any)?.profile_picture,
       photo_profil: (community.createur as any)?.photo_profil,
     });
-    console.log('🔍 [TRANSFORM] Stored creatorAvatar field:', community.creatorAvatar);
+    console.log(
+      '🔍 [TRANSFORM] Stored creatorAvatar field:',
+      community.creatorAvatar,
+    );
 
     // Get creator avatar with proper fallback chain
     const rawProfilePic = (community.createur as any)?.profile_picture;
@@ -779,10 +949,17 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
     const rawPhoto = (community.createur as any)?.photo;
     const rawCreatorAvatar = community.creatorAvatar;
 
-    const selectedRawUrl = rawProfilePic || rawPhotoProfil || rawAvatar || rawPhoto || rawCreatorAvatar || '';
+    const selectedRawUrl =
+      rawProfilePic ||
+      rawPhotoProfil ||
+      rawAvatar ||
+      rawPhoto ||
+      rawCreatorAvatar ||
+      '';
     console.log('🔍 [TRANSFORM] Selected raw URL:', selectedRawUrl);
 
-    const creatorAvatarUrl = this.uploadService.ensureAbsoluteUrl(selectedRawUrl);
+    const creatorAvatarUrl =
+      this.uploadService.ensureAbsoluteUrl(selectedRawUrl);
     console.log('🔍 [TRANSFORM] After ensureAbsoluteUrl:', creatorAvatarUrl);
 
     // Final avatar with fallback
@@ -790,21 +967,28 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
     console.log('🔍 [TRANSFORM] Final avatar URL:', finalAvatar);
 
     // Get cover image with proper fallback chain
-    const rawCoverImage = community.photo_de_couverture || community.coverImage || normalizedSettings.heroBackground || '';
+    const rawCoverImage =
+      community.photo_de_couverture ||
+      community.coverImage ||
+      normalizedSettings.heroBackground ||
+      '';
     let coverImageUrl = '';
-    
+
     if (rawCoverImage && rawCoverImage.trim() !== '') {
       coverImageUrl = this.uploadService.ensureAbsoluteUrl(rawCoverImage);
     } else {
       // If no cover image, use creator avatar as fallback, or generate placeholder
-      const creatorAvatar = (community.createur as any)?.profile_picture || (community.createur as any)?.photo_profil || community.creatorAvatar;
+      const creatorAvatar =
+        (community.createur as any)?.profile_picture ||
+        (community.createur as any)?.photo_profil ||
+        community.creatorAvatar;
       if (creatorAvatar && creatorAvatar.trim() !== '') {
         coverImageUrl = this.uploadService.ensureAbsoluteUrl(creatorAvatar);
       } else {
         coverImageUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(community.name)}&size=600&background=8e78fb&color=ffffff&format=png`;
       }
     }
-    
+
     console.log('🖼️ [TRANSFORM] Cover image debug:', {
       photo_de_couverture: community.photo_de_couverture,
       coverImage: community.coverImage,
@@ -875,9 +1059,12 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
         enableParallax: normalizedSettings.enableParallax,
         logo: logoUrl, // Use the same logo URL for consistency
         heroBackground: this.uploadService.ensureAbsoluteUrl(
-          normalizedSettings.heroBackground || 'https://via.placeholder.com/1200x600'
+          normalizedSettings.heroBackground ||
+            'https://via.placeholder.com/1200x600',
         ),
-        gallery: (normalizedSettings.gallery || []).map(url => this.uploadService.ensureAbsoluteUrl(url)),
+        gallery: (normalizedSettings.gallery || []).map((url) =>
+          this.uploadService.ensureAbsoluteUrl(url),
+        ),
         videoUrl: normalizedSettings.videoUrl || '',
         socialLinks: {
           twitter: normalizedSettings.socialLinks?.twitter || '',
@@ -892,10 +1079,14 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
           website: normalizedSettings.socialLinks?.website || '',
         },
         customSections: normalizedSettings.customSections || [],
-        metaTitle: normalizedSettings.metaTitle || `${community.name} - Communauté`,
-        metaDescription: normalizedSettings.metaDescription || community.short_description,
+        metaTitle:
+          normalizedSettings.metaTitle || `${community.name} - Communauté`,
+        metaDescription:
+          normalizedSettings.metaDescription || community.short_description,
         customDomain: normalizedSettings.customDomain || '',
         headerScripts: normalizedSettings.headerScripts || '',
+        welcomeDmEnabled: normalizedSettings.welcomeDmEnabled ?? false,
+        welcomeDmMessage: normalizedSettings.welcomeDmMessage ?? '',
       },
       stats: {
         totalRevenue: community.stats?.totalRevenue || 0,
@@ -929,17 +1120,30 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
     try {
       const communities = await this.communityModel
         .find({ isActive: true, isPrivate: false })
-        .populate('createur', 'name email profile_picture photo_profil avatar photo')
-        .populate('members', 'name email profile_picture photo_profil avatar photo')
-        .populate('admins', 'name email profile_picture photo_profil avatar photo')
+        .populate(
+          'createur',
+          'name email profile_picture photo_profil avatar photo',
+        )
+        .populate(
+          'members',
+          'name email profile_picture photo_profil avatar photo',
+        )
+        .populate(
+          'admins',
+          'name email profile_picture photo_profil avatar photo',
+        )
         .sort({ createdAt: -1 })
         .exec();
 
       // Transformer toutes les communautés pour le frontend
-      return communities.map((community) => this.transformCommunityForFrontend(community));
+      return communities.map((community) =>
+        this.transformCommunityForFrontend(community),
+      );
     } catch (error) {
       console.error('Erreur lors de la récupération des communautés:', error);
-      throw new InternalServerErrorException('Erreur lors de la récupération des communautés');
+      throw new InternalServerErrorException(
+        'Erreur lors de la récupération des communautés',
+      );
     }
   }
 
@@ -965,16 +1169,22 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
         .exec();
 
       return communities.map((community) =>
-        this.transformCommunityForFrontend(community, { includeInviteSecrets: true }),
+        this.transformCommunityForFrontend(community, {
+          includeInviteSecrets: true,
+        }),
       );
-
     } catch (error) {
       if (error instanceof NotFoundException) {
         throw error;
       }
 
-      console.error('Erreur lors de la récupération des communautés créées:', error);
-      throw new InternalServerErrorException('Erreur lors de la récupération des communautés');
+      console.error(
+        'Erreur lors de la récupération des communautés créées:',
+        error,
+      );
+      throw new InternalServerErrorException(
+        'Erreur lors de la récupération des communautés',
+      );
     }
   }
 
@@ -1004,14 +1214,18 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
           includeInviteSecrets: this.canViewInviteSecrets(community, userId),
         }),
       );
-
     } catch (error) {
       if (error instanceof NotFoundException) {
         throw error;
       }
 
-      console.error('Erreur lors de la récupération des communautés rejointes:', error);
-      throw new InternalServerErrorException('Erreur lors de la récupération des communautés');
+      console.error(
+        'Erreur lors de la récupération des communautés rejointes:',
+        error,
+      );
+      throw new InternalServerErrorException(
+        'Erreur lors de la récupération des communautés',
+      );
     }
   }
 
@@ -1031,8 +1245,8 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
         .find({
           $or: [
             { createur: new Types.ObjectId(userId) },
-            { admins: new Types.ObjectId(userId) }
-          ]
+            { admins: new Types.ObjectId(userId) },
+          ],
         })
         .populate('createur', 'name email profile_picture photo_profil')
         .populate('members', 'name email')
@@ -1042,16 +1256,22 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
         .exec();
 
       return communities.map((community) =>
-        this.transformCommunityForFrontend(community, { includeInviteSecrets: true }),
+        this.transformCommunityForFrontend(community, {
+          includeInviteSecrets: true,
+        }),
       );
-
     } catch (error) {
       if (error instanceof NotFoundException) {
         throw error;
       }
 
-      console.error('Erreur lors de la récupération des communautés gérables:', error);
-      throw new InternalServerErrorException('Erreur lors de la récupération des communautés gérables');
+      console.error(
+        'Erreur lors de la récupération des communautés gérables:',
+        error,
+      );
+      throw new InternalServerErrorException(
+        'Erreur lors de la récupération des communautés gérables',
+      );
     }
   }
 
@@ -1071,19 +1291,43 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
         // Query by ID
         community = await this.communityModel
           .findById(idOrSlug)
-          .populate('createur', 'name firstName lastName email profile_picture photo_profil avatar photo bio username')
-          .populate('members', 'name firstName lastName email profile_picture photo_profil avatar photo username')
-          .populate('admins', 'name firstName lastName email profile_picture photo_profil avatar photo username')
-          .populate('moderateurs', 'name firstName lastName email profile_picture photo_profil avatar photo username')
+          .populate(
+            'createur',
+            'name firstName lastName email profile_picture photo_profil avatar photo bio username',
+          )
+          .populate(
+            'members',
+            'name firstName lastName email profile_picture photo_profil avatar photo username',
+          )
+          .populate(
+            'admins',
+            'name firstName lastName email profile_picture photo_profil avatar photo username',
+          )
+          .populate(
+            'moderateurs',
+            'name firstName lastName email profile_picture photo_profil avatar photo username',
+          )
           .exec();
       } else {
         // Query by slug
         community = await this.communityModel
           .findOne({ slug: idOrSlug })
-          .populate('createur', 'name firstName lastName email profile_picture photo_profil avatar photo bio username')
-          .populate('members', 'name firstName lastName email profile_picture photo_profil avatar photo username')
-          .populate('admins', 'name firstName lastName email profile_picture photo_profil avatar photo username')
-          .populate('moderateurs', 'name firstName lastName email profile_picture photo_profil avatar photo username')
+          .populate(
+            'createur',
+            'name firstName lastName email profile_picture photo_profil avatar photo bio username',
+          )
+          .populate(
+            'members',
+            'name firstName lastName email profile_picture photo_profil avatar photo username',
+          )
+          .populate(
+            'admins',
+            'name firstName lastName email profile_picture photo_profil avatar photo username',
+          )
+          .populate(
+            'moderateurs',
+            'name firstName lastName email profile_picture photo_profil avatar photo username',
+          )
           .exec();
       }
 
@@ -1092,14 +1336,15 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
       }
 
       return community;
-
     } catch (error) {
       if (error instanceof NotFoundException) {
         throw error;
       }
 
       console.error('Erreur lors de la récupération de la communauté:', error);
-      throw new InternalServerErrorException('Erreur lors de la récupération de la communauté');
+      throw new InternalServerErrorException(
+        'Erreur lors de la récupération de la communauté',
+      );
     }
   }
 
@@ -1134,7 +1379,9 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
       const isCreator = !!creatorId && creatorId.equals(requesterObjectId);
 
       if (!isCreator) {
-        throw new ForbiddenException('Seul le créateur peut personnaliser cette communauté');
+        throw new ForbiddenException(
+          'Seul le créateur peut personnaliser cette communauté',
+        );
       }
 
       // Update top-level fields used by frontend customize page
@@ -1151,7 +1398,9 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
         community.category = updateData.category;
       }
       if (Array.isArray(updateData.tags)) {
-        community.tags = updateData.tags.filter((tag) => typeof tag === 'string');
+        community.tags = updateData.tags.filter(
+          (tag) => typeof tag === 'string',
+        );
       }
       if (typeof updateData.coverImage === 'string') {
         const cover = updateData.coverImage.trim();
@@ -1167,7 +1416,10 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
           community.logo = this.uploadService.ensureAbsoluteUrl(logo);
         }
       }
-      if (typeof updateData.price === 'number' && Number.isFinite(updateData.price)) {
+      if (
+        typeof updateData.price === 'number' &&
+        Number.isFinite(updateData.price)
+      ) {
         const normalizedPrice = Math.max(updateData.price, 0);
         community.price = normalizedPrice;
         community.fees_of_join = normalizedPrice;
@@ -1179,8 +1431,13 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
             priceType: community.priceType || 'free',
             isRecurring: false,
             features: [],
-            limits: { maxMembers: 1000, maxCourses: 50, maxPosts: 1000, storageLimit: '10GB' },
-            paymentOptions: { allowInstallments: false }
+            limits: {
+              maxMembers: 1000,
+              maxCourses: 50,
+              maxPosts: 1000,
+              storageLimit: '10GB',
+            },
+            paymentOptions: { allowInstallments: false },
           };
         } else {
           community.pricing.price = normalizedPrice;
@@ -1190,7 +1447,9 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
         community.priceType = updateData.priceType;
         if (community.pricing) {
           community.pricing.priceType = updateData.priceType as any;
-          community.pricing.isRecurring = ['monthly', 'yearly'].includes(updateData.priceType);
+          community.pricing.isRecurring = ['monthly', 'yearly'].includes(
+            updateData.priceType,
+          );
         }
       }
       if (typeof updateData.type === 'string') {
@@ -1203,7 +1462,9 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
           ? incomingSettings.visibility.toLowerCase()
           : null;
       const settingsIsPublic =
-        typeof incomingSettings.isPublic === 'boolean' ? incomingSettings.isPublic : null;
+        typeof incomingSettings.isPublic === 'boolean'
+          ? incomingSettings.isPublic
+          : null;
 
       if (settingsVisibility === 'private') {
         community.isPrivate = true;
@@ -1215,14 +1476,20 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
 
       // Merge settings object (design/layout/advanced options)
       if (updateData.settings && typeof updateData.settings === 'object') {
-        const currentSettings = this.normalizeCommunitySettings(community.name, (community.settings || {}) as any);
+        const currentSettings = this.normalizeCommunitySettings(
+          community.name,
+          (community.settings || {}) as any,
+        );
         const mergedSettings: any = {
           ...currentSettings,
           ...incomingSettings,
         };
 
         // Keep socialLinks safely merged
-        if (incomingSettings.socialLinks && typeof incomingSettings.socialLinks === 'object') {
+        if (
+          incomingSettings.socialLinks &&
+          typeof incomingSettings.socialLinks === 'object'
+        ) {
           mergedSettings.socialLinks = {
             ...(currentSettings.socialLinks || {}),
             ...incomingSettings.socialLinks,
@@ -1230,12 +1497,22 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
         }
 
         // Normalize URL-like settings fields
-        if (typeof mergedSettings.logo === 'string' && mergedSettings.logo.trim()) {
-          mergedSettings.logo = this.uploadService.ensureAbsoluteUrl(mergedSettings.logo);
+        if (
+          typeof mergedSettings.logo === 'string' &&
+          mergedSettings.logo.trim()
+        ) {
+          mergedSettings.logo = this.uploadService.ensureAbsoluteUrl(
+            mergedSettings.logo,
+          );
           community.logo = mergedSettings.logo;
         }
-        if (typeof mergedSettings.heroBackground === 'string' && mergedSettings.heroBackground.trim()) {
-          mergedSettings.heroBackground = this.uploadService.ensureAbsoluteUrl(mergedSettings.heroBackground);
+        if (
+          typeof mergedSettings.heroBackground === 'string' &&
+          mergedSettings.heroBackground.trim()
+        ) {
+          mergedSettings.heroBackground = this.uploadService.ensureAbsoluteUrl(
+            mergedSettings.heroBackground,
+          );
         }
         if (Array.isArray(mergedSettings.gallery)) {
           mergedSettings.gallery = mergedSettings.gallery
@@ -1243,7 +1520,9 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
             .map((url: string) => this.uploadService.ensureAbsoluteUrl(url));
         }
         if (typeof mergedSettings.customDomain === 'string') {
-          const normalizedDomain = mergedSettings.customDomain.trim().toLowerCase();
+          const normalizedDomain = mergedSettings.customDomain
+            .trim()
+            .toLowerCase();
           mergedSettings.customDomain = normalizedDomain;
           if (normalizedDomain) {
             const existingDomain = await this.communityModel
@@ -1256,15 +1535,22 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
               .lean()
               .exec();
             if (existingDomain) {
-              throw new ConflictException('Ce domaine personnalisé est déjà utilisé');
+              throw new ConflictException(
+                'Ce domaine personnalisé est déjà utilisé',
+              );
             }
           }
         }
 
         mergedSettings.visibility = community.isPrivate ? 'private' : 'public';
-        mergedSettings.allowInvites = community.isPrivate ? true : Boolean(mergedSettings.allowInvites ?? true);
+        mergedSettings.allowInvites = community.isPrivate
+          ? true
+          : Boolean(mergedSettings.allowInvites ?? true);
 
-        community.settings = this.normalizeCommunitySettings(community.name, mergedSettings);
+        community.settings = this.normalizeCommunitySettings(
+          community.name,
+          mergedSettings,
+        );
       } else {
         // Auto-backfill defaults for older communities even when no settings update is sent
         const normalizedSettings = this.normalizeCommunitySettings(
@@ -1274,12 +1560,17 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
         community.settings = {
           ...normalizedSettings,
           visibility: community.isPrivate ? 'private' : 'public',
-          allowInvites: community.isPrivate ? true : Boolean(normalizedSettings.allowInvites ?? true),
+          allowInvites: community.isPrivate
+            ? true
+            : Boolean(normalizedSettings.allowInvites ?? true),
         } as any;
       }
 
       // Keep pricing sub-document consistent when available
-      if ((community as any).pricing && typeof (community as any).pricing === 'object') {
+      if (
+        (community as any).pricing &&
+        typeof (community as any).pricing === 'object'
+      ) {
         const pricing = (community as any).pricing;
         if (typeof community.fees_of_join === 'number') {
           pricing.price = community.fees_of_join;
@@ -1302,7 +1593,9 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
       await community.save();
 
       const refreshed = await this.getCommunityById(community._id.toString());
-      return this.transformCommunityForFrontend(refreshed, { includeInviteSecrets: true });
+      return this.transformCommunityForFrontend(refreshed, {
+        includeInviteSecrets: true,
+      });
     } catch (error) {
       if (
         error instanceof NotFoundException ||
@@ -1313,10 +1606,14 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
         throw error;
       }
       if (this.isInviteCodeDuplicateError(error)) {
-        throw new ConflictException('Conflit sur le code d\'invitation. Reessayez la mise a jour.');
+        throw new ConflictException(
+          "Conflit sur le code d'invitation. Reessayez la mise a jour.",
+        );
       }
       console.error('Erreur lors de la mise à jour de la communauté:', error);
-      throw new InternalServerErrorException('Erreur lors de la mise à jour de la communauté');
+      throw new InternalServerErrorException(
+        'Erreur lors de la mise à jour de la communauté',
+      );
     }
   }
 
@@ -1330,7 +1627,9 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
 
     const requesterObjectId = new Types.ObjectId(requesterId);
     if (!community.isMember(requesterObjectId)) {
-      throw new ForbiddenException('Vous devez être membre de cette communauté');
+      throw new ForbiddenException(
+        'Vous devez être membre de cette communauté',
+      );
     }
 
     const members = (community as any).members || [];
@@ -1338,9 +1637,15 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
     const start = (page - 1) * limit;
     const end = start + limit;
 
-    const creatorId = (community as any).createur?._id ? (community as any).createur._id : (community as any).createur;
-    const adminIds = ((community as any).admins || []).map((a: any) => (a?._id ? a._id : a));
-    const moderatorIds = ((community as any).moderateurs || []).map((m: any) => (m?._id ? m._id : m));
+    const creatorId = (community as any).createur?._id
+      ? (community as any).createur._id
+      : (community as any).createur;
+    const adminIds = ((community as any).admins || []).map((a: any) =>
+      a?._id ? a._id : a,
+    );
+    const moderatorIds = ((community as any).moderateurs || []).map((m: any) =>
+      m?._id ? m._id : m,
+    );
 
     // Fetch staff records from the new RBAC system
     const staffRecords = await this.staffModel
@@ -1355,7 +1660,8 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
     const items = members.slice(start, end).map((u: any) => {
       const userId = u?._id ? u._id : u;
       const userIdStr = userId.toString();
-      const isCreator = creatorId && userId && new Types.ObjectId(userId).equals(creatorId);
+      const isCreator =
+        creatorId && userId && new Types.ObjectId(userId).equals(creatorId);
 
       // New RBAC staff role takes precedence over legacy arrays
       const staffRole = staffMap.get(userIdStr);
@@ -1366,8 +1672,12 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
         role = staffRole; // 'admin' | 'moderator' | 'support'
       } else {
         // Fallback to legacy arrays
-        const isAdmin = adminIds.some((a: any) => a && new Types.ObjectId(a).equals(userId));
-        const isModerator = moderatorIds.some((m: any) => m && new Types.ObjectId(m).equals(userId));
+        const isAdmin = adminIds.some(
+          (a: any) => a && new Types.ObjectId(a).equals(userId),
+        );
+        const isModerator = moderatorIds.some(
+          (m: any) => m && new Types.ObjectId(m).equals(userId),
+        );
         role = isAdmin ? 'admin' : isModerator ? 'moderator' : 'member';
       }
 
@@ -1376,15 +1686,25 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
         userId: userId.toString(),
         communityId: community._id.toString(),
         role,
-        joinedAt: community.createdAt ? new Date(community.createdAt).toISOString() : new Date().toISOString(),
+        joinedAt: community.createdAt
+          ? new Date(community.createdAt).toISOString()
+          : new Date().toISOString(),
         user: {
           id: userId.toString(),
           email: u?.email,
           username: (u as any)?.username,
           firstName: (u as any)?.firstName,
           lastName: (u as any)?.lastName,
-          name: (u as any)?.name || ((u as any)?.firstName && (u as any)?.lastName ? `${(u as any).firstName} ${(u as any).lastName}` : (u as any)?.username),
-          avatar: (u as any)?.avatar || (u as any)?.profile_picture || (u as any)?.photo_profil || (u as any)?.photo,
+          name:
+            (u as any)?.name ||
+            ((u as any)?.firstName && (u as any)?.lastName
+              ? `${(u as any).firstName} ${(u as any).lastName}`
+              : (u as any)?.username),
+          avatar:
+            (u as any)?.avatar ||
+            (u as any)?.profile_picture ||
+            (u as any)?.photo_profil ||
+            (u as any)?.photo,
           bio: (u as any)?.bio,
           role: (u as any)?.role,
           verified: (u as any)?.verified,
@@ -1412,7 +1732,8 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
       throw new NotFoundException('Communauté non trouvée');
     }
 
-    const normalizedInviteCode = typeof inviteCode === 'string' ? inviteCode.trim() : '';
+    const normalizedInviteCode =
+      typeof inviteCode === 'string' ? inviteCode.trim() : '';
 
     if (community.isPrivate) {
       const inviteChanged = await this.ensurePrivateInviteData(community);
@@ -1427,7 +1748,7 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
 
       if (!isInviteValidated && !inviteMatches) {
         throw new ForbiddenException(
-          'Cette communauté est privée. Vous devez utiliser un lien d\'invitation pour la rejoindre.',
+          "Cette communauté est privée. Vous devez utiliser un lien d'invitation pour la rejoindre.",
         );
       }
     }
@@ -1441,22 +1762,40 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
       // Gratuit: ajouter directement
       community.addMember(new Types.ObjectId(userId));
       await community.save();
-      await this.userModel.findByIdAndUpdate(userId, { $addToSet: { joinedCommunities: community._id } });
+      await this.userModel.findByIdAndUpdate(userId, {
+        $addToSet: { joinedCommunities: community._id },
+      });
       await this.notifyCreatorMemberJoined(community, userId);
-      void this.emailCampaignService.sendWelcomeEmailToNewMember(userId, community._id.toString());
+      void this.emailCampaignService.sendWelcomeEmailToNewMember(
+        userId,
+        community._id.toString(),
+      );
       try {
-        await this.trackingService.trackStart(userId, community._id.toString(), TrackableContentType.COMMUNITY, {
-          source: 'community_membership_checkout',
-          isPaid: false,
-          inviteCode: normalizedInviteCode || undefined,
-        });
-        await this.trackingService.trackComplete(userId, community._id.toString(), TrackableContentType.COMMUNITY, {
-          source: 'community_membership_checkout',
-          isPaid: false,
-          inviteCode: normalizedInviteCode || undefined,
-        });
+        await this.trackingService.trackStart(
+          userId,
+          community._id.toString(),
+          TrackableContentType.COMMUNITY,
+          {
+            source: 'community_membership_checkout',
+            isPaid: false,
+            inviteCode: normalizedInviteCode || undefined,
+          },
+        );
+        await this.trackingService.trackComplete(
+          userId,
+          community._id.toString(),
+          TrackableContentType.COMMUNITY,
+          {
+            source: 'community_membership_checkout',
+            isPaid: false,
+            inviteCode: normalizedInviteCode || undefined,
+          },
+        );
       } catch (error: any) {
-        console.warn(`⚠️ [COMMUNITY-CHECKOUT] Failed to track free membership:`, error?.message || error);
+        console.warn(
+          `⚠️ [COMMUNITY-CHECKOUT] Failed to track free membership:`,
+          error?.message || error,
+        );
       }
       return { message: 'Adhésion gratuite réussie' };
     }
@@ -1466,7 +1805,13 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
     let appliedCode: string | undefined;
     if (promoCode) {
       const buyer = await this.userModel.findById(userId).select('email');
-      const promo = await this.promoService.validateAndApply(promoCode, price, TrackableContentType.COMMUNITY, community._id.toString(), (buyer as any)?.email);
+      const promo = await this.promoService.validateAndApply(
+        promoCode,
+        price,
+        TrackableContentType.COMMUNITY,
+        community._id.toString(),
+        (buyer as any)?.email,
+      );
       if (promo.valid) {
         effective = promo.finalAmountDT;
         discountDT = promo.discountDT;
@@ -1495,27 +1840,48 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
 
       community.addMember(new Types.ObjectId(userId));
       await community.save();
-      await this.userModel.findByIdAndUpdate(userId, { $addToSet: { joinedCommunities: community._id } });
+      await this.userModel.findByIdAndUpdate(userId, {
+        $addToSet: { joinedCommunities: community._id },
+      });
       await this.notifyCreatorMemberJoined(community, userId);
-      void this.emailCampaignService.sendWelcomeEmailToNewMember(userId, community._id.toString());
+      void this.emailCampaignService.sendWelcomeEmailToNewMember(
+        userId,
+        community._id.toString(),
+      );
       try {
-        await this.trackingService.trackStart(userId, community._id.toString(), TrackableContentType.COMMUNITY, {
-          source: 'community_membership_checkout_paid_order_required',
-          isPaid: true,
-          inviteCode: normalizedInviteCode || undefined,
-        });
-        await this.trackingService.trackComplete(userId, community._id.toString(), TrackableContentType.COMMUNITY, {
-          source: 'community_membership_checkout_paid_order_required',
-          isPaid: true,
-          inviteCode: normalizedInviteCode || undefined,
-        });
+        await this.trackingService.trackStart(
+          userId,
+          community._id.toString(),
+          TrackableContentType.COMMUNITY,
+          {
+            source: 'community_membership_checkout_paid_order_required',
+            isPaid: true,
+            inviteCode: normalizedInviteCode || undefined,
+          },
+        );
+        await this.trackingService.trackComplete(
+          userId,
+          community._id.toString(),
+          TrackableContentType.COMMUNITY,
+          {
+            source: 'community_membership_checkout_paid_order_required',
+            isPaid: true,
+            inviteCode: normalizedInviteCode || undefined,
+          },
+        );
       } catch (error: any) {
-        console.warn(`⚠️ [COMMUNITY-CHECKOUT] Failed to track paid membership (paid-order-required):`, error?.message || error);
+        console.warn(
+          `⚠️ [COMMUNITY-CHECKOUT] Failed to track paid membership (paid-order-required):`,
+          error?.message || error,
+        );
       }
       return { message: 'Adhésion confirmée avec succès' };
     }
 
-    const breakdown = await this.feeService.calculateForAmount(effective, community.createur.toString());
+    const breakdown = await this.feeService.calculateForAmount(
+      effective,
+      community.createur.toString(),
+    );
     const metadata: Record<string, any> = {};
     if (community.isPrivate && community.inviteCode) {
       metadata.inviteCode = community.inviteCode;
@@ -1538,22 +1904,40 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
 
     community.addMember(new Types.ObjectId(userId));
     await community.save();
-    await this.userModel.findByIdAndUpdate(userId, { $addToSet: { joinedCommunities: community._id } });
+    await this.userModel.findByIdAndUpdate(userId, {
+      $addToSet: { joinedCommunities: community._id },
+    });
     await this.notifyCreatorMemberJoined(community, userId);
-    void this.emailCampaignService.sendWelcomeEmailToNewMember(userId, community._id.toString());
+    void this.emailCampaignService.sendWelcomeEmailToNewMember(
+      userId,
+      community._id.toString(),
+    );
     try {
-      await this.trackingService.trackStart(userId, community._id.toString(), TrackableContentType.COMMUNITY, {
-        source: 'community_membership_checkout_paid',
-        isPaid: true,
-        inviteCode: normalizedInviteCode || undefined,
-      });
-      await this.trackingService.trackComplete(userId, community._id.toString(), TrackableContentType.COMMUNITY, {
-        source: 'community_membership_checkout_paid',
-        isPaid: true,
-        inviteCode: normalizedInviteCode || undefined,
-      });
+      await this.trackingService.trackStart(
+        userId,
+        community._id.toString(),
+        TrackableContentType.COMMUNITY,
+        {
+          source: 'community_membership_checkout_paid',
+          isPaid: true,
+          inviteCode: normalizedInviteCode || undefined,
+        },
+      );
+      await this.trackingService.trackComplete(
+        userId,
+        community._id.toString(),
+        TrackableContentType.COMMUNITY,
+        {
+          source: 'community_membership_checkout_paid',
+          isPaid: true,
+          inviteCode: normalizedInviteCode || undefined,
+        },
+      );
     } catch (error: any) {
-      console.warn(`⚠️ [COMMUNITY-CHECKOUT] Failed to track paid membership:`, error?.message || error);
+      console.warn(
+        `⚠️ [COMMUNITY-CHECKOUT] Failed to track paid membership:`,
+        error?.message || error,
+      );
     }
 
     return { message: 'Adhésion achetée avec succès' };
@@ -1562,16 +1946,24 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
   /**
    * Ajouter un administrateur à une communauté avec contrainte AdminsMax
    */
-  async addAdmin(communityId: string, targetUserId: string, requesterId: string): Promise<{ message: string }> {
+  async addAdmin(
+    communityId: string,
+    targetUserId: string,
+    requesterId: string,
+  ): Promise<{ message: string }> {
     const community = await this.communityModel.findById(communityId);
     if (!community) {
       throw new NotFoundException('Communauté non trouvée');
     }
 
-    const isCreator = community.createur.equals(new Types.ObjectId(requesterId));
+    const isCreator = community.createur.equals(
+      new Types.ObjectId(requesterId),
+    );
     const isAdmin = this.hasObjectId(community.admins as any[], requesterId);
     if (!isCreator && !isAdmin) {
-      throw new ForbiddenException('Seuls le créateur ou un administrateur peuvent ajouter un administrateur');
+      throw new ForbiddenException(
+        'Seuls le créateur ou un administrateur peuvent ajouter un administrateur',
+      );
     }
 
     const target = await this.userModel.findById(targetUserId);
@@ -1581,18 +1973,25 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
 
     // Enforce AdminsMax according to creator's plan
     const currentAdminsCount = community.admins.length + 1; // including creator implicitly
-    const canAdd = await this.policyService.canAddAdmin(community.createur.toString(), currentAdminsCount);
+    const canAdd = await this.policyService.canAddAdmin(
+      community.createur.toString(),
+      currentAdminsCount,
+    );
     if (!canAdd) {
-      throw new ForbiddenException('Limite d\'administrateurs atteinte pour le plan du créateur');
+      throw new ForbiddenException(
+        "Limite d'administrateurs atteinte pour le plan du créateur",
+      );
     }
 
     const targetId = new Types.ObjectId(targetUserId);
-    if (!community.admins.some(a => a.equals(targetId))) {
+    if (!community.admins.some((a) => a.equals(targetId))) {
       community.admins.push(targetId);
       await community.save();
     }
 
-    await this.userModel.findByIdAndUpdate(targetId, { $addToSet: { adminCommunities: community._id } });
+    await this.userModel.findByIdAndUpdate(targetId, {
+      $addToSet: { adminCommunities: community._id },
+    });
 
     return { message: 'Administrateur ajouté avec succès' };
   }
@@ -1600,22 +1999,32 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
   /**
    * Retirer un administrateur d'une communauté
    */
-  async removeAdmin(communityId: string, targetUserId: string, requesterId: string): Promise<{ message: string }> {
+  async removeAdmin(
+    communityId: string,
+    targetUserId: string,
+    requesterId: string,
+  ): Promise<{ message: string }> {
     const community = await this.communityModel.findById(communityId);
     if (!community) {
       throw new NotFoundException('Communauté non trouvée');
     }
 
-    const isCreator = community.createur.equals(new Types.ObjectId(requesterId));
+    const isCreator = community.createur.equals(
+      new Types.ObjectId(requesterId),
+    );
     if (!isCreator) {
-      throw new ForbiddenException('Seul le créateur peut retirer un administrateur');
+      throw new ForbiddenException(
+        'Seul le créateur peut retirer un administrateur',
+      );
     }
 
     const targetId = new Types.ObjectId(targetUserId);
-    community.admins = community.admins.filter(a => !a.equals(targetId));
+    community.admins = community.admins.filter((a) => !a.equals(targetId));
     await community.save();
 
-    await this.userModel.findByIdAndUpdate(targetId, { $pull: { adminCommunities: community._id } });
+    await this.userModel.findByIdAndUpdate(targetId, {
+      $pull: { adminCommunities: community._id },
+    });
 
     return { message: 'Administrateur retiré avec succès' };
   }
@@ -1632,10 +2041,14 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
         .select('-members -admins -moderateurs -inviteCode -inviteLink') // Masquer les listes de membres pour l'affichage public
         .sort({ createdAt: -1 })
         .exec();
-
     } catch (error) {
-      console.error('Erreur lors de la récupération des communautés publiques:', error);
-      throw new InternalServerErrorException('Erreur lors de la récupération des communautés');
+      console.error(
+        'Erreur lors de la récupération des communautés publiques:',
+        error,
+      );
+      throw new InternalServerErrorException(
+        'Erreur lors de la récupération des communautés',
+      );
     }
   }
   /**
@@ -1652,10 +2065,11 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
         .populate('moderateurs', 'name email')
         .sort({ createdAt: -1 })
         .exec();
-
     } catch (error) {
       console.error('Erreur lors de la récupération des communautés:', error);
-      throw new InternalServerErrorException('Erreur lors de la récupération des communautés');
+      throw new InternalServerErrorException(
+        'Erreur lors de la récupération des communautés',
+      );
     }
   }
 
@@ -1680,13 +2094,12 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
           await this.communityModel.findByIdAndUpdate(
             community._id,
             { rank: newRank },
-            { new: true }
+            { new: true },
           );
         }
       }
 
       console.log(`✅ Rangs mis à jour pour ${communities.length} communautés`);
-
     } catch (error) {
       console.error('Erreur lors de la mise à jour des rangs:', error);
       // Ne pas faire échouer l'opération principale si la mise à jour des rangs échoue
@@ -1705,10 +2118,11 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
         .populate('createur', 'name email profile_picture photo_profil')
         .select('name logo membersCount rank createur createdAt')
         .exec();
-
     } catch (error) {
       console.error('Erreur lors de la récupération du classement:', error);
-      throw new InternalServerErrorException('Erreur lors de la récupération du classement');
+      throw new InternalServerErrorException(
+        'Erreur lors de la récupération du classement',
+      );
     }
   }
 
@@ -1718,7 +2132,10 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
    * @param userId - ID de l'utilisateur qui souhaite rejoindre
    * @returns La communauté mise à jour
    */
-  async joinCommunity(joinData: JoinCommunityDto, userId: string): Promise<CommunityDocument> {
+  async joinCommunity(
+    joinData: JoinCommunityDto,
+    userId: string,
+  ): Promise<CommunityDocument> {
     try {
       // Vérifier si l'utilisateur existe
       const user = await this.userModel.findById(userId);
@@ -1727,22 +2144,29 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
       }
 
       // Vérifier si la communauté existe
-      const community = await this.communityModel.findById(joinData.communityId);
+      const community = await this.communityModel.findById(
+        joinData.communityId,
+      );
       if (!community) {
         throw new NotFoundException('Communauté non trouvée');
       }
 
       // Vérifier si la communauté est active
       if (!community.isActive) {
-        throw new ForbiddenException('Cette communauté n\'est pas active');
+        throw new ForbiddenException("Cette communauté n'est pas active");
       }
 
       // Enforcer MembersMax du créateur de la communauté
       const creatorId = community.createur;
       const currentMembers = community.membersCount || community.members.length;
-      const canAdd = await this.policyService.canAddMember(creatorId.toString(), currentMembers);
+      const canAdd = await this.policyService.canAddMember(
+        creatorId.toString(),
+        currentMembers,
+      );
       if (!canAdd) {
-        throw new ForbiddenException('Limite de membres atteinte pour le plan du créateur.');
+        throw new ForbiddenException(
+          'Limite de membres atteinte pour le plan du créateur.',
+        );
       }
 
       // Vérifier si l'utilisateur est déjà membre
@@ -1755,7 +2179,9 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
           .exec();
 
         if (!populatedCommunity) {
-          throw new InternalServerErrorException('Erreur lors de la récupération de la communauté mise à jour');
+          throw new InternalServerErrorException(
+            'Erreur lors de la récupération de la communauté mise à jour',
+          );
         }
 
         return this.transformCommunityForFrontend(populatedCommunity);
@@ -1763,7 +2189,9 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
 
       // Vérifier si la communauté est privée (pour les communautés privées, seul le lien d'invitation fonctionne)
       if (community.isPrivate) {
-        throw new ForbiddenException('Cette communauté est privée. Vous devez utiliser un lien d\'invitation pour la rejoindre.');
+        throw new ForbiddenException(
+          "Cette communauté est privée. Vous devez utiliser un lien d'invitation pour la rejoindre.",
+        );
       }
 
       // Ajouter l'utilisateur à la communauté
@@ -1775,7 +2203,7 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
       await this.userModel.findByIdAndUpdate(
         userId,
         { $addToSet: { joinedCommunities: community._id } },
-        { new: true }
+        { new: true },
       );
 
       try {
@@ -1789,10 +2217,18 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
           userId,
           community._id.toString(),
           TrackableContentType.COMMUNITY,
-          { source: 'community_join', isPaid: Boolean(community.fees_of_join && community.fees_of_join > 0) },
+          {
+            source: 'community_join',
+            isPaid: Boolean(
+              community.fees_of_join && community.fees_of_join > 0,
+            ),
+          },
         );
       } catch (error: any) {
-        console.warn(`⚠️ [COMMUNITY-JOIN] Failed to track join:`, error?.message || error);
+        console.warn(
+          `⚠️ [COMMUNITY-JOIN] Failed to track join:`,
+          error?.message || error,
+        );
       }
 
       // Recalculer les rangs
@@ -1802,7 +2238,24 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
         communityId: community._id?.toString?.(),
       });
 
-      await this.notifyCreatorMemberJoined(community, userId, this.resolveMemberDisplayName(user));
+      await this.notifyCreatorMemberJoined(
+        community,
+        userId,
+        this.resolveMemberDisplayName(user),
+      );
+
+      // Auto DM: send welcome message to new member
+      if (
+        community.settings?.welcomeDmEnabled === true &&
+        community.settings?.welcomeDmMessage?.trim()
+      ) {
+        void this.dmService.sendWelcomeDm(
+          community._id.toString(),
+          userId,
+          community.createur.toString(),
+          community.settings.welcomeDmMessage,
+        );
+      }
 
       // Retourner la communauté avec les relations peuplées
       const populatedCommunity = await this.communityModel
@@ -1813,19 +2266,26 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
         .exec();
 
       if (!populatedCommunity) {
-        throw new InternalServerErrorException('Erreur lors de la récupération de la communauté mise à jour');
+        throw new InternalServerErrorException(
+          'Erreur lors de la récupération de la communauté mise à jour',
+        );
       }
 
       // Transformer la réponse pour être 100% compatible avec le frontend
       return this.transformCommunityForFrontend(populatedCommunity);
-
     } catch (error) {
-      if (error instanceof NotFoundException || error instanceof ConflictException || error instanceof ForbiddenException) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof ConflictException ||
+        error instanceof ForbiddenException
+      ) {
         throw error;
       }
 
       console.error('Erreur lors de la jonction à la communauté:', error);
-      throw new InternalServerErrorException('Erreur lors de la jonction à la communauté');
+      throw new InternalServerErrorException(
+        'Erreur lors de la jonction à la communauté',
+      );
     }
   }
 
@@ -1835,7 +2295,10 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
    * @param userId - ID de l'utilisateur qui souhaite rejoindre
    * @returns La communauté mise à jour
    */
-  async joinByInvite(joinData: JoinByInviteDto, userId: string): Promise<CommunityDocument> {
+  async joinByInvite(
+    joinData: JoinByInviteDto,
+    userId: string,
+  ): Promise<CommunityDocument> {
     try {
       // Vérifier si l'utilisateur existe
       const user = await this.userModel.findById(userId);
@@ -1845,22 +2308,30 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
 
       // Trouver la communauté par le code d'invitation
       const normalizedInviteCode = String(joinData.inviteCode || '').trim();
-      const community = await this.communityModel.findOne({ inviteCode: normalizedInviteCode });
+      const community = await this.communityModel.findOne({
+        inviteCode: normalizedInviteCode,
+      });
       if (!community) {
-        throw new NotFoundException('Code d\'invitation invalide ou expiré');
+        throw new NotFoundException("Code d'invitation invalide ou expiré");
       }
 
       // Vérifier si la communauté est active
       if (!community.isActive) {
-        throw new ForbiddenException('Cette communauté n\'est pas active');
+        throw new ForbiddenException("Cette communauté n'est pas active");
       }
 
       // Enforcer MembersMax du créateur de la communauté
       const creatorId2 = community.createur;
-      const currentMembers2 = community.membersCount || community.members.length;
-      const canAdd2 = await this.policyService.canAddMember(creatorId2.toString(), currentMembers2);
+      const currentMembers2 =
+        community.membersCount || community.members.length;
+      const canAdd2 = await this.policyService.canAddMember(
+        creatorId2.toString(),
+        currentMembers2,
+      );
       if (!canAdd2) {
-        throw new ForbiddenException('Limite de membres atteinte pour le plan du créateur.');
+        throw new ForbiddenException(
+          'Limite de membres atteinte pour le plan du créateur.',
+        );
       }
 
       // Vérifier si l'utilisateur est déjà membre
@@ -1873,7 +2344,9 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
           .exec();
 
         if (!populatedCommunity) {
-          throw new InternalServerErrorException('Erreur lors de la récupération de la communauté mise à jour');
+          throw new InternalServerErrorException(
+            'Erreur lors de la récupération de la communauté mise à jour',
+          );
         }
 
         return this.transformCommunityForFrontend(populatedCommunity);
@@ -1888,7 +2361,7 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
       await this.userModel.findByIdAndUpdate(
         userId,
         { $addToSet: { joinedCommunities: community._id } },
-        { new: true }
+        { new: true },
       );
 
       try {
@@ -1905,11 +2378,16 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
           {
             source: 'community_join_invite',
             inviteCode: normalizedInviteCode,
-            isPaid: Boolean(community.fees_of_join && community.fees_of_join > 0),
+            isPaid: Boolean(
+              community.fees_of_join && community.fees_of_join > 0,
+            ),
           },
         );
       } catch (error: any) {
-        console.warn(`⚠️ [COMMUNITY-JOIN] Failed to track join (invite):`, error?.message || error);
+        console.warn(
+          `⚠️ [COMMUNITY-JOIN] Failed to track join (invite):`,
+          error?.message || error,
+        );
       }
 
       // Recalculer les rangs
@@ -1919,7 +2397,24 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
         communityId: community._id?.toString?.(),
       });
 
-      await this.notifyCreatorMemberJoined(community, userId, this.resolveMemberDisplayName(user));
+      await this.notifyCreatorMemberJoined(
+        community,
+        userId,
+        this.resolveMemberDisplayName(user),
+      );
+
+      // Auto DM: send welcome message to new member
+      if (
+        community.settings?.welcomeDmEnabled === true &&
+        community.settings?.welcomeDmMessage?.trim()
+      ) {
+        void this.dmService.sendWelcomeDm(
+          community._id.toString(),
+          userId,
+          community.createur.toString(),
+          community.settings.welcomeDmMessage,
+        );
+      }
 
       // Retourner la communauté avec les relations peuplées
       const populatedCommunity = await this.communityModel
@@ -1930,19 +2425,26 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
         .exec();
 
       if (!populatedCommunity) {
-        throw new InternalServerErrorException('Erreur lors de la récupération de la communauté mise à jour');
+        throw new InternalServerErrorException(
+          'Erreur lors de la récupération de la communauté mise à jour',
+        );
       }
 
       // Transformer la réponse pour être 100% compatible avec le frontend
       return this.transformCommunityForFrontend(populatedCommunity);
-
     } catch (error) {
-      if (error instanceof NotFoundException || error instanceof ConflictException || error instanceof ForbiddenException) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof ConflictException ||
+        error instanceof ForbiddenException
+      ) {
         throw error;
       }
 
       console.error('Erreur lors de la jonction par invitation:', error);
-      throw new InternalServerErrorException('Erreur lors de la jonction par invitation');
+      throw new InternalServerErrorException(
+        'Erreur lors de la jonction par invitation',
+      );
     }
   }
 
@@ -1952,7 +2454,10 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
    * @param userId - ID de l'utilisateur (doit être admin/créateur)
    * @returns Le lien d'invitation généré
    */
-  async generateInviteLink(generateData: GenerateInviteDto, userId: string): Promise<{ inviteCode: string, inviteLink: string }> {
+  async generateInviteLink(
+    generateData: GenerateInviteDto,
+    userId: string,
+  ): Promise<{ inviteCode: string; inviteLink: string }> {
     try {
       // Vérifier si l'utilisateur existe
       const user = await this.userModel.findById(userId);
@@ -1961,7 +2466,9 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
       }
 
       // Vérifier si la communauté existe
-      const community = await this.communityModel.findById(generateData.communityId);
+      const community = await this.communityModel.findById(
+        generateData.communityId,
+      );
       if (!community) {
         throw new NotFoundException('Communauté non trouvée');
       }
@@ -1971,16 +2478,21 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
       const isAdmin = this.hasObjectId(community.admins as any[], userId);
 
       if (!isCreator && !isAdmin) {
-        throw new ForbiddenException('Seuls les créateurs et administrateurs peuvent générer des liens d\'invitation');
+        throw new ForbiddenException(
+          "Seuls les créateurs et administrateurs peuvent générer des liens d'invitation",
+        );
       }
 
       if (!community.isPrivate) {
         throw new ForbiddenException(
-          'Seules les communautés privées peuvent utiliser des liens d\'invitation.',
+          "Seules les communautés privées peuvent utiliser des liens d'invitation.",
         );
       }
 
-      const changed = await this.ensurePrivateInviteData(community, Boolean(generateData.regenerate));
+      const changed = await this.ensurePrivateInviteData(
+        community,
+        Boolean(generateData.regenerate),
+      );
       if (changed) {
         await community.save();
         await this.invalidateCommunityAndProfileCaches({
@@ -1991,19 +2503,25 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
 
       return {
         inviteCode: community.inviteCode,
-        inviteLink: community.inviteLink
+        inviteLink: community.inviteLink,
       };
-
     } catch (error) {
-      if (error instanceof NotFoundException || error instanceof ForbiddenException) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof ForbiddenException
+      ) {
         throw error;
       }
 
-      console.error('Erreur lors de la génération du lien d\'invitation:', error);
-      throw new InternalServerErrorException('Erreur lors de la génération du lien d\'invitation');
+      console.error(
+        "Erreur lors de la génération du lien d'invitation:",
+        error,
+      );
+      throw new InternalServerErrorException(
+        "Erreur lors de la génération du lien d'invitation",
+      );
     }
   }
-
 
   /**
    * Validate an invitation code and return preview info
@@ -2013,17 +2531,20 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
   async validateInviteCode(inviteCode: string): Promise<any> {
     try {
       const normalizedInviteCode = String(inviteCode || '').trim();
-      const community = await this.communityModel.findOne({ inviteCode: normalizedInviteCode })
+      const community = await this.communityModel
+        .findOne({ inviteCode: normalizedInviteCode })
         .populate('createur', 'name profile_picture photo_profil')
-        .select('name slug description short_description coverImage photo_de_couverture logo fees_of_join price priceType currency membersCount isPrivate isActive')
+        .select(
+          'name slug description short_description coverImage photo_de_couverture logo fees_of_join price priceType currency membersCount isPrivate isActive',
+        )
         .exec();
 
       if (!community) {
-        throw new NotFoundException('Code d\'invitation invalide');
+        throw new NotFoundException("Code d'invitation invalide");
       }
 
       if (!community.isActive) {
-        throw new ForbiddenException('Cette communauté n\'est plus active');
+        throw new ForbiddenException("Cette communauté n'est plus active");
       }
 
       // Transform for frontend preview
@@ -2035,39 +2556,52 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
         description: community.short_description,
         logo: this.uploadService.ensureAbsoluteUrl(community.logo),
         coverImage: this.uploadService.ensureAbsoluteUrl(
-          community.photo_de_couverture || community.coverImage || ''
+          community.photo_de_couverture || community.coverImage || '',
         ),
         creator: {
           name: (community.createur as any)?.name || 'Créateur',
           avatar: this.uploadService.ensureAbsoluteUrl(
-            (community.createur as any)?.profile_picture || (community.createur as any)?.photo_profil || ''
-          )
+            (community.createur as any)?.profile_picture ||
+              (community.createur as any)?.photo_profil ||
+              '',
+          ),
         },
         membersCount: community.membersCount,
         price: community.fees_of_join || community.price || 0,
         currency: community.currency,
         isPrivate: community.isPrivate,
-        priceType: community.priceType
+        priceType: community.priceType,
       };
 
       return preview;
     } catch (error) {
-      if (error instanceof NotFoundException || error instanceof ForbiddenException) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof ForbiddenException
+      ) {
         throw error;
       }
       console.error('Error validating invite code:', error);
-      throw new InternalServerErrorException('Erreur lors de la validation du code');
+      throw new InternalServerErrorException(
+        'Erreur lors de la validation du code',
+      );
     }
   }
 
   /**
    * Checkout for private community via invite
    */
-  async checkoutPrivateCommunity(inviteCode: string, userId: string, promoCode?: string): Promise<{ message: string }> {
+  async checkoutPrivateCommunity(
+    inviteCode: string,
+    userId: string,
+    promoCode?: string,
+  ): Promise<{ message: string }> {
     const normalizedInviteCode = String(inviteCode || '').trim();
-    const community = await this.communityModel.findOne({ inviteCode: normalizedInviteCode });
+    const community = await this.communityModel.findOne({
+      inviteCode: normalizedInviteCode,
+    });
     if (!community) {
-      throw new NotFoundException('Code d\'invitation invalide');
+      throw new NotFoundException("Code d'invitation invalide");
     }
 
     if (!community.isActive) {
@@ -2095,7 +2629,10 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
    * @param userId - ID de l'utilisateur qui souhaite quitter
    * @returns Message de confirmation
    */
-  async leaveCommunity(communityId: string, userId: string): Promise<{ message: string }> {
+  async leaveCommunity(
+    communityId: string,
+    userId: string,
+  ): Promise<{ message: string }> {
     try {
       // Vérifier si l'utilisateur existe
       const user = await this.userModel.findById(userId);
@@ -2121,20 +2658,33 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
 
       // Empêcher le créateur de quitter sa propre communauté
       if (this.isCommunityCreator(community, userId)) {
-        throw new ForbiddenException('Le créateur ne peut pas quitter sa propre communauté');
+        throw new ForbiddenException(
+          'Le créateur ne peut pas quitter sa propre communauté',
+        );
       }
 
       // Vérifier si l'utilisateur est membre
       const isMember = this.hasObjectId(community.members as any[], userId);
 
       if (!isMember) {
-        throw new BadRequestException('Vous n\'êtes pas membre de cette communauté');
+        throw new BadRequestException(
+          "Vous n'êtes pas membre de cette communauté",
+        );
       }
 
       // Retirer l'utilisateur de la communauté
-      community.members = this.excludeUserId(community.members as any[], userId) as any;
-      community.admins = this.excludeUserId(community.admins as any[], userId) as any;
-      community.moderateurs = this.excludeUserId(community.moderateurs as any[], userId) as any;
+      community.members = this.excludeUserId(
+        community.members as any[],
+        userId,
+      ) as any;
+      community.admins = this.excludeUserId(
+        community.admins as any[],
+        userId,
+      ) as any;
+      community.moderateurs = this.excludeUserId(
+        community.moderateurs as any[],
+        userId,
+      ) as any;
       community.membersCount = community.members.length;
       await community.save();
 
@@ -2144,10 +2694,10 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
         {
           $pull: {
             joinedCommunities: community._id,
-            adminCommunities: community._id
-          }
+            adminCommunities: community._id,
+          },
         },
-        { new: true }
+        { new: true },
       );
 
       // Recalculer les rangs
@@ -2158,16 +2708,21 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
       });
 
       return {
-        message: 'Vous avez quitté la communauté avec succès'
+        message: 'Vous avez quitté la communauté avec succès',
       };
-
     } catch (error) {
-      if (error instanceof NotFoundException || error instanceof ForbiddenException || error instanceof BadRequestException) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof ForbiddenException ||
+        error instanceof BadRequestException
+      ) {
         throw error;
       }
 
       console.error('Erreur lors de la sortie de la communauté:', error);
-      throw new InternalServerErrorException('Erreur lors de la sortie de la communauté');
+      throw new InternalServerErrorException(
+        'Erreur lors de la sortie de la communauté',
+      );
     }
   }
 
@@ -2177,7 +2732,10 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
    * @param limit - Maximum number of members to return
    * @returns Members with their online status
    */
-  async getActiveMembers(slug: string, limit: number = 20): Promise<{
+  async getActiveMembers(
+    slug: string,
+    limit: number = 20,
+  ): Promise<{
     members: Array<{
       id: string;
       name: string;
@@ -2191,7 +2749,10 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
     online: number;
   }> {
     try {
-      console.log('👥 [ACTIVE-MEMBERS-SERVICE] Fetching active members for slug:', slug);
+      console.log(
+        '👥 [ACTIVE-MEMBERS-SERVICE] Fetching active members for slug:',
+        slug,
+      );
 
       // Find community by slug
       const community = await this.communityModel
@@ -2199,7 +2760,7 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
         .populate({
           path: 'members',
           select: 'name email profile_picture photo_profil bio lastActive',
-          options: { limit }
+          options: { limit },
         })
         .exec();
 
@@ -2207,21 +2768,31 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
         throw new NotFoundException('Community not found');
       }
 
-      console.log('📦 [ACTIVE-MEMBERS-SERVICE] Community found:', community.name);
-      console.log('📊 [ACTIVE-MEMBERS-SERVICE] Total members:', community.members.length);
+      console.log(
+        '📦 [ACTIVE-MEMBERS-SERVICE] Community found:',
+        community.name,
+      );
+      console.log(
+        '📊 [ACTIVE-MEMBERS-SERVICE] Total members:',
+        community.members.length,
+      );
 
       // Calculate online status - users are online if active within last 5 minutes
       const onlineThreshold = new Date(Date.now() - 5 * 60 * 1000);
 
       const members = (community.members as any[]).map((member: any) => {
-        const lastActiveDate = member.lastActive ? new Date(member.lastActive) : new Date(0);
+        const lastActiveDate = member.lastActive
+          ? new Date(member.lastActive)
+          : new Date(0);
         const isOnline = lastActiveDate > onlineThreshold;
 
         return {
           id: member._id.toString(),
           name: member.name || 'Unknown User',
           email: member.email,
-          avatar: member.profile_picture || member.photo_profil ||
+          avatar:
+            member.profile_picture ||
+            member.photo_profil ||
             `https://ui-avatars.com/api/?name=${encodeURIComponent(member.name || 'U')}&background=8e78fb&color=fff`,
           bio: member.bio || '',
           isOnline,
@@ -2236,25 +2807,23 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
         return b.lastActive.getTime() - a.lastActive.getTime();
       });
 
-      const onlineCount = members.filter(m => m.isOnline).length;
+      const onlineCount = members.filter((m) => m.isOnline).length;
 
       console.log('✅ [ACTIVE-MEMBERS-SERVICE] Members processed:', {
         total: members.length,
         online: onlineCount,
-        offline: members.length - onlineCount
+        offline: members.length - onlineCount,
       });
 
       return {
         members,
         total: members.length,
-        online: onlineCount
+        online: onlineCount,
       };
-
     } catch (error) {
       if (error instanceof NotFoundException) {
         throw error;
       }
-
 
       console.error('❌ [ACTIVE-MEMBERS-SERVICE] Error:', error);
       throw new InternalServerErrorException('Error fetching active members');
@@ -2273,7 +2842,10 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
     isPublic: boolean;
   }> {
     try {
-      console.log('📊 [COMMUNITY-STATS] Getting stats for community:', communityId);
+      console.log(
+        '📊 [COMMUNITY-STATS] Getting stats for community:',
+        communityId,
+      );
 
       // Find community
       const community = await this.communityModel.findById(communityId);
@@ -2282,7 +2854,8 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
       }
 
       // Real members count from the database
-      const membersCount = community.membersCount || community.members?.length || 0;
+      const membersCount =
+        community.membersCount || community.members?.length || 0;
 
       const now = new Date();
       const last30Start = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
@@ -2298,24 +2871,37 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
           actionType: TrackingActionType.START,
         };
 
-        const currentJoinUsers = await this.trackingActionModel.distinct('userId', {
-          ...matchBase,
-          timestamp: { $gte: last30Start, $lt: now },
-        });
-        const prevJoinUsers = await this.trackingActionModel.distinct('userId', {
-          ...matchBase,
-          timestamp: { $gte: prev30Start, $lt: last30Start },
-        });
+        const currentJoinUsers = await this.trackingActionModel.distinct(
+          'userId',
+          {
+            ...matchBase,
+            timestamp: { $gte: last30Start, $lt: now },
+          },
+        );
+        const prevJoinUsers = await this.trackingActionModel.distinct(
+          'userId',
+          {
+            ...matchBase,
+            timestamp: { $gte: prev30Start, $lt: last30Start },
+          },
+        );
 
-        const current = Array.isArray(currentJoinUsers) ? currentJoinUsers.length : 0;
-        const previous = Array.isArray(prevJoinUsers) ? prevJoinUsers.length : 0;
+        const current = Array.isArray(currentJoinUsers)
+          ? currentJoinUsers.length
+          : 0;
+        const previous = Array.isArray(prevJoinUsers)
+          ? prevJoinUsers.length
+          : 0;
         if (previous <= 0) {
           monthlyGrowth = current > 0 ? 100 : 0;
         } else {
           monthlyGrowth = Math.round(((current - previous) / previous) * 100);
         }
       } catch (error: any) {
-        console.warn(`⚠️ [COMMUNITY-STATS] Failed to compute monthlyGrowth:`, error?.message || error);
+        console.warn(
+          `⚠️ [COMMUNITY-STATS] Failed to compute monthlyGrowth:`,
+          error?.message || error,
+        );
         monthlyGrowth = 0;
       }
 
@@ -2334,17 +2920,25 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
           { $group: { _id: '$comments.userId' } },
         ]);
 
-        const commenters = (commentersAgg || []).map((row: any) => row?._id).filter(Boolean);
+        const commenters = (commentersAgg || [])
+          .map((row: any) => row?._id)
+          .filter(Boolean);
         const uniqueActive = new Set<string>([
           ...(authors || []).map((id: any) => id?.toString?.() || String(id)),
           ...commenters.map((id: any) => id?.toString?.() || String(id)),
         ]);
 
         if (membersCount > 0) {
-          engagementRate = Math.min(100, Math.round((uniqueActive.size / membersCount) * 100));
+          engagementRate = Math.min(
+            100,
+            Math.round((uniqueActive.size / membersCount) * 100),
+          );
         }
       } catch (error: any) {
-        console.warn(`⚠️ [COMMUNITY-STATS] Failed to compute engagementRate:`, error?.message || error);
+        console.warn(
+          `⚠️ [COMMUNITY-STATS] Failed to compute engagementRate:`,
+          error?.message || error,
+        );
         engagementRate = 0;
       }
 
@@ -2355,13 +2949,12 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
         membersCount,
         engagementRate,
         monthlyGrowth,
-        isPublic
+        isPublic,
       };
 
       console.log('✅ [COMMUNITY-STATS] Stats calculated:', stats);
 
       return stats;
-
     } catch (error) {
       if (error instanceof NotFoundException) {
         throw error;
@@ -2400,210 +2993,356 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
         throw new NotFoundException('Community not found');
       }
 
-      const communityObjectId = new Types.ObjectId((existingCommunity as any)._id);
+      const communityObjectId = new Types.ObjectId(
+        (existingCommunity as any)._id,
+      );
       const communityIdString = communityObjectId.toString();
-      const communitySlug = String((existingCommunity as any).slug || '').trim();
+      const communitySlug = String(
+        (existingCommunity as any).slug || '',
+      ).trim();
       const communityStringRefs = Array.from(
         new Set([communityIdString, communitySlug].filter(Boolean)),
       );
 
       const connection = this.communityModel.db;
       const session: any = null;
-        const courseModel = this.getModelIfRegistered(connection, 'Cours');
-        const challengeModel = this.getModelIfRegistered(connection, 'Challenge');
-        const productModel = this.getModelIfRegistered(connection, 'Product');
-        const sessionModel = this.getModelIfRegistered(connection, 'Session');
-        const eventModel = this.getModelIfRegistered(connection, 'Event');
-        const postModel = this.getModelIfRegistered(connection, 'Post');
-        const resourceModel = this.getModelIfRegistered(connection, 'Resource');
-        const communityPageContentModel = this.getModelIfRegistered(connection, 'CommunityPageContent');
-        const orderModel = this.getModelIfRegistered(connection, 'Order');
-        const payoutModel = this.getModelIfRegistered(connection, 'Payout');
-        const promoCodeModel = this.getModelIfRegistered(connection, 'PromoCode');
-        const analyticsDailyModel = this.getModelIfRegistered(connection, 'AnalyticsDaily');
-        const emailCampaignModel = this.getModelIfRegistered(connection, 'EmailCampaign');
-        const achievementModel = this.getModelIfRegistered(connection, 'Achievement');
-        const userAchievementModel = this.getModelIfRegistered(connection, 'UserAchievement');
-        const userLoginActivityModel = this.getModelIfRegistered(connection, 'UserLoginActivity');
-        const courseEnrollmentModel = this.getModelIfRegistered(connection, 'CourseEnrollment');
-        const challengeSubmissionModel = this.getModelIfRegistered(connection, 'ChallengeSubmission');
-        const contentProgressModel = this.getModelIfRegistered(connection, 'ContentProgress');
-        const trackingActionModel = this.getModelIfRegistered(connection, 'TrackingAction');
-        const conversationModel = this.getModelIfRegistered(connection, 'Conversation');
-        const messageModel = this.getModelIfRegistered(connection, 'Message');
-        const feedbackModel = this.getModelIfRegistered(connection, 'Feedback');
+      const courseModel = this.getModelIfRegistered(connection, 'Cours');
+      const challengeModel = this.getModelIfRegistered(connection, 'Challenge');
+      const productModel = this.getModelIfRegistered(connection, 'Product');
+      const sessionModel = this.getModelIfRegistered(connection, 'Session');
+      const eventModel = this.getModelIfRegistered(connection, 'Event');
+      const postModel = this.getModelIfRegistered(connection, 'Post');
+      const resourceModel = this.getModelIfRegistered(connection, 'Resource');
+      const communityPageContentModel = this.getModelIfRegistered(
+        connection,
+        'CommunityPageContent',
+      );
+      const orderModel = this.getModelIfRegistered(connection, 'Order');
+      const payoutModel = this.getModelIfRegistered(connection, 'Payout');
+      const promoCodeModel = this.getModelIfRegistered(connection, 'PromoCode');
+      const analyticsDailyModel = this.getModelIfRegistered(
+        connection,
+        'AnalyticsDaily',
+      );
+      const emailCampaignModel = this.getModelIfRegistered(
+        connection,
+        'EmailCampaign',
+      );
+      const achievementModel = this.getModelIfRegistered(
+        connection,
+        'Achievement',
+      );
+      const userAchievementModel = this.getModelIfRegistered(
+        connection,
+        'UserAchievement',
+      );
+      const userLoginActivityModel = this.getModelIfRegistered(
+        connection,
+        'UserLoginActivity',
+      );
+      const courseEnrollmentModel = this.getModelIfRegistered(
+        connection,
+        'CourseEnrollment',
+      );
+      const challengeSubmissionModel = this.getModelIfRegistered(
+        connection,
+        'ChallengeSubmission',
+      );
+      const contentProgressModel = this.getModelIfRegistered(
+        connection,
+        'ContentProgress',
+      );
+      const trackingActionModel = this.getModelIfRegistered(
+        connection,
+        'TrackingAction',
+      );
+      const conversationModel = this.getModelIfRegistered(
+        connection,
+        'Conversation',
+      );
+      const messageModel = this.getModelIfRegistered(connection, 'Message');
+      const feedbackModel = this.getModelIfRegistered(connection, 'Feedback');
 
-        const [
-          courses,
-          challenges,
-          products,
-          sessions,
-          posts,
-          events,
-          resources,
-          conversations,
-        ] = await Promise.all([
-          courseModel
-            ? courseModel.find({ communityId: { $in: communityStringRefs } }).select('_id id').session(session).lean()
-            : [],
-          challengeModel
-            ? challengeModel.find({ communityId: { $in: communityStringRefs } }).select('_id id').session(session).lean()
-            : [],
-          productModel
-            ? productModel.find({ communityId: { $in: communityStringRefs } }).select('_id id').session(session).lean()
-            : [],
-          sessionModel
-            ? sessionModel.find({ communityId: { $in: communityStringRefs } }).select('_id id').session(session).lean()
-            : [],
-          postModel
-            ? postModel.find({ communityId: { $in: communityStringRefs } }).select('_id id').session(session).lean()
-            : [],
-          eventModel
-            ? eventModel.find({ communityId: communityObjectId }).select('_id id').session(session).lean()
-            : [],
-          resourceModel
-            ? resourceModel.find({ communityId: communityObjectId }).select('_id').session(session).lean()
-            : [],
-          conversationModel
-            ? conversationModel.find({ communityId: communityObjectId }).select('_id').session(session).lean()
-            : [],
-        ]);
+      const [
+        courses,
+        challenges,
+        products,
+        sessions,
+        posts,
+        events,
+        resources,
+        conversations,
+      ] = await Promise.all([
+        courseModel
+          ? courseModel
+              .find({ communityId: { $in: communityStringRefs } })
+              .select('_id id')
+              .session(session)
+              .lean()
+          : [],
+        challengeModel
+          ? challengeModel
+              .find({ communityId: { $in: communityStringRefs } })
+              .select('_id id')
+              .session(session)
+              .lean()
+          : [],
+        productModel
+          ? productModel
+              .find({ communityId: { $in: communityStringRefs } })
+              .select('_id id')
+              .session(session)
+              .lean()
+          : [],
+        sessionModel
+          ? sessionModel
+              .find({ communityId: { $in: communityStringRefs } })
+              .select('_id id')
+              .session(session)
+              .lean()
+          : [],
+        postModel
+          ? postModel
+              .find({ communityId: { $in: communityStringRefs } })
+              .select('_id id')
+              .session(session)
+              .lean()
+          : [],
+        eventModel
+          ? eventModel
+              .find({ communityId: communityObjectId })
+              .select('_id id')
+              .session(session)
+              .lean()
+          : [],
+        resourceModel
+          ? resourceModel
+              .find({ communityId: communityObjectId })
+              .select('_id')
+              .session(session)
+              .lean()
+          : [],
+        conversationModel
+          ? conversationModel
+              .find({ communityId: communityObjectId })
+              .select('_id')
+              .session(session)
+              .lean()
+          : [],
+      ]);
 
-        const courseObjectIds = courses.map((doc: any) => doc._id).filter(Boolean);
-        const challengeObjectIds = challenges.map((doc: any) => doc._id).filter(Boolean);
-        const conversationIds = conversations.map((doc: any) => doc._id).filter(Boolean);
-        const contentStringIds = [
-          ...courses.map((doc: any) => String(doc.id || '')).filter(Boolean),
-          ...challenges.map((doc: any) => String(doc.id || '')).filter(Boolean),
-          ...products.map((doc: any) => String(doc.id || '')).filter(Boolean),
-          ...sessions.map((doc: any) => String(doc.id || '')).filter(Boolean),
-          ...posts.map((doc: any) => String(doc.id || '')).filter(Boolean),
-          ...events.map((doc: any) => String(doc.id || '')).filter(Boolean),
-          ...posts.map((doc: any) => String(doc._id || '')).filter(Boolean),
-          ...resources.map((doc: any) => String(doc._id || '')).filter(Boolean),
-          ...communityStringRefs,
-        ];
+      const courseObjectIds = courses
+        .map((doc: any) => doc._id)
+        .filter(Boolean);
+      const challengeObjectIds = challenges
+        .map((doc: any) => doc._id)
+        .filter(Boolean);
+      const conversationIds = conversations
+        .map((doc: any) => doc._id)
+        .filter(Boolean);
+      const contentStringIds = [
+        ...courses.map((doc: any) => String(doc.id || '')).filter(Boolean),
+        ...challenges.map((doc: any) => String(doc.id || '')).filter(Boolean),
+        ...products.map((doc: any) => String(doc.id || '')).filter(Boolean),
+        ...sessions.map((doc: any) => String(doc.id || '')).filter(Boolean),
+        ...posts.map((doc: any) => String(doc.id || '')).filter(Boolean),
+        ...events.map((doc: any) => String(doc.id || '')).filter(Boolean),
+        ...posts.map((doc: any) => String(doc._id || '')).filter(Boolean),
+        ...resources.map((doc: any) => String(doc._id || '')).filter(Boolean),
+        ...communityStringRefs,
+      ];
 
-        await Promise.all([
-          communityPageContentModel
-            ? communityPageContentModel.deleteMany({ community: communityObjectId }).session(session)
-            : Promise.resolve(),
-          postModel
-            ? postModel.deleteMany({ communityId: { $in: communityStringRefs } }).session(session)
-            : Promise.resolve(),
-          courseModel
-            ? courseModel.deleteMany({ communityId: { $in: communityStringRefs } }).session(session)
-            : Promise.resolve(),
-          challengeModel
-            ? challengeModel.deleteMany({ communityId: { $in: communityStringRefs } }).session(session)
-            : Promise.resolve(),
-          productModel
-            ? productModel.deleteMany({ communityId: { $in: communityStringRefs } }).session(session)
-            : Promise.resolve(),
-          sessionModel
-            ? sessionModel.deleteMany({ communityId: { $in: communityStringRefs } }).session(session)
-            : Promise.resolve(),
-          eventModel
-            ? eventModel.deleteMany({ communityId: communityObjectId }).session(session)
-            : Promise.resolve(),
-          resourceModel
-            ? resourceModel.deleteMany({ communityId: communityObjectId }).session(session)
-            : Promise.resolve(),
-          emailCampaignModel
-            ? emailCampaignModel.deleteMany({ communityId: communityObjectId }).session(session)
-            : Promise.resolve(),
-          userLoginActivityModel
-            ? userLoginActivityModel.deleteMany({ communityId: communityObjectId }).session(session)
-            : Promise.resolve(),
-          userAchievementModel
-            ? userAchievementModel.deleteMany({ communityId: communityObjectId }).session(session)
-            : Promise.resolve(),
-          achievementModel
-            ? achievementModel.deleteMany({ communityId: communityObjectId }).session(session)
-            : Promise.resolve(),
-          analyticsDailyModel
-            ? analyticsDailyModel.deleteMany({ communityId: { $in: communityStringRefs } }).session(session)
-            : Promise.resolve(),
-          promoCodeModel
-            ? promoCodeModel.deleteMany({ communityId: { $in: communityStringRefs } }).session(session)
-            : Promise.resolve(),
-          orderModel
-            ? orderModel.deleteMany({ communityId: communityObjectId }).session(session)
-            : Promise.resolve(),
-          payoutModel
-            ? payoutModel.deleteMany({ communityId: communityObjectId }).session(session)
-            : Promise.resolve(),
-          conversationModel
-            ? conversationModel.deleteMany({ communityId: communityObjectId }).session(session)
-            : Promise.resolve(),
-          courseEnrollmentModel && courseObjectIds.length > 0
-            ? courseEnrollmentModel.deleteMany({ courseId: { $in: courseObjectIds } }).session(session)
-            : Promise.resolve(),
-          challengeSubmissionModel && challengeObjectIds.length > 0
-            ? challengeSubmissionModel.deleteMany({ challengeId: { $in: challengeObjectIds } }).session(session)
-            : Promise.resolve(),
-          messageModel && conversationIds.length > 0
-            ? messageModel.deleteMany({ conversationId: { $in: conversationIds } }).session(session)
-            : Promise.resolve(),
-          feedbackModel
-            ? feedbackModel
-                .deleteMany({
-                  $or: [
-                    { relatedModel: 'Community', relatedTo: communityObjectId },
-                    { relatedModel: 'Cours', relatedTo: { $in: courseObjectIds } },
-                    { relatedModel: 'Challenge', relatedTo: { $in: challengeObjectIds } },
-                    { relatedModel: 'Product', relatedTo: { $in: products.map((doc: any) => doc._id).filter(Boolean) } },
-                    { relatedModel: 'Session', relatedTo: { $in: sessions.map((doc: any) => doc._id).filter(Boolean) } },
-                    { relatedModel: 'Event', relatedTo: { $in: events.map((doc: any) => doc._id).filter(Boolean) } },
-                  ],
-                })
-                .session(session)
-            : Promise.resolve(),
-          contentProgressModel
-            ? contentProgressModel
-                .deleteMany({
-                  $or: [
-                    { contentType: TrackableContentType.COMMUNITY, contentId: communityIdString },
-                    { contentId: { $in: contentStringIds } },
-                  ],
-                })
-                .session(session)
-            : Promise.resolve(),
-          trackingActionModel
-            ? trackingActionModel
-                .deleteMany({
-                  $or: [
-                    { contentType: TrackableContentType.COMMUNITY, contentId: communityIdString },
-                    { contentId: { $in: contentStringIds } },
-                  ],
-                })
-                .session(session)
-            : Promise.resolve(),
-          this.userModel.updateMany(
-            {
-              $or: [
-                { createdCommunities: communityObjectId },
-                { joinedCommunities: communityObjectId },
-                { adminCommunities: communityObjectId },
-                { moderatorCommunities: communityObjectId },
-              ],
+      await Promise.all([
+        communityPageContentModel
+          ? communityPageContentModel
+              .deleteMany({ community: communityObjectId })
+              .session(session)
+          : Promise.resolve(),
+        postModel
+          ? postModel
+              .deleteMany({ communityId: { $in: communityStringRefs } })
+              .session(session)
+          : Promise.resolve(),
+        courseModel
+          ? courseModel
+              .deleteMany({ communityId: { $in: communityStringRefs } })
+              .session(session)
+          : Promise.resolve(),
+        challengeModel
+          ? challengeModel
+              .deleteMany({ communityId: { $in: communityStringRefs } })
+              .session(session)
+          : Promise.resolve(),
+        productModel
+          ? productModel
+              .deleteMany({ communityId: { $in: communityStringRefs } })
+              .session(session)
+          : Promise.resolve(),
+        sessionModel
+          ? sessionModel
+              .deleteMany({ communityId: { $in: communityStringRefs } })
+              .session(session)
+          : Promise.resolve(),
+        eventModel
+          ? eventModel
+              .deleteMany({ communityId: communityObjectId })
+              .session(session)
+          : Promise.resolve(),
+        resourceModel
+          ? resourceModel
+              .deleteMany({ communityId: communityObjectId })
+              .session(session)
+          : Promise.resolve(),
+        emailCampaignModel
+          ? emailCampaignModel
+              .deleteMany({ communityId: communityObjectId })
+              .session(session)
+          : Promise.resolve(),
+        userLoginActivityModel
+          ? userLoginActivityModel
+              .deleteMany({ communityId: communityObjectId })
+              .session(session)
+          : Promise.resolve(),
+        userAchievementModel
+          ? userAchievementModel
+              .deleteMany({ communityId: communityObjectId })
+              .session(session)
+          : Promise.resolve(),
+        achievementModel
+          ? achievementModel
+              .deleteMany({ communityId: communityObjectId })
+              .session(session)
+          : Promise.resolve(),
+        analyticsDailyModel
+          ? analyticsDailyModel
+              .deleteMany({ communityId: { $in: communityStringRefs } })
+              .session(session)
+          : Promise.resolve(),
+        promoCodeModel
+          ? promoCodeModel
+              .deleteMany({ communityId: { $in: communityStringRefs } })
+              .session(session)
+          : Promise.resolve(),
+        orderModel
+          ? orderModel
+              .deleteMany({ communityId: communityObjectId })
+              .session(session)
+          : Promise.resolve(),
+        payoutModel
+          ? payoutModel
+              .deleteMany({ communityId: communityObjectId })
+              .session(session)
+          : Promise.resolve(),
+        conversationModel
+          ? conversationModel
+              .deleteMany({ communityId: communityObjectId })
+              .session(session)
+          : Promise.resolve(),
+        courseEnrollmentModel && courseObjectIds.length > 0
+          ? courseEnrollmentModel
+              .deleteMany({ courseId: { $in: courseObjectIds } })
+              .session(session)
+          : Promise.resolve(),
+        challengeSubmissionModel && challengeObjectIds.length > 0
+          ? challengeSubmissionModel
+              .deleteMany({ challengeId: { $in: challengeObjectIds } })
+              .session(session)
+          : Promise.resolve(),
+        messageModel && conversationIds.length > 0
+          ? messageModel
+              .deleteMany({ conversationId: { $in: conversationIds } })
+              .session(session)
+          : Promise.resolve(),
+        feedbackModel
+          ? feedbackModel
+              .deleteMany({
+                $or: [
+                  { relatedModel: 'Community', relatedTo: communityObjectId },
+                  {
+                    relatedModel: 'Cours',
+                    relatedTo: { $in: courseObjectIds },
+                  },
+                  {
+                    relatedModel: 'Challenge',
+                    relatedTo: { $in: challengeObjectIds },
+                  },
+                  {
+                    relatedModel: 'Product',
+                    relatedTo: {
+                      $in: products.map((doc: any) => doc._id).filter(Boolean),
+                    },
+                  },
+                  {
+                    relatedModel: 'Session',
+                    relatedTo: {
+                      $in: sessions.map((doc: any) => doc._id).filter(Boolean),
+                    },
+                  },
+                  {
+                    relatedModel: 'Event',
+                    relatedTo: {
+                      $in: events.map((doc: any) => doc._id).filter(Boolean),
+                    },
+                  },
+                ],
+              })
+              .session(session)
+          : Promise.resolve(),
+        contentProgressModel
+          ? contentProgressModel
+              .deleteMany({
+                $or: [
+                  {
+                    contentType: TrackableContentType.COMMUNITY,
+                    contentId: communityIdString,
+                  },
+                  { contentId: { $in: contentStringIds } },
+                ],
+              })
+              .session(session)
+          : Promise.resolve(),
+        trackingActionModel
+          ? trackingActionModel
+              .deleteMany({
+                $or: [
+                  {
+                    contentType: TrackableContentType.COMMUNITY,
+                    contentId: communityIdString,
+                  },
+                  { contentId: { $in: contentStringIds } },
+                ],
+              })
+              .session(session)
+          : Promise.resolve(),
+        this.userModel.updateMany(
+          {
+            $or: [
+              { createdCommunities: communityObjectId },
+              { joinedCommunities: communityObjectId },
+              { adminCommunities: communityObjectId },
+              { moderatorCommunities: communityObjectId },
+            ],
+          },
+          {
+            $pull: {
+              createdCommunities: communityObjectId,
+              joinedCommunities: communityObjectId,
+              adminCommunities: communityObjectId,
+              moderatorCommunities: communityObjectId,
             },
-            {
-              $pull: {
-                createdCommunities: communityObjectId,
-                joinedCommunities: communityObjectId,
-                adminCommunities: communityObjectId,
-                moderatorCommunities: communityObjectId,
-              },
-            },
-            { session },
-          ),
-        ]);
+          },
+          { session },
+        ),
+      ]);
 
-        await this.communityModel.deleteOne({ _id: communityObjectId }).session(session);
+      await this.communityModel
+        .deleteOne({ _id: communityObjectId })
+        .session(session);
 
-      console.log('✅ [DELETE-COMMUNITY] Community deleted successfully:', communityId);
-
+      console.log(
+        '✅ [DELETE-COMMUNITY] Community deleted successfully:',
+        communityId,
+      );
     } catch (error) {
       if (error instanceof NotFoundException) {
         throw error;
@@ -2614,7 +3353,10 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
     }
   }
 
-  async getCommunityForViewer(idOrSlug: string, viewerId?: string): Promise<any> {
+  async getCommunityForViewer(
+    idOrSlug: string,
+    viewerId?: string,
+  ): Promise<any> {
     const community = await this.getCommunityById(idOrSlug);
     return this.transformCommunityForFrontend(community, {
       includeInviteSecrets: this.canViewInviteSecrets(community, viewerId),
@@ -2654,7 +3396,7 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
         .find({
           contentId: communityId,
           contentType: TrackableContentType.COMMUNITY,
-          rating: { $exists: true, $ne: null, $gte: 1 }
+          rating: { $exists: true, $ne: null, $gte: 1 },
         })
         .populate('userId', 'name profile_picture photo_profil avatar')
         .sort({ updatedAt: -1 })
@@ -2666,7 +3408,10 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
         userId: record.userId?._id?.toString() || record.userId?.toString(),
         userName: record.userId?.name || 'Anonymous',
         userAvatar: this.uploadService.ensureAbsoluteUrl(
-          record.userId?.profile_picture || record.userId?.photo_profil || record.userId?.avatar || ''
+          record.userId?.profile_picture ||
+            record.userId?.photo_profil ||
+            record.userId?.avatar ||
+            '',
         ),
         rating: record.rating,
         comment: record.review || '',
@@ -2674,8 +3419,14 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
       }));
 
       // Calculate rating distribution
-      const ratingDistribution: { [key: number]: number } = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
-      reviews.forEach(r => {
+      const ratingDistribution: { [key: number]: number } = {
+        1: 0,
+        2: 0,
+        3: 0,
+        4: 0,
+        5: 0,
+      };
+      reviews.forEach((r) => {
         if (r.rating >= 1 && r.rating <= 5) {
           ratingDistribution[Math.round(r.rating)]++;
         }
@@ -2683,11 +3434,17 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
 
       // Calculate average
       const totalReviews = reviews.length;
-      const averageRating = totalReviews > 0
-        ? reviews.reduce((sum, r) => sum + r.rating, 0) / totalReviews
-        : 0;
+      const averageRating =
+        totalReviews > 0
+          ? reviews.reduce((sum, r) => sum + r.rating, 0) / totalReviews
+          : 0;
 
-      console.log('✅ [REVIEWS] Found', totalReviews, 'reviews, average:', averageRating.toFixed(1));
+      console.log(
+        '✅ [REVIEWS] Found',
+        totalReviews,
+        'reviews, average:',
+        averageRating.toFixed(1),
+      );
 
       return {
         reviews,
@@ -2710,13 +3467,21 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
    * @param userId - ID of the user
    * @returns User's review or null
    */
-  async getUserCommunityReview(communityId: string, userId: string): Promise<{
+  async getUserCommunityReview(
+    communityId: string,
+    userId: string,
+  ): Promise<{
     rating: number;
     comment: string;
     createdAt: Date;
   } | null> {
     try {
-      console.log('⭐ [REVIEWS] Getting user review for community:', communityId, 'user:', userId);
+      console.log(
+        '⭐ [REVIEWS] Getting user review for community:',
+        communityId,
+        'user:',
+        userId,
+      );
 
       const progress = await this.contentProgressModel.findOne({
         contentId: communityId,
@@ -2751,14 +3516,21 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
     communityId: string,
     userId: string,
     rating: number,
-    comment?: string
+    comment?: string,
   ): Promise<{
     review: { rating: number; comment: string };
     averageRating: number;
     totalReviews: number;
   }> {
     try {
-      console.log('⭐ [REVIEWS] Submitting review for community:', communityId, 'user:', userId, 'rating:', rating);
+      console.log(
+        '⭐ [REVIEWS] Submitting review for community:',
+        communityId,
+        'user:',
+        userId,
+        'rating:',
+        rating,
+      );
 
       // Validate rating
       if (rating < 1 || rating > 5) {
@@ -2772,9 +3544,13 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
       }
 
       // Check if user is a member
-      const isMember = community.members.some(m => m.equals(new Types.ObjectId(userId)));
+      const isMember = community.members.some((m) =>
+        m.equals(new Types.ObjectId(userId)),
+      );
       if (!isMember) {
-        throw new ForbiddenException('Only community members can leave reviews');
+        throw new ForbiddenException(
+          'Only community members can leave reviews',
+        );
       }
 
       // Use tracking service to add/update rating
@@ -2783,20 +3559,22 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
         communityId,
         TrackableContentType.COMMUNITY,
         rating,
-        comment
+        comment,
       );
 
       // Recalculate community average rating
       const allReviews = await this.contentProgressModel.find({
         contentId: communityId,
         contentType: TrackableContentType.COMMUNITY,
-        rating: { $exists: true, $ne: null, $gte: 1 }
+        rating: { $exists: true, $ne: null, $gte: 1 },
       });
 
       const totalReviews = allReviews.length;
-      const averageRating = totalReviews > 0
-        ? allReviews.reduce((sum, r) => sum + (r.rating || 0), 0) / totalReviews
-        : 0;
+      const averageRating =
+        totalReviews > 0
+          ? allReviews.reduce((sum, r) => sum + (r.rating || 0), 0) /
+            totalReviews
+          : 0;
 
       // Update community with new average
       await this.communityModel.findByIdAndUpdate(communityId, {
@@ -2804,7 +3582,10 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
         ratingCount: totalReviews,
       });
 
-      console.log('✅ [REVIEWS] Review submitted, new average:', averageRating.toFixed(1));
+      console.log(
+        '✅ [REVIEWS] Review submitted, new average:',
+        averageRating.toFixed(1),
+      );
 
       return {
         review: { rating, comment: comment || '' },
@@ -2812,7 +3593,11 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
         totalReviews,
       };
     } catch (error) {
-      if (error instanceof NotFoundException || error instanceof ForbiddenException || error instanceof BadRequestException) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof ForbiddenException ||
+        error instanceof BadRequestException
+      ) {
         throw error;
       }
       console.error('❌ [REVIEWS] Error submitting review:', error);

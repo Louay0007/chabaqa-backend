@@ -92,7 +92,10 @@ export const ROLE_PERMISSIONS: Record<CommunityRole, CommunityPermission[]> = {
     CommunityPermission.CHANNELS_SEND,
   ],
 
-  [CommunityRole.MEMBER]: [],
+  [CommunityRole.MEMBER]: [
+    CommunityPermission.CHANNELS_VIEW,
+    CommunityPermission.CHANNELS_SEND,
+  ],
 
   [CommunityRole.NONE]: [],
 };

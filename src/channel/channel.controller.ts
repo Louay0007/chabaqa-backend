@@ -69,11 +69,64 @@ export class ChannelController {
     @Param('communityId') communityId: string,
     @Request() req: any,
   ) {
-    const channels = await this.channelService.listChannels(
-      communityId,
+    // Service returns { channels: [...], totalUnread: number } — return it directly
+    return this.channelService.listChannels(
       this.getRequestUserId(req),
+      communityId,
     );
-    return { channels };
+  }
+
+  @Get('community/:communityId/unread')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Get unread message counts for all channels in a community',
+  })
+  async getUnreadCounts(
+    @Param('communityId') communityId: string,
+    @Request() req: any,
+  ) {
+    const unread = await this.channelService.getUnreadCounts(
+      this.getRequestUserId(req),
+      communityId,
+    );
+    return { unread };
+  }
+
+  @Get('community/:communityId/search')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Search messages across channels in a community' })
+  async searchMessages(
+    @Param('communityId') communityId: string,
+    @Query('q') q: string,
+    @Query('channelId') channelId: string,
+    @Request() req: any,
+  ) {
+    const results = await this.channelService.searchMessages(
+      this.getRequestUserId(req),
+      communityId,
+      q,
+      channelId,
+    );
+    return { results };
+  }
+
+  @Patch('community/:communityId/reorder')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Reorder channels within a community' })
+  async reorderChannels(
+    @Param('communityId') communityId: string,
+    @Body() dto: ReorderChannelsDto,
+    @Request() req: any,
+  ) {
+    await this.channelService.reorderChannels(
+      this.getRequestUserId(req),
+      communityId,
+      dto.orderedIds,
+    );
+    return { success: true };
   }
 
   @Get(':channelId')
@@ -82,8 +135,8 @@ export class ChannelController {
   @ApiOperation({ summary: 'Get a single channel by ID' })
   async getChannel(@Param('channelId') channelId: string, @Request() req: any) {
     const channel = await this.channelService.getChannel(
-      channelId,
       this.getRequestUserId(req),
+      channelId,
     );
     return { channel };
   }
@@ -98,8 +151,8 @@ export class ChannelController {
     @Request() req: any,
   ) {
     const channel = await this.channelService.updateChannel(
-      channelId,
       this.getRequestUserId(req),
+      channelId,
       dto,
     );
     return { channel };
@@ -114,30 +167,28 @@ export class ChannelController {
     @Request() req: any,
   ) {
     await this.channelService.deleteChannel(
+      this.getRequestUserId(req),
       channelId,
-      this.getRequestUserId(req),
-    );
-    return { success: true };
-  }
-
-  @Patch('community/:communityId/reorder')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Reorder channels within a community' })
-  async reorderChannels(
-    @Param('communityId') communityId: string,
-    @Body() dto: ReorderChannelsDto,
-    @Request() req: any,
-  ) {
-    await this.channelService.reorderChannels(
-      communityId,
-      this.getRequestUserId(req),
-      dto.orderedIds,
     );
     return { success: true };
   }
 
   // ── Membership ───────────────────────────────────────────────────────
+
+  @Get(':channelId/members')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'List members of a channel' })
+  async listMembers(
+    @Param('channelId') channelId: string,
+    @Request() req: any,
+  ) {
+    const members = await this.channelService.listMembers(
+      this.getRequestUserId(req),
+      channelId,
+    );
+    return { members };
+  }
 
   @Post(':channelId/members')
   @UseGuards(JwtAuthGuard)
@@ -210,21 +261,6 @@ export class ChannelController {
     return { member };
   }
 
-  @Get(':channelId/members')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'List members of a channel' })
-  async listMembers(
-    @Param('channelId') channelId: string,
-    @Request() req: any,
-  ) {
-    const members = await this.channelService.listMembers(
-      channelId,
-      this.getRequestUserId(req),
-    );
-    return { members };
-  }
-
   @Patch(':channelId/me/notifications')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
@@ -244,6 +280,21 @@ export class ChannelController {
 
   // ── Messages ─────────────────────────────────────────────────────────
 
+  @Get(':channelId/messages/pinned')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'List pinned messages in a channel' })
+  async listPinnedMessages(
+    @Param('channelId') channelId: string,
+    @Request() req: any,
+  ) {
+    const messages = await this.channelService.listPinnedMessages(
+      this.getRequestUserId(req),
+      channelId,
+    );
+    return { messages };
+  }
+
   @Get(':channelId/messages')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
@@ -255,8 +306,8 @@ export class ChannelController {
     @Request() req: any,
   ) {
     return this.channelService.listMessages(
-      channelId,
       this.getRequestUserId(req),
+      channelId,
       cursor,
       Number(limit) || 30,
     );
@@ -273,8 +324,8 @@ export class ChannelController {
     @Request() req: any,
   ) {
     const message = await this.channelService.sendMessage(
-      channelId,
       this.getRequestUserId(req),
+      channelId,
       dto,
     );
     return { message };
@@ -383,9 +434,9 @@ export class ChannelController {
     @Request() req: any,
   ) {
     const message = await this.channelService.editMessage(
+      this.getRequestUserId(req),
       channelId,
       messageId,
-      this.getRequestUserId(req),
       body.text,
     );
     return { message };
@@ -401,9 +452,9 @@ export class ChannelController {
     @Request() req: any,
   ) {
     await this.channelService.deleteMessage(
+      this.getRequestUserId(req),
       channelId,
       messageId,
-      this.getRequestUserId(req),
     );
     return { success: true };
   }
@@ -418,9 +469,9 @@ export class ChannelController {
     @Request() req: any,
   ) {
     const message = await this.channelService.pinMessage(
+      this.getRequestUserId(req),
       channelId,
       messageId,
-      this.getRequestUserId(req),
     );
     return { message };
   }
@@ -435,26 +486,11 @@ export class ChannelController {
     @Request() req: any,
   ) {
     const message = await this.channelService.unpinMessage(
+      this.getRequestUserId(req),
       channelId,
       messageId,
-      this.getRequestUserId(req),
     );
     return { message };
-  }
-
-  @Get(':channelId/messages/pinned')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'List pinned messages in a channel' })
-  async listPinnedMessages(
-    @Param('channelId') channelId: string,
-    @Request() req: any,
-  ) {
-    const messages = await this.channelService.listPinnedMessages(
-      channelId,
-      this.getRequestUserId(req),
-    );
-    return { messages };
   }
 
   @Post(':channelId/messages/:messageId/reactions')
@@ -468,9 +504,9 @@ export class ChannelController {
     @Request() req: any,
   ) {
     const message = await this.channelService.addReaction(
+      this.getRequestUserId(req),
       channelId,
       messageId,
-      this.getRequestUserId(req),
       dto.emoji,
     );
     return { message };
@@ -483,12 +519,16 @@ export class ChannelController {
   async listThreadReplies(
     @Param('channelId') channelId: string,
     @Param('messageId') messageId: string,
+    @Query('cursor') cursor: string,
+    @Query('limit') limit: number,
     @Request() req: any,
   ) {
     const messages = await this.channelService.listThreadReplies(
+      this.getRequestUserId(req),
       channelId,
       messageId,
-      this.getRequestUserId(req),
+      cursor,
+      Number(limit) || 30,
     );
     return { messages };
   }
@@ -504,8 +544,8 @@ export class ChannelController {
     @Request() req: any,
   ) {
     const message = await this.channelService.sendMessage(
-      channelId,
       this.getRequestUserId(req),
+      channelId,
       {
         ...dto,
         parentMessageId: messageId,
@@ -524,41 +564,5 @@ export class ChannelController {
       channelId,
     );
     return { success: true };
-  }
-
-  @Get('community/:communityId/unread')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({
-    summary: 'Get unread message counts for all channels in a community',
-  })
-  async getUnreadCounts(
-    @Param('communityId') communityId: string,
-    @Request() req: any,
-  ) {
-    const unread = await this.channelService.getUnreadCounts(
-      communityId,
-      this.getRequestUserId(req),
-    );
-    return { unread };
-  }
-
-  @Get('community/:communityId/search')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Search messages across channels in a community' })
-  async searchMessages(
-    @Param('communityId') communityId: string,
-    @Query('q') q: string,
-    @Query('channelId') channelId: string,
-    @Request() req: any,
-  ) {
-    const results = await this.channelService.searchMessages(
-      communityId,
-      this.getRequestUserId(req),
-      q,
-      channelId,
-    );
-    return { results };
   }
 }

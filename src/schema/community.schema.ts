@@ -14,7 +14,7 @@ export class LongDescriptionElement {
   @Prop({
     required: true,
     enum: ['text', 'video', 'image', 'link'],
-    type: String
+    type: String,
   })
   type: string;
 
@@ -31,7 +31,9 @@ export class LongDescriptionElement {
   order: number;
 }
 
-export const LongDescriptionElementSchema = SchemaFactory.createForClass(LongDescriptionElement);
+export const LongDescriptionElementSchema = SchemaFactory.createForClass(
+  LongDescriptionElement,
+);
 
 /**
  * Sous-schéma pour les liens sociaux - 100% compatible avec frontend
@@ -191,9 +193,16 @@ export class CommunitySettings {
 
   @Prop()
   headerScripts?: string;
+
+  @Prop({ type: Boolean, default: false })
+  welcomeDmEnabled: boolean;
+
+  @Prop({ type: String, default: '', trim: true, maxlength: 2000 })
+  welcomeDmMessage: string;
 }
 
-export const CommunitySettingsSchema = SchemaFactory.createForClass(CommunitySettings);
+export const CommunitySettingsSchema =
+  SchemaFactory.createForClass(CommunitySettings);
 
 /**
  * Sous-schéma pour les statistiques de la communauté
@@ -213,7 +222,8 @@ export class CommunityStats {
   retentionRate: number;
 }
 
-export const CommunityStatsSchema = SchemaFactory.createForClass(CommunityStats);
+export const CommunityStatsSchema =
+  SchemaFactory.createForClass(CommunityStats);
 
 /**
  * Interface pour le document Community
@@ -305,11 +315,11 @@ export interface CommunityDocument extends Document {
 
 /**
  * Schéma Mongoose pour l'entité Community
- * 
+ *
  * Cette classe définit la structure d'une communauté avec toutes les relations avec les utilisateurs.
  */
 @Schema({
-  timestamps: true
+  timestamps: true,
 })
 export class Community {
   _id: Types.ObjectId;
@@ -321,7 +331,7 @@ export class Community {
     required: true,
     trim: true,
     minlength: 2,
-    maxlength: 100
+    maxlength: 100,
   })
   name: string;
 
@@ -331,7 +341,7 @@ export class Community {
   @Prop({
     required: true,
     trim: true,
-    lowercase: true
+    lowercase: true,
   })
   slug: string;
 
@@ -340,7 +350,7 @@ export class Community {
    */
   @Prop({
     required: true,
-    trim: true
+    trim: true,
   })
   logo: string;
 
@@ -349,7 +359,7 @@ export class Community {
    */
   @Prop({
     required: true,
-    trim: true
+    trim: true,
   })
   photo_de_couverture: string;
 
@@ -359,7 +369,7 @@ export class Community {
   @Prop({
     required: true,
     trim: true,
-    maxlength: 500
+    maxlength: 500,
   })
   short_description: string;
 
@@ -368,7 +378,7 @@ export class Community {
    */
   @Prop({
     required: true,
-    trim: true
+    trim: true,
   })
   country: string;
 
@@ -377,7 +387,7 @@ export class Community {
    */
   @Prop({
     enum: ['USD', 'TND', 'EUR'],
-    default: 'TND'
+    default: 'TND',
   })
   currency: string;
 
@@ -386,7 +396,7 @@ export class Community {
    */
   @Prop({
     type: [LongDescriptionElementSchema],
-    default: []
+    default: [],
   })
   long_description: LongDescriptionElement[];
 
@@ -396,7 +406,7 @@ export class Community {
   @Prop({
     type: Types.ObjectId,
     ref: 'User',
-    required: true
+    required: true,
   })
   createur: Types.ObjectId;
 
@@ -404,7 +414,7 @@ export class Community {
    * Bannière du créateur
    */
   @Prop({
-    trim: true
+    trim: true,
   })
   creatorBanner?: string;
 
@@ -413,7 +423,7 @@ export class Community {
    */
   @Prop({
     required: true,
-    trim: true
+    trim: true,
   })
   creatorAvatar: string;
 
@@ -422,11 +432,9 @@ export class Community {
    */
   @Prop({
     required: true,
-    trim: true
+    trim: true,
   })
   category: string;
-
-
 
   /**
    * Type de prix (free, one-time, monthly, yearly)
@@ -434,7 +442,7 @@ export class Community {
   @Prop({
     required: true,
     enum: ['free', 'one-time', 'monthly', 'yearly'],
-    default: 'free'
+    default: 'free',
   })
   priceType: string;
 
@@ -443,7 +451,7 @@ export class Community {
    */
   @Prop({
     required: true,
-    trim: true
+    trim: true,
   })
   image: string;
 
@@ -452,7 +460,7 @@ export class Community {
    */
   @Prop({
     type: [String],
-    default: []
+    default: [],
   })
   tags: string[];
 
@@ -461,7 +469,7 @@ export class Community {
    */
   @Prop({
     type: Boolean,
-    default: false
+    default: false,
   })
   featured: boolean;
 
@@ -470,7 +478,7 @@ export class Community {
    */
   @Prop({
     enum: ['community', 'course', 'challenge', 'product', 'oneToOne', 'event'],
-    default: 'community'
+    default: 'community',
   })
   type: string;
 
@@ -479,7 +487,7 @@ export class Community {
    */
   @Prop({
     type: CommunitySettingsSchema,
-    default: () => ({})
+    default: () => ({}),
   })
   settings: CommunitySettings;
 
@@ -488,7 +496,7 @@ export class Community {
    */
   @Prop({
     type: CommunityStatsSchema,
-    default: () => ({})
+    default: () => ({}),
   })
   stats: CommunityStats;
 
@@ -497,7 +505,7 @@ export class Community {
    */
   @Prop({
     type: [{ type: Types.ObjectId, ref: 'User' }],
-    default: []
+    default: [],
   })
   members: Types.ObjectId[];
 
@@ -506,7 +514,7 @@ export class Community {
    */
   @Prop({
     type: [{ type: Types.ObjectId, ref: 'User' }],
-    default: []
+    default: [],
   })
   admins: Types.ObjectId[];
 
@@ -515,7 +523,7 @@ export class Community {
    */
   @Prop({
     type: [{ type: Types.ObjectId, ref: 'User' }],
-    default: []
+    default: [],
   })
   moderateurs: Types.ObjectId[];
 
@@ -525,7 +533,7 @@ export class Community {
    */
   @Prop({
     type: Number,
-    default: 0
+    default: 0,
   })
   rank: number;
 
@@ -535,7 +543,7 @@ export class Community {
   @Prop({
     type: Number,
     default: 0,
-    min: 0
+    min: 0,
   })
   fees_of_join: number;
 
@@ -549,7 +557,11 @@ export class Community {
       currency: { type: String, enum: ['USD', 'EUR', 'TND'], default: 'TND' },
 
       // Type de prix
-      priceType: { type: String, enum: ['free', 'one-time', 'monthly', 'yearly'], default: 'free' },
+      priceType: {
+        type: String,
+        enum: ['free', 'one-time', 'monthly', 'yearly'],
+        default: 'free',
+      },
 
       // Produit récurrent
       isRecurring: { type: Boolean, default: false },
@@ -563,7 +575,7 @@ export class Community {
         maxMembers: { type: Number, default: 1000 },
         maxCourses: { type: Number, default: 50 },
         maxPosts: { type: Number, default: 1000 },
-        storageLimit: { type: String, default: '10GB' }
+        storageLimit: { type: String, default: '10GB' },
       },
 
       // Options de paiement
@@ -572,14 +584,14 @@ export class Community {
         installmentCount: { type: Number, min: 2, max: 12 },
         earlyBirdDiscount: { type: Number, min: 0, max: 100 },
         groupDiscount: { type: Number, min: 0, max: 100 },
-        memberDiscount: { type: Number, min: 0, max: 100 }
+        memberDiscount: { type: Number, min: 0, max: 100 },
       },
 
       // Période d'essai
       freeTrialDays: { type: Number, min: 0, max: 30 },
-      trialFeatures: [{ type: String }]
+      trialFeatures: [{ type: String }],
     },
-    default: {}
+    default: {},
   })
   pricing?: {
     price: number;
@@ -610,7 +622,7 @@ export class Community {
    */
   @Prop({
     type: Boolean,
-    default: true
+    default: true,
   })
   isActive: boolean;
 
@@ -619,7 +631,7 @@ export class Community {
    */
   @Prop({
     type: Boolean,
-    default: false
+    default: false,
   })
   isPrivate: boolean;
 
@@ -628,7 +640,7 @@ export class Community {
    */
   @Prop({
     type: Boolean,
-    default: false
+    default: false,
   })
   isVerified: boolean;
 
@@ -637,7 +649,7 @@ export class Community {
    */
   @Prop({
     type: Number,
-    default: 0
+    default: 0,
   })
   membersCount: number;
 
@@ -646,7 +658,7 @@ export class Community {
    */
   @Prop({
     type: String,
-    trim: true
+    trim: true,
   })
   inviteCode: string;
 
@@ -655,7 +667,7 @@ export class Community {
    */
   @Prop({
     type: String,
-    trim: true
+    trim: true,
   })
   inviteLink: string;
 
@@ -676,7 +688,7 @@ export class Community {
    */
   @Prop({
     type: [{ type: Types.ObjectId, ref: 'Cours' }],
-    default: []
+    default: [],
   })
   cours: Types.ObjectId[];
 
@@ -686,7 +698,7 @@ export class Community {
    * Description longue de la communauté (pour compatibilité frontend)
    */
   @Prop({
-    trim: true
+    trim: true,
   })
   longDescription?: string;
 
@@ -694,7 +706,7 @@ export class Community {
    * Description courte (alias pour UI compatibility)
    */
   @Prop({
-    trim: true
+    trim: true,
   })
   description?: string;
 
@@ -702,7 +714,7 @@ export class Community {
    * Image de couverture (pour compatibilité frontend)
    */
   @Prop({
-    trim: true
+    trim: true,
   })
   coverImage?: string;
 
@@ -713,7 +725,7 @@ export class Community {
     type: Number,
     default: 0,
     min: 0,
-    max: 5
+    max: 5,
   })
   rating: number;
 
@@ -723,7 +735,7 @@ export class Community {
   @Prop({
     type: Number,
     default: 0,
-    min: 0
+    min: 0,
   })
   price: number;
 
@@ -732,7 +744,7 @@ export class Community {
    */
   @Prop({
     type: Boolean,
-    default: false
+    default: false,
   })
   verified?: boolean;
 
@@ -740,7 +752,7 @@ export class Community {
    * Nom du créateur (pour compatibilité UI)
    */
   @Prop({
-    trim: true
+    trim: true,
   })
   creator?: string;
 
@@ -773,7 +785,7 @@ export class Community {
    */
   @Prop({
     enum: ['pending', 'approved', 'rejected'],
-    default: 'pending'
+    default: 'pending',
   })
   approvalStatus?: string;
 
@@ -782,7 +794,7 @@ export class Community {
    */
   @Prop({
     type: Types.ObjectId,
-    ref: 'AdminUser'
+    ref: 'AdminUser',
   })
   approvedBy?: Types.ObjectId;
 
@@ -809,7 +821,7 @@ export class Community {
    */
   @Prop({
     type: Boolean,
-    default: false
+    default: false,
   })
   isSuspended?: boolean;
 }
@@ -867,7 +879,9 @@ CommunitySchema.pre('save', function (next) {
   }
 
   if (this.settings && typeof this.settings.customDomain === 'string') {
-    this.settings.customDomain = this.settings.customDomain.trim().toLowerCase();
+    this.settings.customDomain = this.settings.customDomain
+      .trim()
+      .toLowerCase();
   }
 
   // Génération automatique du slug à partir du nom si pas défini
@@ -892,28 +906,37 @@ CommunitySchema.methods.addMember = function (userId: Types.ObjectId) {
 
 // Méthode pour supprimer un membre
 CommunitySchema.methods.removeMember = function (userId: Types.ObjectId) {
-  this.members = this.members.filter(member => !member.equals(userId));
+  this.members = this.members.filter((member) => !member.equals(userId));
   this.membersCount = this.members.length;
 };
 
 // Méthode pour vérifier si un utilisateur est membre
 CommunitySchema.methods.isMember = function (userId: Types.ObjectId): boolean {
-  return this.members.some(member => member.equals(userId));
+  return this.members.some((member) => member.equals(userId));
 };
 
 // Méthode pour vérifier si un utilisateur est administrateur
 CommunitySchema.methods.isAdmin = function (userId: Types.ObjectId): boolean {
-  return this.admins.some(admin => admin.equals(userId)) || this.createur.equals(userId);
+  return (
+    this.admins.some((admin) => admin.equals(userId)) ||
+    this.createur.equals(userId)
+  );
 };
 
 // Méthode pour vérifier si un utilisateur est modérateur
-CommunitySchema.methods.isModerator = function (userId: Types.ObjectId): boolean {
-  return this.moderateurs.some(moderator => moderator.equals(userId)) || this.isAdmin(userId);
+CommunitySchema.methods.isModerator = function (
+  userId: Types.ObjectId,
+): boolean {
+  return (
+    this.moderateurs.some((moderator) => moderator.equals(userId)) ||
+    this.isAdmin(userId)
+  );
 };
 
 // Méthode pour générer un code d'invitation unique
 CommunitySchema.methods.generateInviteCode = function (): string {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  const chars =
+    'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
   let result = '';
   for (let i = 0; i < 12; i++) {
     result += chars.charAt(Math.floor(Math.random() * chars.length));
@@ -922,7 +945,9 @@ CommunitySchema.methods.generateInviteCode = function (): string {
 };
 
 // Méthode pour générer le lien d'invitation
-CommunitySchema.methods.generateInviteLink = function (baseUrl: string): string {
+CommunitySchema.methods.generateInviteLink = function (
+  baseUrl: string,
+): string {
   if (!this.inviteCode) {
     this.inviteCode = this.generateInviteCode();
   }
@@ -930,9 +955,10 @@ CommunitySchema.methods.generateInviteLink = function (baseUrl: string): string 
   return this.inviteLink;
 };
 
-
 // Méthode pour mettre à jour les statistiques
-CommunitySchema.methods.updateStats = function (stats: Partial<CommunityStats>): void {
+CommunitySchema.methods.updateStats = function (
+  stats: Partial<CommunityStats>,
+): void {
   this.stats = { ...this.stats, ...stats };
 };
 
@@ -945,7 +971,7 @@ CommunitySchema.methods.addTag = function (tag: string): void {
 
 // Méthode pour supprimer un tag
 CommunitySchema.methods.removeTag = function (tag: string): void {
-  this.tags = this.tags.filter(t => t !== tag);
+  this.tags = this.tags.filter((t) => t !== tag);
 };
 
 // Méthode pour générer un slug unique
@@ -963,20 +989,26 @@ CommunitySchema.methods.generateSlug = function (baseName: string): string {
 };
 
 // Méthode pour ajouter un cours à la communauté
-CommunitySchema.methods.ajouterCours = function (coursId: Types.ObjectId): void {
+CommunitySchema.methods.ajouterCours = function (
+  coursId: Types.ObjectId,
+): void {
   if (!this.cours.includes(coursId)) {
     this.cours.push(coursId);
   }
 };
 
 // Méthode pour supprimer un cours de la communauté
-CommunitySchema.methods.supprimerCours = function (coursId: Types.ObjectId): void {
-  this.cours = this.cours.filter(cours => !cours.equals(coursId));
+CommunitySchema.methods.supprimerCours = function (
+  coursId: Types.ObjectId,
+): void {
+  this.cours = this.cours.filter((cours) => !cours.equals(coursId));
 };
 
 // Méthode pour vérifier si un cours appartient à la communauté
-CommunitySchema.methods.possedeCours = function (coursId: Types.ObjectId): boolean {
-  return this.cours.some(cours => cours.equals(coursId));
+CommunitySchema.methods.possedeCours = function (
+  coursId: Types.ObjectId,
+): boolean {
+  return this.cours.some((cours) => cours.equals(coursId));
 };
 
 // Méthode pour obtenir le nombre de cours

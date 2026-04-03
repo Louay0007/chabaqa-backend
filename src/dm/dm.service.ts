@@ -1,8 +1,18 @@
-import { Injectable, BadRequestException, ConflictException, ForbiddenException, NotFoundException, InternalServerErrorException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+  InternalServerErrorException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { Conversation, ConversationDocument } from '../schema/conversation.schema';
+import {
+  Conversation,
+  ConversationDocument,
+} from '../schema/conversation.schema';
 import { Message, MessageDocument } from '../schema/message.schema';
 import { Community, CommunityDocument } from '../schema/community.schema';
 import { User } from '../schema/user.schema';
@@ -15,9 +25,11 @@ import { NotificationService } from '../notification/notification.service';
 @Injectable()
 export class DmService {
   constructor(
-    @InjectModel(Conversation.name) private conversationModel: Model<ConversationDocument>,
+    @InjectModel(Conversation.name)
+    private conversationModel: Model<ConversationDocument>,
     @InjectModel(Message.name) private messageModel: Model<MessageDocument>,
-    @InjectModel(Community.name) private communityModel: Model<CommunityDocument>,
+    @InjectModel(Community.name)
+    private communityModel: Model<CommunityDocument>,
     @InjectModel('User') private userModel: Model<User>,
     @InjectModel(Admin.name) private adminModel: Model<AdminDocument>,
     @InjectModel(Session.name) private sessionModel: Model<any>,
@@ -25,20 +37,28 @@ export class DmService {
     private readonly policyService: PolicyService,
     private readonly dmGateway: DmGateway,
     private readonly notificationService: NotificationService,
-  ) { }
+  ) {}
 
-  async startCommunityConversation(userId: string, communityId: string): Promise<ConversationDocument> {
+  async startCommunityConversation(
+    userId: string,
+    communityId: string,
+  ): Promise<ConversationDocument> {
     const community = await this.communityModel.findById(communityId);
     if (!community) throw new NotFoundException('Communauté introuvable');
 
     const uid = new Types.ObjectId(userId);
     const isMember = community.isMember(uid);
-    if (!isMember) throw new ForbiddenException('Vous devez être membre de cette communauté');
+    if (!isMember)
+      throw new ForbiddenException(
+        'Vous devez être membre de cette communauté',
+      );
 
     const creatorId = community.createur;
     // Prevent starting a community DM with yourself if you are the creator
     if (uid.equals(creatorId)) {
-      throw new BadRequestException('Vous ne pouvez pas démarrer une conversation avec vous-même');
+      throw new BadRequestException(
+        'Vous ne pouvez pas démarrer une conversation avec vous-même',
+      );
     }
 
     const existing = await this.conversationModel.findOne({
@@ -60,23 +80,39 @@ export class DmService {
         unreadCountB: 0,
       });
 
-      const result = await this.conversationModel.findById(conv._id)
-        .populate('participantA', 'name firstName lastName email profile_picture photo_profil avatar photo username')
-        .populate('participantB', 'name firstName lastName email profile_picture photo_profil avatar photo username')
+      const result = await this.conversationModel
+        .findById(conv._id)
+        .populate(
+          'participantA',
+          'name firstName lastName email profile_picture photo_profil avatar photo username',
+        )
+        .populate(
+          'participantB',
+          'name firstName lastName email profile_picture photo_profil avatar photo username',
+        )
         .populate('communityId', 'name slug logo');
 
-      if (!result) throw new InternalServerErrorException('Error creating conversation');
+      if (!result)
+        throw new InternalServerErrorException('Error creating conversation');
       return result;
     } catch (err: any) {
       // Handle duplicate key error (race condition) — fetch existing conversation
       if (err?.code === 11000) {
-        const dup = await this.conversationModel.findOne({
-          type: 'COMMUNITY_DM',
-          participantA: uid,
-          participantB: creatorId,
-          communityId: community._id,
-        }).populate('participantA', 'name firstName lastName email profile_picture photo_profil avatar photo username')
-          .populate('participantB', 'name firstName lastName email profile_picture photo_profil avatar photo username')
+        const dup = await this.conversationModel
+          .findOne({
+            type: 'COMMUNITY_DM',
+            participantA: uid,
+            participantB: creatorId,
+            communityId: community._id,
+          })
+          .populate(
+            'participantA',
+            'name firstName lastName email profile_picture photo_profil avatar photo username',
+          )
+          .populate(
+            'participantB',
+            'name firstName lastName email profile_picture photo_profil avatar photo username',
+          )
           .populate('communityId', 'name slug logo');
         if (dup) return dup;
       }
@@ -84,9 +120,15 @@ export class DmService {
     }
   }
 
-  async startPeerConversation(userId: string, targetUserId: string, communityId: string): Promise<ConversationDocument> {
+  async startPeerConversation(
+    userId: string,
+    targetUserId: string,
+    communityId: string,
+  ): Promise<ConversationDocument> {
     if (userId === targetUserId) {
-      throw new BadRequestException('Vous ne pouvez pas démarrer une conversation avec vous-même');
+      throw new BadRequestException(
+        'Vous ne pouvez pas démarrer une conversation avec vous-même',
+      );
     }
 
     const community = await this.communityModel.findById(communityId);
@@ -99,7 +141,9 @@ export class DmService {
     const isMemberB = community.isMember(targetUid);
 
     if (!isMemberA || !isMemberB) {
-      throw new ForbiddenException('Les deux utilisateurs doivent être membres de la même communauté');
+      throw new ForbiddenException(
+        'Les deux utilisateurs doivent être membres de la même communauté',
+      );
     }
 
     // Check if this is actually a message to the creator, if so, redirect to startCommunityConversation logic
@@ -108,15 +152,23 @@ export class DmService {
     }
 
     // Normal peer-to-peer conversation
-    const existing = await this.conversationModel.findOne({
-      type: 'PEER_DM',
-      communityId: community._id,
-      $or: [
-        { participantA: uid, participantB: targetUid },
-        { participantA: targetUid, participantB: uid },
-      ],
-    }).populate('participantA', 'name firstName lastName email profile_picture photo_profil avatar photo username')
-      .populate('participantB', 'name firstName lastName email profile_picture photo_profil avatar photo username')
+    const existing = await this.conversationModel
+      .findOne({
+        type: 'PEER_DM',
+        communityId: community._id,
+        $or: [
+          { participantA: uid, participantB: targetUid },
+          { participantA: targetUid, participantB: uid },
+        ],
+      })
+      .populate(
+        'participantA',
+        'name firstName lastName email profile_picture photo_profil avatar photo username',
+      )
+      .populate(
+        'participantB',
+        'name firstName lastName email profile_picture photo_profil avatar photo username',
+      )
       .populate('communityId', 'name slug logo');
 
     if (existing) return existing;
@@ -132,25 +184,41 @@ export class DmService {
         unreadCountB: 0,
       });
 
-      const result = await this.conversationModel.findById(conv._id)
-        .populate('participantA', 'name firstName lastName email profile_picture photo_profil avatar photo username')
-        .populate('participantB', 'name firstName lastName email profile_picture photo_profil avatar photo username')
+      const result = await this.conversationModel
+        .findById(conv._id)
+        .populate(
+          'participantA',
+          'name firstName lastName email profile_picture photo_profil avatar photo username',
+        )
+        .populate(
+          'participantB',
+          'name firstName lastName email profile_picture photo_profil avatar photo username',
+        )
         .populate('communityId', 'name slug logo');
 
-      if (!result) throw new InternalServerErrorException('Error creating conversation');
+      if (!result)
+        throw new InternalServerErrorException('Error creating conversation');
       return result;
     } catch (err: any) {
       // Handle duplicate key error (race condition) — fetch existing conversation
       if (err?.code === 11000) {
-        const existing = await this.conversationModel.findOne({
-          type: 'PEER_DM',
-          communityId: community._id,
-          $or: [
-            { participantA: uid, participantB: targetUid },
-            { participantA: targetUid, participantB: uid },
-          ],
-        }).populate('participantA', 'name firstName lastName email profile_picture photo_profil avatar photo username')
-          .populate('participantB', 'name firstName lastName email profile_picture photo_profil avatar photo username')
+        const existing = await this.conversationModel
+          .findOne({
+            type: 'PEER_DM',
+            communityId: community._id,
+            $or: [
+              { participantA: uid, participantB: targetUid },
+              { participantA: targetUid, participantB: uid },
+            ],
+          })
+          .populate(
+            'participantA',
+            'name firstName lastName email profile_picture photo_profil avatar photo username',
+          )
+          .populate(
+            'participantB',
+            'name firstName lastName email profile_picture photo_profil avatar photo username',
+          )
           .populate('communityId', 'name slug logo');
         if (existing) return existing;
       }
@@ -159,17 +227,24 @@ export class DmService {
   }
 
   async startHelpConversation(userId: string): Promise<ConversationDocument> {
-    const existing = await this.conversationModel.findOne({
-      type: 'HELP_DM',
-      participantA: new Types.ObjectId(userId),
-      isOpen: true,
-    }).populate('participantB', 'name email photo_profil poste departement');
+    const existing = await this.conversationModel
+      .findOne({
+        type: 'HELP_DM',
+        participantA: new Types.ObjectId(userId),
+        isOpen: true,
+      })
+      .populate('participantB', 'name email photo_profil poste departement');
 
     if (existing) {
       // Auto-assign admin if not already assigned and send welcome message
       if (!existing.participantB) {
         await this.autoAssignAdminToHelp(existing._id.toString());
-        const updatedConv = await this.conversationModel.findById(existing._id).populate('participantB', 'name email photo_profil poste departement');
+        const updatedConv = await this.conversationModel
+          .findById(existing._id)
+          .populate(
+            'participantB',
+            'name email photo_profil poste departement',
+          );
         return updatedConv || existing;
       }
       return existing;
@@ -186,11 +261,16 @@ export class DmService {
     // Auto-assign admin and send welcome message
     await this.autoAssignAdminToHelp(conv._id.toString());
 
-    const finalConv = await this.conversationModel.findById(conv._id).populate('participantB', 'name email photo_profil poste departement');
+    const finalConv = await this.conversationModel
+      .findById(conv._id)
+      .populate('participantB', 'name email photo_profil poste departement');
     return finalConv || conv;
   }
 
-  async startSessionConversation(userId: string, bookingId: string): Promise<ConversationDocument> {
+  async startSessionConversation(
+    userId: string,
+    bookingId: string,
+  ): Promise<ConversationDocument> {
     const normalizedBookingId = String(bookingId || '').trim();
     if (!normalizedBookingId) {
       throw new BadRequestException('Booking ID is required');
@@ -211,7 +291,9 @@ export class DmService {
       throw new NotFoundException('Booking not found');
     }
 
-    const booking = (sessionDoc.bookings || []).find((b: any) => String(b?.id) === normalizedBookingId);
+    const booking = (sessionDoc.bookings || []).find(
+      (b: any) => String(b?.id) === normalizedBookingId,
+    );
     if (!booking) {
       throw new NotFoundException('Booking not found');
     }
@@ -221,7 +303,9 @@ export class DmService {
     }
 
     if (booking.status !== 'confirmed') {
-      throw new BadRequestException('Temporary mentor chat is only available for confirmed bookings');
+      throw new BadRequestException(
+        'Temporary mentor chat is only available for confirmed bookings',
+      );
     }
 
     let mentorId: Types.ObjectId;
@@ -231,33 +315,53 @@ export class DmService {
       throw new BadRequestException('Session creator is invalid');
     }
     if (uid.equals(mentorId)) {
-      throw new BadRequestException('You cannot start a mentor chat with yourself');
+      throw new BadRequestException(
+        'You cannot start a mentor chat with yourself',
+      );
     }
 
     const scheduledAt = new Date(booking.scheduledAt);
     const durationMinutes = Number(sessionDoc.duration || 60);
-    const expiresAt = new Date(scheduledAt.getTime() + durationMinutes * 60 * 1000);
+    const expiresAt = new Date(
+      scheduledAt.getTime() + durationMinutes * 60 * 1000,
+    );
 
     const existing = await this.conversationModel
-      .findOne({ type: 'SESSION_TEMP_DM', sessionBookingId: normalizedBookingId })
-      .populate('participantA', 'name firstName lastName email profile_picture photo_profil avatar photo username role')
-      .populate('participantB', 'name firstName lastName email profile_picture photo_profil avatar photo username role')
+      .findOne({
+        type: 'SESSION_TEMP_DM',
+        sessionBookingId: normalizedBookingId,
+      })
+      .populate(
+        'participantA',
+        'name firstName lastName email profile_picture photo_profil avatar photo username role',
+      )
+      .populate(
+        'participantB',
+        'name firstName lastName email profile_picture photo_profil avatar photo username role',
+      )
       .populate('communityId', 'name slug logo')
       .exec();
 
     if (existing) {
-      const normalizedExisting = await this.enforceSessionTempLifecycle(existing);
+      const normalizedExisting =
+        await this.enforceSessionTempLifecycle(existing);
       if (!normalizedExisting.isOpen) {
-        throw new ConflictException('This session chat is closed because the session has finished.');
+        throw new ConflictException(
+          'This session chat is closed because the session has finished.',
+        );
       }
       return normalizedExisting;
     }
 
     if (new Date() >= expiresAt) {
-      throw new ConflictException('This session chat is closed because the session has finished.');
+      throw new ConflictException(
+        'This session chat is closed because the session has finished.',
+      );
     }
 
-    const communityObjectId = Types.ObjectId.isValid(String(sessionDoc.communityId))
+    const communityObjectId = Types.ObjectId.isValid(
+      String(sessionDoc.communityId),
+    )
       ? new Types.ObjectId(String(sessionDoc.communityId))
       : undefined;
 
@@ -274,9 +378,16 @@ export class DmService {
       unreadCountB: 0,
     });
 
-    const result = await this.conversationModel.findById(conv._id)
-      .populate('participantA', 'name firstName lastName email profile_picture photo_profil avatar photo username role')
-      .populate('participantB', 'name firstName lastName email profile_picture photo_profil avatar photo username role')
+    const result = await this.conversationModel
+      .findById(conv._id)
+      .populate(
+        'participantA',
+        'name firstName lastName email profile_picture photo_profil avatar photo username role',
+      )
+      .populate(
+        'participantB',
+        'name firstName lastName email profile_picture photo_profil avatar photo username role',
+      )
       .populate('communityId', 'name slug logo')
       .exec();
 
@@ -286,16 +397,28 @@ export class DmService {
     return result;
   }
 
-  private async enforceSessionTempLifecycle(conv: ConversationDocument): Promise<ConversationDocument> {
+  private async enforceSessionTempLifecycle(
+    conv: ConversationDocument,
+  ): Promise<ConversationDocument> {
     if (!conv || conv.type !== 'SESSION_TEMP_DM') {
       return conv;
     }
 
     let shouldClose = false;
-    let closeReason: 'session_finished' | 'booking_cancelled' | 'booking_completed' | 'manual' = 'manual';
+    let closeReason:
+      | 'session_finished'
+      | 'booking_cancelled'
+      | 'booking_completed'
+      | 'manual' = 'manual';
     const now = new Date();
 
-    const tryClose = (reason: 'session_finished' | 'booking_cancelled' | 'booking_completed' | 'manual') => {
+    const tryClose = (
+      reason:
+        | 'session_finished'
+        | 'booking_cancelled'
+        | 'booking_completed'
+        | 'manual',
+    ) => {
       if (conv.isOpen) {
         shouldClose = true;
         closeReason = reason;
@@ -315,7 +438,9 @@ export class DmService {
       if (!sessionDoc) {
         tryClose('manual');
       } else {
-        const booking = (sessionDoc.bookings || []).find((b: any) => String(b?.id) === String(conv.sessionBookingId));
+        const booking = (sessionDoc.bookings || []).find(
+          (b: any) => String(b?.id) === String(conv.sessionBookingId),
+        );
         if (!booking) {
           tryClose('manual');
         } else if (booking.status === 'cancelled') {
@@ -323,8 +448,14 @@ export class DmService {
         } else if (booking.status === 'completed') {
           tryClose('booking_completed');
         } else {
-          const computedExpiry = new Date(new Date(booking.scheduledAt).getTime() + Number(sessionDoc.duration || 60) * 60 * 1000);
-          if (!conv.expiresAt || new Date(conv.expiresAt).getTime() !== computedExpiry.getTime()) {
+          const computedExpiry = new Date(
+            new Date(booking.scheduledAt).getTime() +
+              Number(sessionDoc.duration || 60) * 60 * 1000,
+          );
+          if (
+            !conv.expiresAt ||
+            new Date(conv.expiresAt).getTime() !== computedExpiry.getTime()
+          ) {
             conv.expiresAt = computedExpiry;
           }
           if (computedExpiry.getTime() <= now.getTime()) {
@@ -348,13 +479,26 @@ export class DmService {
 
   async listUnassignedHelpThreads() {
     const items = await this.conversationModel
-      .find({ type: 'HELP_DM', $or: [{ participantB: { $exists: false } }, { participantB: null }] })
+      .find({
+        type: 'HELP_DM',
+        $or: [{ participantB: { $exists: false } }, { participantB: null }],
+      })
       .sort({ createdAt: 1 });
     return { items };
   }
 
-  async listInbox(userId: string, type?: 'community' | 'help' | 'peer' | 'session', page = 1, limit = 20) {
-    const filter: any = { $or: [{ participantA: new Types.ObjectId(userId) }, { participantB: new Types.ObjectId(userId) }] };
+  async listInbox(
+    userId: string,
+    type?: 'community' | 'help' | 'peer' | 'session',
+    page = 1,
+    limit = 20,
+  ) {
+    const filter: any = {
+      $or: [
+        { participantA: new Types.ObjectId(userId) },
+        { participantB: new Types.ObjectId(userId) },
+      ],
+    };
     if (type === 'community') filter.type = 'COMMUNITY_DM';
     if (type === 'help') filter.type = 'HELP_DM';
     if (type === 'peer') filter.type = 'PEER_DM';
@@ -363,15 +507,23 @@ export class DmService {
     const [items, total] = await Promise.all([
       this.conversationModel
         .find(filter)
-        .populate('participantA', 'name firstName lastName email profile_picture photo_profil avatar photo username role')
-        .populate('participantB', 'name firstName lastName email profile_picture photo_profil avatar photo username role')
+        .populate(
+          'participantA',
+          'name firstName lastName email profile_picture photo_profil avatar photo username role',
+        )
+        .populate(
+          'participantB',
+          'name firstName lastName email profile_picture photo_profil avatar photo username role',
+        )
         .populate('communityId', 'name slug logo')
         .sort({ lastMessageAt: -1 })
         .skip(skip)
         .limit(limit),
       this.conversationModel.countDocuments(filter),
     ]);
-    const normalizedItems = await Promise.all(items.map((item) => this.enforceSessionTempLifecycle(item)));
+    const normalizedItems = await Promise.all(
+      items.map((item) => this.enforceSessionTempLifecycle(item)),
+    );
     const totalPages = Math.ceil(total / limit);
     return {
       conversations: normalizedItems,
@@ -379,14 +531,27 @@ export class DmService {
       total,
       totalPages,
       hasMore: page < totalPages,
-      limit
+      limit,
     };
   }
 
-  async listMessages(conversationId: string, userId: string, page = 1, limit = 30, options?: { isAdmin?: boolean }) {
-    const conv = await this.conversationModel.findById(conversationId)
-      .populate('participantA', 'name firstName lastName email profile_picture photo_profil avatar photo username role')
-      .populate('participantB', 'name firstName lastName email profile_picture photo_profil avatar photo username role');
+  async listMessages(
+    conversationId: string,
+    userId: string,
+    page = 1,
+    limit = 30,
+    options?: { isAdmin?: boolean },
+  ) {
+    const conv = await this.conversationModel
+      .findById(conversationId)
+      .populate(
+        'participantA',
+        'name firstName lastName email profile_picture photo_profil avatar photo username role',
+      )
+      .populate(
+        'participantB',
+        'name firstName lastName email profile_picture photo_profil avatar photo username role',
+      );
 
     if (!conv) throw new NotFoundException('Conversation introuvable');
     await this.enforceSessionTempLifecycle(conv);
@@ -401,8 +566,12 @@ export class DmService {
     }
 
     // Check permissions: user must be participant or admin viewing help conversation
-    const participantAId = (conv as any)?.participantA?._id ? (conv as any).participantA._id : (conv as any).participantA;
-    const participantBId = (conv as any)?.participantB?._id ? (conv as any).participantB._id : (conv as any).participantB;
+    const participantAId = (conv as any)?.participantA?._id
+      ? (conv as any).participantA._id
+      : (conv as any).participantA;
+    const participantBId = (conv as any)?.participantB?._id
+      ? (conv as any).participantB._id
+      : (conv as any).participantB;
 
     const isParticipantA = participantAId ? uid.equals(participantAId) : false;
     const isParticipantB = participantBId ? uid.equals(participantBId) : false;
@@ -410,14 +579,21 @@ export class DmService {
     const isAdminViewingHelp = options?.isAdmin && conv.type === 'HELP_DM';
 
     if (!isParticipant && !isAdminViewingHelp) {
-      throw new ForbiddenException('You do not have access to this conversation');
+      throw new ForbiddenException(
+        'You do not have access to this conversation',
+      );
     }
 
     // Membership check for COMMUNITY_DM and PEER_DM
-    if ((conv.type === 'COMMUNITY_DM' || conv.type === 'PEER_DM') && conv.communityId) {
+    if (
+      (conv.type === 'COMMUNITY_DM' || conv.type === 'PEER_DM') &&
+      conv.communityId
+    ) {
       const community = await this.communityModel.findById(conv.communityId);
       if (!community || !community.isMember(uid)) {
-        throw new ForbiddenException('Vous n\'êtes plus membre de cette communauté');
+        throw new ForbiddenException(
+          "Vous n'êtes plus membre de cette communauté",
+        );
       }
     }
 
@@ -425,8 +601,14 @@ export class DmService {
     const [items, total] = await Promise.all([
       this.messageModel
         .find({ conversationId: conv._id })
-        .populate('senderId', 'name firstName lastName email profile_picture photo_profil avatar photo username role')
-        .populate('recipientId', 'name firstName lastName email profile_picture photo_profil avatar photo username role')
+        .populate(
+          'senderId',
+          'name firstName lastName email profile_picture photo_profil avatar photo username role',
+        )
+        .populate(
+          'recipientId',
+          'name firstName lastName email profile_picture photo_profil avatar photo username role',
+        )
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit),
@@ -440,15 +622,22 @@ export class DmService {
       total,
       totalPages,
       hasMore: page < totalPages,
-      limit
+      limit,
     };
   }
 
   async sendMessage(
     conversationId: string,
     senderId: string,
-    payload: { text?: string; attachments?: { url: string; type: 'image' | 'file' | 'video'; size: number }[] },
-    options?: { isAdmin?: boolean }
+    payload: {
+      text?: string;
+      attachments?: {
+        url: string;
+        type: 'image' | 'file' | 'video';
+        size: number;
+      }[];
+    },
+    options?: { isAdmin?: boolean },
   ) {
     const conv = await this.conversationModel.findById(conversationId);
     if (!conv) throw new NotFoundException('Conversation introuvable');
@@ -458,17 +647,24 @@ export class DmService {
     const isParticipantB = conv.participantB && sid.equals(conv.participantB);
     if (!isParticipantA && !isParticipantB) {
       // Special case: HELP_DM unassigned, allow admin to reply and auto-assign
-      if (!(conv.type === 'HELP_DM' && !conv.participantB && options?.isAdmin)) {
+      if (
+        !(conv.type === 'HELP_DM' && !conv.participantB && options?.isAdmin)
+      ) {
         throw new ForbiddenException();
       }
       conv.participantB = sid; // auto-assign to this admin
     }
 
     // Membership check for COMMUNITY_DM and PEER_DM
-    if ((conv.type === 'COMMUNITY_DM' || conv.type === 'PEER_DM') && conv.communityId) {
+    if (
+      (conv.type === 'COMMUNITY_DM' || conv.type === 'PEER_DM') &&
+      conv.communityId
+    ) {
       const community = await this.communityModel.findById(conv.communityId);
       if (!community || !community.isMember(sid)) {
-        throw new ForbiddenException('Vous n\'êtes plus membre de cette communauté');
+        throw new ForbiddenException(
+          "Vous n'êtes plus membre de cette communauté",
+        );
       }
     }
 
@@ -476,15 +672,21 @@ export class DmService {
       throw new ForbiddenException('This session chat is closed');
     }
 
-    if (!payload.text && (!payload.attachments || payload.attachments.length === 0)) {
+    if (
+      !payload.text &&
+      (!payload.attachments || payload.attachments.length === 0)
+    ) {
       throw new BadRequestException('Message vide');
     }
 
     // Determine recipient
-    const recipientId = sid.equals(conv.participantA) ? conv.participantB : conv.participantA;
+    const recipientId = sid.equals(conv.participantA)
+      ? conv.participantB
+      : conv.participantA;
     if (!recipientId) {
       // For HELP_DM: first admin assignment will be handled elsewhere; allow sending only if both participants exist
-      if (conv.type === 'HELP_DM') throw new BadRequestException('Aucun admin n\'est assigné');
+      if (conv.type === 'HELP_DM')
+        throw new BadRequestException("Aucun admin n'est assigné");
     }
 
     const msg = await this.messageModel.create({
@@ -496,7 +698,11 @@ export class DmService {
     });
 
     // Update conversation summary
-    conv.lastMessageText = payload.text || (payload.attachments && payload.attachments.length > 0 ? '[Pièce jointe]' : '');
+    conv.lastMessageText =
+      payload.text ||
+      (payload.attachments && payload.attachments.length > 0
+        ? '[Pièce jointe]'
+        : '');
     conv.lastMessageAt = new Date();
     if (sid.equals(conv.participantA)) {
       conv.unreadCountB = (conv.unreadCountB || 0) + 1;
@@ -507,7 +713,11 @@ export class DmService {
 
     // Emit realtime events
     if (recipientId) {
-      this.dmGateway.emitNewMessage(conv._id.toString(), recipientId.toString(), msg);
+      this.dmGateway.emitNewMessage(
+        conv._id.toString(),
+        recipientId.toString(),
+        msg,
+      );
 
       // Send notification
       let sender: any = null;
@@ -546,14 +756,19 @@ export class DmService {
     const uid = new Types.ObjectId(userId);
     const now = new Date();
     if (uid.equals(conv.participantA)) conv.unreadCountA = 0;
-    else if (conv.participantB && uid.equals(conv.participantB)) conv.unreadCountB = 0;
+    else if (conv.participantB && uid.equals(conv.participantB))
+      conv.unreadCountB = 0;
     else throw new ForbiddenException();
 
     await Promise.all([
       conv.save(),
       this.messageModel.updateMany(
-        { conversationId: conv._id, recipientId: uid, readAt: { $exists: false } },
-        { $set: { readAt: now } }
+        {
+          conversationId: conv._id,
+          recipientId: uid,
+          readAt: { $exists: false },
+        },
+        { $set: { readAt: now } },
       ),
     ]);
     this.dmGateway.emitRead(conv._id.toString(), uid.toString(), now);
@@ -561,10 +776,12 @@ export class DmService {
   }
 
   async assignHelpThread(conversationId: string, adminId: string) {
-    const conv = await this.conversationModel.findById(conversationId)
+    const conv = await this.conversationModel
+      .findById(conversationId)
       .populate('participantA', 'name email profile_picture');
     if (!conv) throw new NotFoundException('Conversation introuvable');
-    if (conv.type !== 'HELP_DM') throw new BadRequestException('Non applicable');
+    if (conv.type !== 'HELP_DM')
+      throw new BadRequestException('Non applicable');
     if (conv.participantB) return conv; // already assigned
 
     const admin = await this.adminModel.findById(adminId);
@@ -576,7 +793,8 @@ export class DmService {
     // Send welcome message from admin
     await this.sendWelcomeMessage(conversationId, adminId, admin.name);
 
-    return await this.conversationModel.findById(conversationId)
+    return await this.conversationModel
+      .findById(conversationId)
       .populate('participantA', 'name email profile_picture')
       .populate('participantB', 'name email photo_profil poste departement');
   }
@@ -586,17 +804,26 @@ export class DmService {
    */
   private async autoAssignAdminToHelp(conversationId: string) {
     // Find an available admin (simple round-robin or least busy)
-    const availableAdmin = await this.adminModel.findOne({ role: 'admin' }).sort({ createdAt: 1 });
+    const availableAdmin = await this.adminModel
+      .findOne({ role: 'admin' })
+      .sort({ createdAt: 1 });
 
     if (availableAdmin) {
-      await this.assignHelpThread(conversationId, availableAdmin._id.toString());
+      await this.assignHelpThread(
+        conversationId,
+        availableAdmin._id.toString(),
+      );
     }
   }
 
   /**
    * Send welcome message from assigned admin
    */
-  private async sendWelcomeMessage(conversationId: string, adminId: string, adminName: string) {
+  private async sendWelcomeMessage(
+    conversationId: string,
+    adminId: string,
+    adminName: string,
+  ) {
     const conv = await this.conversationModel.findById(conversationId);
     if (!conv) return;
 
@@ -617,14 +844,19 @@ export class DmService {
     await conv.save();
 
     // Emit realtime event
-    this.dmGateway.emitNewMessage(conv._id.toString(), conv.participantA.toString(), msg);
+    this.dmGateway.emitNewMessage(
+      conv._id.toString(),
+      conv.participantA.toString(),
+      msg,
+    );
   }
 
   /**
    * Get admin info for help conversations
    */
   async getHelpConversationAdmin(conversationId: string) {
-    const conv = await this.conversationModel.findById(conversationId)
+    const conv = await this.conversationModel
+      .findById(conversationId)
       .populate('participantB', 'name email photo_profil poste departement');
 
     if (conv?.type === 'HELP_DM' && conv.participantB) {
@@ -641,10 +873,7 @@ export class DmService {
       .find({
         type: 'SESSION_TEMP_DM',
         isOpen: true,
-        $or: [
-          { expiresAt: { $lte: now } },
-          { expiresAt: { $exists: false } },
-        ],
+        $or: [{ expiresAt: { $lte: now } }, { expiresAt: { $exists: false } }],
       })
       .select('_id')
       .limit(200)
@@ -659,6 +888,138 @@ export class DmService {
       }),
     );
   }
+
+  /**
+   * AUTO DM — Send a welcome DM from the community creator to a new member.
+   * Called internally after joinCommunity() and joinByInvite() succeed.
+   * MUST be non-blocking: never throws — always wrapped in try/catch.
+   */
+  async sendWelcomeDm(
+    communityId: string,
+    newMemberId: string,
+    creatorId: string,
+    template: string,
+  ): Promise<void> {
+    try {
+      if (!communityId || !newMemberId || !creatorId) return;
+      const trimmedTemplate = (template || '').trim();
+      if (!trimmedTemplate) return;
+
+      // Prevent sending a welcome DM to the creator themselves
+      if (newMemberId === creatorId) return;
+
+      const memberObjectId = new Types.ObjectId(newMemberId);
+      const creatorObjectId = new Types.ObjectId(creatorId);
+      const communityObjectId = new Types.ObjectId(communityId);
+
+      // Resolve template variables
+      const [memberDoc, creatorDoc, communityDoc] = await Promise.all([
+        this.userModel
+          .findById(newMemberId)
+          .select('name firstName lastName username')
+          .lean()
+          .exec(),
+        this.userModel
+          .findById(creatorId)
+          .select('name firstName lastName username')
+          .lean()
+          .exec(),
+        this.communityModel.findById(communityId).select('name').lean().exec(),
+      ]);
+
+      const memberName = this.resolveDisplayName(memberDoc) || 'there';
+      const creatorName = this.resolveDisplayName(creatorDoc) || 'the creator';
+      const communityName = (communityDoc as any)?.name || 'our community';
+
+      const resolvedMessage = trimmedTemplate
+        .replace(/\{\{memberName\}\}/gi, memberName)
+        .replace(/\{\{communityName\}\}/gi, communityName)
+        .replace(/\{\{creatorName\}\}/gi, creatorName);
+
+      // Get or create the COMMUNITY_DM conversation
+      let conv = await this.conversationModel.findOne({
+        type: 'COMMUNITY_DM',
+        participantA: memberObjectId,
+        participantB: creatorObjectId,
+        communityId: communityObjectId,
+      });
+
+      if (!conv) {
+        try {
+          conv = await this.conversationModel.create({
+            type: 'COMMUNITY_DM',
+            participantA: memberObjectId,
+            participantB: creatorObjectId,
+            communityId: communityObjectId,
+            isOpen: true,
+            unreadCountA: 0,
+            unreadCountB: 0,
+          });
+        } catch (createErr: any) {
+          if (createErr?.code === 11000) {
+            conv = await this.conversationModel.findOne({
+              type: 'COMMUNITY_DM',
+              participantA: memberObjectId,
+              participantB: creatorObjectId,
+              communityId: communityObjectId,
+            });
+            if (!conv) return;
+          } else {
+            throw createErr;
+          }
+        }
+      }
+
+      if (!conv) return;
+
+      // Create the message (creator sends, member receives)
+      const msg = await this.messageModel.create({
+        conversationId: conv._id,
+        senderId: creatorObjectId,
+        recipientId: memberObjectId,
+        text: resolvedMessage,
+        attachments: [],
+      });
+
+      // Update conversation summary
+      conv.lastMessageText = resolvedMessage;
+      conv.lastMessageAt = new Date();
+      conv.unreadCountA = (conv.unreadCountA || 0) + 1;
+      await conv.save();
+
+      // Real-time emit to member
+      this.dmGateway.emitNewMessage(conv._id.toString(), newMemberId, msg);
+
+      // In-app + push notification to member
+      this.notificationService.createNotification({
+        recipient: newMemberId,
+        sender: creatorId,
+        type: 'new_dm_message',
+        title: `Welcome message from ${creatorName}`,
+        body:
+          resolvedMessage.length > 100
+            ? resolvedMessage.slice(0, 97) + '...'
+            : resolvedMessage,
+        data: { conversationId: conv._id.toString() },
+      });
+    } catch (error: any) {
+      console.warn(
+        `[AUTO-DM] Failed to send welcome DM | community=${communityId} | member=${newMemberId} | error: ${error?.message || error}`,
+      );
+    }
+  }
+
+  /**
+   * Helper: resolve a user document to a display name string.
+   */
+  private resolveDisplayName(user: any): string {
+    if (!user) return '';
+    const explicit = String(user.name || '').trim();
+    if (explicit) return explicit;
+    const first = String(user.firstName || '').trim();
+    const last = String(user.lastName || '').trim();
+    const fullName = [first, last].filter(Boolean).join(' ');
+    if (fullName) return fullName;
+    return String(user.username || '').trim();
+  }
 }
-
-

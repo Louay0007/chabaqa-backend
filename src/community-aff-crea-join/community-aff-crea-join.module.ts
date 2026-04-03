@@ -4,7 +4,10 @@ import { CommunityAffCreaJoinController } from './community-aff-crea-join.contro
 import { CommunityAffCreaJoinService } from './community-aff-crea-join.service';
 import { Community, CommunitySchema } from '../schema/community.schema';
 import { User, UserSchema } from '../schema/user.schema';
-import { CommunityStaff, CommunityStaffSchema } from '../schema/community-staff.schema';
+import {
+  CommunityStaff,
+  CommunityStaffSchema,
+} from '../schema/community-staff.schema';
 import { UploadModule } from '../upload/upload.module';
 import { PolicyModule } from '../common/modules/policy.module';
 import { FeeModule } from '../common/modules/fee.module';
@@ -14,6 +17,7 @@ import { TrackingModule } from '../common/modules/tracking.module';
 import { NotificationModule } from '../notification/notification.module';
 import { AuthModule } from '../auth/auth.module';
 import { EmailCampaignModule } from '../email-campaign/email-campaign.module';
+import { DmModule } from '../dm/dm.module';
 
 @Module({
   imports: [
@@ -31,9 +35,10 @@ import { EmailCampaignModule } from '../email-campaign/email-campaign.module';
     NotificationModule,
     AuthModule,
     EmailCampaignModule,
+    DmModule,
   ],
   controllers: [CommunityAffCreaJoinController],
   providers: [CommunityAffCreaJoinService],
-  exports: [CommunityAffCreaJoinService]
+  exports: [CommunityAffCreaJoinService],
 })
 export class CommunityAffCreaJoinModule {}
