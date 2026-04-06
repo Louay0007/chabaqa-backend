@@ -1,9 +1,28 @@
-import { Controller, Get, Post, Body, Query, UseGuards, Request, NotFoundException, UnauthorizedException } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags, ApiQuery } from '@nestjs/swagger';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Query,
+  UseGuards,
+  Request,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiTags,
+  ApiQuery,
+} from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AchievementService } from './achievement.service';
 import { CreateAchievementDto } from './dto/create-achievement.dto';
-import { AchievementResponseDto, UserAchievementResponseDto, AchievementWithProgressDto } from './dto/achievement-response.dto';
+import {
+  AchievementResponseDto,
+  UserAchievementResponseDto,
+  AchievementWithProgressDto,
+} from './dto/achievement-response.dto';
 
 @ApiTags('Achievements')
 @Controller('achievements')
@@ -14,10 +33,7 @@ export class AchievementController {
 
   private resolveRequestUserId(req?: any): string | undefined {
     const rawUserId =
-      req?.user?._id
-      || req?.user?.userId
-      || req?.user?.sub
-      || req?.user?.id;
+      req?.user?._id || req?.user?.userId || req?.user?.sub || req?.user?.id;
     if (!rawUserId) return undefined;
     const normalizedUserId = String(rawUserId).trim();
     return normalizedUserId.length > 0 ? normalizedUserId : undefined;
@@ -26,56 +42,86 @@ export class AchievementController {
   @Post()
   @ApiOperation({
     summary: 'Create a new achievement',
-    description: 'Create a new achievement template for a community or globally',
+    description:
+      'Create a new achievement template for a community or globally',
   })
-  async create(@Body() createDto: CreateAchievementDto): Promise<AchievementResponseDto> {
+  async create(
+    @Body() createDto: CreateAchievementDto,
+  ): Promise<AchievementResponseDto> {
     return this.achievementService.create(createDto);
   }
 
   @Get()
   @ApiOperation({
     summary: 'Get achievements for a community',
-    description: 'Get all active achievements available in a community (including global ones)',
+    description:
+      'Get all active achievements available in a community (including global ones)',
   })
-  @ApiQuery({ name: 'communitySlug', required: false, description: 'Community slug to filter achievements' })
-  async getAchievements(@Query('communitySlug') communitySlug?: string): Promise<AchievementResponseDto[]> {
+  @ApiQuery({
+    name: 'communitySlug',
+    required: false,
+    description: 'Community slug to filter achievements',
+  })
+  async getAchievements(
+    @Query('communitySlug') communitySlug?: string,
+  ): Promise<AchievementResponseDto[]> {
     return this.achievementService.getAchievementsForCommunity(communitySlug);
   }
 
   @Get('user')
   @ApiOperation({
     summary: 'Get user achievements with progress',
-    description: 'Get all achievements for a community with user progress and unlock status',
+    description:
+      'Get all achievements for a community with user progress and unlock status',
   })
-  @ApiQuery({ name: 'communitySlug', required: false, description: 'Community slug' })
+  @ApiQuery({
+    name: 'communitySlug',
+    required: false,
+    description: 'Community slug',
+  })
   async getUserAchievements(
     @Request() req: any,
     @Query('communitySlug') communitySlug?: string,
   ): Promise<AchievementWithProgressDto[]> {
     const userId = this.resolveRequestUserId(req);
     if (!userId) throw new UnauthorizedException();
-    return this.achievementService.getUserAchievementsWithProgress(userId, communitySlug);
+    return this.achievementService.getUserAchievementsWithProgress(
+      userId,
+      communitySlug,
+    );
   }
 
   @Post('check')
   @ApiOperation({
     summary: 'Check for new achievements',
-    description: 'Manually trigger achievement checking for the current user in a community',
+    description:
+      'Manually trigger achievement checking for the current user in a community',
   })
-  @ApiQuery({ name: 'communitySlug', required: true, description: 'Community slug' })
+  @ApiQuery({
+    name: 'communitySlug',
+    required: false,
+    description: 'Community slug (can also be sent in the request body)',
+  })
   async checkAchievements(
     @Request() req: any,
-    @Query('communitySlug') communitySlug: string,
+    @Query('communitySlug') communitySlugQuery: string,
+    @Body() body: any,
   ): Promise<UserAchievementResponseDto[]> {
+    const communitySlug = communitySlugQuery || body?.communitySlug;
     const userId = this.resolveRequestUserId(req);
     if (!userId) throw new UnauthorizedException();
 
     // Get community ID from slug
-    const community = await this.achievementService['communityModel'].findOne({ slug: communitySlug });
+    const community = await this.achievementService['communityModel'].findOne({
+      slug: communitySlug,
+    });
     if (!community) {
       throw new NotFoundException('Community not found');
     }
 
-    return this.achievementService.checkAchievements(userId, community._id.toString());
+    return this.achievementService.checkAchievements(
+      userId,
+      community._id.toString(),
+    );
   }
 }

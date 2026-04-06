@@ -8,20 +8,22 @@ import { User, UserSchema } from '../schema/user.schema';
 import { AuthModule } from '../auth/auth.module';
 import { TrackingModule } from '../common/modules/tracking.module';
 import { NotificationModule } from '../notification/notification.module';
+import { GamificationModule } from '../gamification/gamification.module';
 
 @Module({
   imports: [
     MongooseModule.forFeature([
       { name: Post.name, schema: PostSchema },
       { name: Community.name, schema: CommunitySchema },
-      { name: User.name, schema: UserSchema }
+      { name: User.name, schema: UserSchema },
     ]),
     AuthModule,
     TrackingModule,
     NotificationModule,
+    GamificationModule,
   ],
   controllers: [PostController],
   providers: [PostService],
-  exports: [PostService]
+  exports: [PostService],
 })
 export class PostModule {}

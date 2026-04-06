@@ -1,4 +1,4 @@
-// src/app.module.ts
+// src/app.module.ts — Landing Pages & Funnels modules registered
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ConfigModule } from '@nestjs/config';
@@ -9,8 +9,14 @@ import { join } from 'path';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { User, UserSchema } from './schema/user.schema';
-import { VerificationCode, VerificationCodeSchema } from './schema/verification-code.schema';
-import { RevokedToken, RevokedTokenSchema } from './schema/revoked-token.schema';
+import {
+  VerificationCode,
+  VerificationCodeSchema,
+} from './schema/verification-code.schema';
+import {
+  RevokedToken,
+  RevokedTokenSchema,
+} from './schema/revoked-token.schema';
 import { Payout, PayoutSchema } from './schema/payout.schema';
 import { UserService } from './user/user.service';
 import { UserController } from './user/user.controller';
@@ -29,8 +35,14 @@ import { PromoService } from './common/services/promo.service';
 import { FeeService } from './common/services/fee.service';
 import { PromoCode, PromoCodeSchema } from './schema/promo-code.schema';
 import { Subscription, SubscriptionSchema } from './schema/subscription.schema';
-import { CourseEnrollmentSchema, CourseProgressSchema } from './schema/course.schema';
-import { StorageUsage, StorageUsageSchema } from './schema/storage-usage.schema';
+import {
+  CourseEnrollmentSchema,
+  CourseProgressSchema,
+} from './schema/course.schema';
+import {
+  StorageUsage,
+  StorageUsageSchema,
+} from './schema/storage-usage.schema';
 import { TrackingController } from './common/controllers/tracking.controller';
 import { PaymentController } from './common/controllers/payment.controller';
 import { Plan, PlanSchema } from './schema/plan.schema';
@@ -49,7 +61,10 @@ import { SecurityModule } from './common/modules/security.module';
 import { MonitoringModule } from './common/modules/monitoring.module';
 import { CacheModule } from './common/modules/cache.module';
 import { Achievement, AchievementSchema } from './schema/achievement.schema';
-import { UserAchievement, UserAchievementSchema } from './schema/user-achievement.schema';
+import {
+  UserAchievement,
+  UserAchievementSchema,
+} from './schema/user-achievement.schema';
 import { ManualPaymentService } from './common/services/manual-payment.service';
 import { AiModule } from './ai/ai.module';
 import { Ga4Module } from './ga4/ga4.module';
@@ -67,10 +82,25 @@ import { PromoCodeModule } from './promo-code/promo-code.module';
 // Import new admin schemas
 import { AdminUser, AdminUserSchema } from './admin/schemas/admin-user.schema';
 import { AuditLog, AuditLogSchema } from './admin/schemas/audit-log.schema';
-import { ContentModerationQueue, ContentModerationQueueSchema } from './admin/schemas/content-moderation-queue.schema';
-import { ChallengeSubmission, ChallengeSubmissionSchema } from './schema/challenge-submission.schema';
-import { ProcessedWebhookEvent, ProcessedWebhookEventSchema } from './schema/processed-webhook-event.schema';
-import { PaymentAuditLog, PaymentAuditLogSchema } from './schema/payment-audit-log.schema';
+import {
+  ContentModerationQueue,
+  ContentModerationQueueSchema,
+} from './admin/schemas/content-moderation-queue.schema';
+import {
+  ChallengeSubmission,
+  ChallengeSubmissionSchema,
+} from './schema/challenge-submission.schema';
+import {
+  ProcessedWebhookEvent,
+  ProcessedWebhookEventSchema,
+} from './schema/processed-webhook-event.schema';
+import {
+  PaymentAuditLog,
+  PaymentAuditLogSchema,
+} from './schema/payment-audit-log.schema';
+import { LandingPagesModule } from './landing-pages/landing-pages.module';
+import { FunnelsModule } from './funnels/funnels.module';
+import { GamificationModule } from './gamification/gamification.module';
 
 @Module({
   imports: [
@@ -144,7 +174,10 @@ import { PaymentAuditLog, PaymentAuditLogSchema } from './schema/payment-audit-l
       // New admin schemas
       { name: AdminUser.name, schema: AdminUserSchema },
       { name: AuditLog.name, schema: AuditLogSchema },
-      { name: ContentModerationQueue.name, schema: ContentModerationQueueSchema },
+      {
+        name: ContentModerationQueue.name,
+        schema: ContentModerationQueueSchema,
+      },
       { name: ChallengeSubmission.name, schema: ChallengeSubmissionSchema },
       { name: ProcessedWebhookEvent.name, schema: ProcessedWebhookEventSchema },
       { name: PaymentAuditLog.name, schema: PaymentAuditLogSchema },
@@ -176,8 +209,16 @@ import { PaymentAuditLog, PaymentAuditLogSchema } from './schema/payment-audit-l
     VideoModule,
     PaymentMethodModule,
     PromoCodeModule,
+    LandingPagesModule,
+    FunnelsModule,
+    GamificationModule,
   ],
-  controllers: [AppController, UserController, TrackingController, PaymentController],
+  controllers: [
+    AppController,
+    UserController,
+    TrackingController,
+    PaymentController,
+  ],
   providers: [
     AppService,
     UserService,
@@ -190,4 +231,4 @@ import { PaymentAuditLog, PaymentAuditLogSchema } from './schema/payment-audit-l
   ],
   exports: [EmailService],
 })
-export class AppModule { }
+export class AppModule {}

@@ -17,6 +17,7 @@ import {
   AiChapterConversationDocument,
   AiChapterMessage,
 } from '../schema/ai-chapter-conversation.schema';
+import { AiAssistAction, ContentAssistDto } from './dto/content-assist.dto';
 
 @Injectable()
 export class AiService {
@@ -28,6 +29,9 @@ export class AiService {
   private readonly contextCharLimit: number;
   private readonly historyMessageLimit: number;
   private readonly contextHistoryMessageLimit: number;
+  private readonly writingModelCandidates: string[];
+  private readonly writingTemperature: number;
+  private readonly writingMaxOutputTokens: number;
 
   constructor(
     private configService: ConfigService,
@@ -43,7 +47,8 @@ export class AiService {
       ? this.configService.get<string>('OLLAMA_API_KEY')
       : this.configService.get<string>('OPENROUTER_API_KEY');
     const baseURL = useOllamaCloud
-      ? this.configService.get<string>('OLLAMA_BASE_URL') || 'https://ollama.com/v1'
+      ? this.configService.get<string>('OLLAMA_BASE_URL') ||
+        'https://ollama.com/v1'
       : this.configService.get<string>('OPENROUTER_BASE_URL') ||
         'https://openrouter.ai/api/v1';
     const siteUrl =
@@ -123,6 +128,49 @@ export class AiService {
 
     this.logger.log(
       `AI tutor initialized with models: ${this.modelCandidates.join(' -> ')}`,
+    );
+
+    // Wanis (Writing Assistant) configuration
+    const writingPrimaryModel = (
+      this.configService.get<string>('WRITING_AI_MODEL') || ''
+    ).trim();
+    const writingFallbackRaw = (
+      this.configService.get<string>('WRITING_AI_FALLBACK_MODELS') || ''
+    ).trim();
+    const writingFallbackModels = writingFallbackRaw
+      ? writingFallbackRaw
+          .split(',')
+          .map((v) => v.trim())
+          .filter(Boolean)
+      : [];
+
+    if (writingPrimaryModel) {
+      this.writingModelCandidates = [
+        ...new Set([
+          writingPrimaryModel,
+          ...writingFallbackModels,
+          ...this.modelCandidates,
+        ]),
+      ];
+    } else {
+      this.writingModelCandidates = this.modelCandidates;
+    }
+
+    this.writingTemperature = this.parseNumberConfig(
+      'WRITING_AI_TEMPERATURE',
+      0.7,
+      0,
+      1.5,
+    );
+    this.writingMaxOutputTokens = this.parseNumberConfig(
+      'WRITING_AI_MAX_OUTPUT_TOKENS',
+      2000,
+      128,
+      8000,
+    );
+
+    this.logger.log(
+      `Wanis writing assistant initialized with models: ${this.writingModelCandidates.join(' -> ')}`,
     );
   }
 
@@ -260,8 +308,14 @@ export class AiService {
   }
 
   async getChapterHistory(courseId: string, chapterId: string, userId: any) {
-    const normalizedCourseId = this.normalizeRequiredString(courseId, 'courseId');
-    const normalizedChapterId = this.normalizeRequiredString(chapterId, 'chapterId');
+    const normalizedCourseId = this.normalizeRequiredString(
+      courseId,
+      'courseId',
+    );
+    const normalizedChapterId = this.normalizeRequiredString(
+      chapterId,
+      'chapterId',
+    );
     const userObjectId = this.toUserObjectId(userId);
 
     const conversation = await this.aiConversationModel
@@ -286,8 +340,14 @@ export class AiService {
     question: string,
     userId: any,
   ) {
-    const normalizedCourseId = this.normalizeRequiredString(courseId, 'courseId');
-    const normalizedChapterId = this.normalizeRequiredString(chapterId, 'chapterId');
+    const normalizedCourseId = this.normalizeRequiredString(
+      courseId,
+      'courseId',
+    );
+    const normalizedChapterId = this.normalizeRequiredString(
+      chapterId,
+      'chapterId',
+    );
     const userObjectId = this.toUserObjectId(userId);
     const normalizedQuestion = String(question || '').trim();
     if (!normalizedQuestion) {
@@ -337,9 +397,15 @@ export class AiService {
     if (!targetChapter) throw new NotFoundException('Chapter not found');
     if (!targetSection) throw new NotFoundException('Section not found');
 
-    const sectionTitle = String(targetSection.titre ?? targetSection.title ?? '');
-    const chapterTitle = String(targetChapter.titre ?? targetChapter.title ?? '');
-    const chapterDescription = String(targetChapter.description ?? targetChapter.content ?? '');
+    const sectionTitle = String(
+      targetSection.titre ?? targetSection.title ?? '',
+    );
+    const chapterTitle = String(
+      targetChapter.titre ?? targetChapter.title ?? '',
+    );
+    const chapterDescription = String(
+      targetChapter.description ?? targetChapter.content ?? '',
+    );
     const chapterNotes = String(targetChapter.notes ?? '');
 
     // 2. Build Context
@@ -348,10 +414,10 @@ export class AiService {
       Course Title: ${course.titre}
       Section: ${sectionTitle}
       Chapter: ${chapterTitle}
-      
+
       Content/Description:
       ${chapterDescription || 'No text content provided.'}
-      
+
       Notes:
       ${chapterNotes || 'No notes provided.'}
     `);
@@ -370,7 +436,8 @@ export class AiService {
 
     // 3. Call OpenRouter with model fallback chain
     let lastError: any = null;
-    const errors: Array<{ model: string; status: string; message: string }> = [];
+    const errors: Array<{ model: string; status: string; message: string }> =
+      [];
 
     for (const model of this.modelCandidates) {
       try {
@@ -425,10 +492,7 @@ ${context}`,
         lastError = error;
         const message = this.extractErrorMessage(error);
         const status =
-          error?.status ||
-          error?.code ||
-          error?.error?.code ||
-          'unknown';
+          error?.status || error?.code || error?.error?.code || 'unknown';
         errors.push({ model, status: String(status), message });
         this.logger.warn(
           `AI model failed model=${model} status=${status} message=${message}`,
@@ -453,6 +517,111 @@ ${context}`,
     this.logger.error(
       `AI tutor failed across all models (${this.modelCandidates.join(', ')}): ${this.extractErrorMessage(lastError)}`,
     );
-    throw new InternalServerErrorException('Failed to generate response from AI');
+    throw new InternalServerErrorException(
+      'Failed to generate response from AI',
+    );
+  }
+
+  async assistContent(
+    dto: ContentAssistDto,
+  ): Promise<{ result: string; model: string }> {
+    const { action, text, context, tone } = dto;
+
+    const systemPrompt = [
+      'You are Wanis, an expert content editor and writing assistant for the Chabaqa community platform.',
+      'You are helpful, resourceful, and clear.',
+      'IMPORTANT RULES:',
+      '- Return ONLY the requested content. No greetings, no explanations, no filler phrases like "Here is your rewritten text:".',
+      '- Match the language of the input text. If the user writes in Arabic, respond in Arabic. If in French, respond in French. If in English, respond in English.',
+      '- Preserve any formatting (bullet points, numbered lists, line breaks) unless the action explicitly changes it.',
+    ].join('\n');
+
+    let userPrompt = '';
+
+    switch (action) {
+      case AiAssistAction.IMPROVE:
+        userPrompt = `Improve the grammar, flow, and clarity of the following text. Keep the same meaning and tone.\n\nText:\n${text}`;
+        break;
+      case AiAssistAction.EXPAND:
+        userPrompt = `Expand the following text with relevant details, examples, and explanations to make it more comprehensive. Keep the same tone and style.\n\nText:\n${text}`;
+        break;
+      case AiAssistAction.SHORTEN:
+        userPrompt = `Make the following text more concise without losing its core message or key points.\n\nText:\n${text}`;
+        break;
+      case AiAssistAction.REWRITE: {
+        const toneInstruction = tone
+          ? `Rewrite using a ${tone} tone.`
+          : 'Rewrite to be more engaging and polished.';
+        userPrompt = `${toneInstruction}\n\nText:\n${text}`;
+        break;
+      }
+      case AiAssistAction.SUMMARIZE:
+        userPrompt = `Provide a brief, clear summary of the following text in 2-4 sentences.\n\nText:\n${text}`;
+        break;
+      case AiAssistAction.BRAINSTORM:
+        userPrompt = `Based on the following topic or prompt, brainstorm 5-7 distinct ideas, key points, or an outline. Format as a numbered list.\n\nTopic:\n${text}`;
+        break;
+      default:
+        throw new BadRequestException(`Unsupported action: ${action}`);
+    }
+
+    if (context) {
+      userPrompt += `\n\nAdditional Context: ${context}`;
+    }
+
+    let lastError: any = null;
+    const errors: Array<{ model: string; status: string; message: string }> =
+      [];
+
+    for (const model of this.writingModelCandidates) {
+      try {
+        const completion = await this.openai.chat.completions.create({
+          model,
+          temperature: this.writingTemperature,
+          max_tokens: this.writingMaxOutputTokens,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt },
+          ],
+        });
+
+        const result = this.extractCompletionText(completion);
+        if (!result) {
+          throw new Error('Model returned an empty response');
+        }
+
+        return { result, model };
+      } catch (error: any) {
+        lastError = error;
+        const message = this.extractErrorMessage(error);
+        const status =
+          error?.status || error?.code || error?.error?.code || 'unknown';
+        errors.push({ model, status: String(status), message });
+        this.logger.warn(
+          `Wanis writing assist failed model=${model} status=${status} message=${message}`,
+        );
+      }
+    }
+
+    const allRateLimited =
+      errors.length > 0 &&
+      errors.every(
+        (error) =>
+          error.status === '429' ||
+          error.message.toLowerCase().includes('rate limit') ||
+          error.message.toLowerCase().includes('provider returned error'),
+      );
+    if (allRateLimited) {
+      throw new ServiceUnavailableException(
+        'AI provider is temporarily rate-limited. Please retry in a few seconds.',
+      );
+    }
+
+    this.logger.error(
+      `Wanis writing assist failed across all models (${this.writingModelCandidates.join(', ')}): ${this.extractErrorMessage(lastError)}`,
+    );
+    throw new InternalServerErrorException(
+      'Failed to generate content from AI',
+    );
   }
 }

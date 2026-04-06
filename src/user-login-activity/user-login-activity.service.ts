@@ -1,13 +1,19 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  Optional,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { 
-  UserLoginActivity, 
-  UserLoginActivityDocument 
+import {
+  UserLoginActivity,
+  UserLoginActivityDocument,
 } from '../schema/user-login-activity.schema';
 import { User, UserDocument } from '../schema/user.schema';
 import { Community, CommunityDocument } from '../schema/community.schema';
+import { GamificationService } from '../gamification/gamification.service';
 
 /**
  * Service for managing user login activity tracking
@@ -18,12 +24,13 @@ export class UserLoginActivityService {
   private readonly logger = new Logger(UserLoginActivityService.name);
 
   constructor(
-    @InjectModel(UserLoginActivity.name) 
+    @InjectModel(UserLoginActivity.name)
     private userLoginActivityModel: Model<UserLoginActivityDocument>,
-    @InjectModel(User.name) 
+    @InjectModel(User.name)
     private userModel: Model<UserDocument>,
-    @InjectModel(Community.name) 
+    @InjectModel(Community.name)
     private communityModel: Model<CommunityDocument>,
+    @Optional() private readonly gamificationService?: GamificationService,
   ) {}
 
   /**
@@ -34,7 +41,7 @@ export class UserLoginActivityService {
     try {
       const existingActivity = await this.userLoginActivityModel.findOne({
         userId: new Types.ObjectId(userId),
-        communityId: new Types.ObjectId(communityId)
+        communityId: new Types.ObjectId(communityId),
       });
 
       const now = new Date();
@@ -46,8 +53,16 @@ export class UserLoginActivityService {
         existingActivity.inactivityStatus = 'active';
         existingActivity.isReactivationTarget = false;
         await existingActivity.save();
-        
-        this.logger.log(`Updated login activity for user ${userId} in community ${communityId}`);
+
+        this.logger.log(
+          `Updated login activity for user ${userId} in community ${communityId}`,
+        );
+
+        if (this.gamificationService) {
+          this.gamificationService
+            .processLoginStreak(userId, communityId)
+            .catch((err) => console.error('Gamification streak error:', err));
+        }
       } else {
         // Create new record
         const newActivity = new this.userLoginActivityModel({
@@ -57,11 +72,19 @@ export class UserLoginActivityService {
           daysSinceLastLogin: 0,
           inactivityStatus: 'active',
           isReactivationTarget: false,
-          joinedAt: now
+          joinedAt: now,
         });
         await newActivity.save();
-        
-        this.logger.log(`Created new login activity for user ${userId} in community ${communityId}`);
+
+        this.logger.log(
+          `Created new login activity for user ${userId} in community ${communityId}`,
+        );
+
+        if (this.gamificationService) {
+          this.gamificationService
+            .processLoginStreak(userId, communityId)
+            .catch((err) => console.error('Gamification streak error:', err));
+        }
       }
     } catch (error) {
       this.logger.error(`Error tracking login for user ${userId}:`, error);
@@ -76,20 +99,27 @@ export class UserLoginActivityService {
   async trackUserLoginForAllCommunities(userId: string): Promise<void> {
     try {
       // Get all communities where user is a member
-      const userCommunities = await this.communityModel.find({
-        members: new Types.ObjectId(userId)
-      }).select('_id');
+      const userCommunities = await this.communityModel
+        .find({
+          members: new Types.ObjectId(userId),
+        })
+        .select('_id');
 
       // Track login for each community
-      const promises = userCommunities.map(community => 
-        this.trackUserLogin(userId, community._id.toString())
+      const promises = userCommunities.map((community) =>
+        this.trackUserLogin(userId, community._id.toString()),
       );
 
       await Promise.all(promises);
-      
-      this.logger.log(`Tracked login for user ${userId} across ${userCommunities.length} communities`);
+
+      this.logger.log(
+        `Tracked login for user ${userId} across ${userCommunities.length} communities`,
+      );
     } catch (error) {
-      this.logger.error(`Error tracking login for all communities for user ${userId}:`, error);
+      this.logger.error(
+        `Error tracking login for all communities for user ${userId}:`,
+        error,
+      );
       throw error;
     }
   }
@@ -101,18 +131,19 @@ export class UserLoginActivityService {
   async updateInactivityStatus(): Promise<void> {
     try {
       this.logger.log('Starting inactivity status update...');
-      
+
       const activities = await this.userLoginActivityModel.find();
       const now = new Date();
       let updatedCount = 0;
 
       for (const activity of activities) {
         const daysSinceLogin = Math.floor(
-          (now.getTime() - activity.lastLoginAt.getTime()) / (1000 * 60 * 60 * 24)
+          (now.getTime() - activity.lastLoginAt.getTime()) /
+            (1000 * 60 * 60 * 24),
         );
 
         const oldStatus = activity.inactivityStatus;
-        
+
         activity.daysSinceLastLogin = daysSinceLogin;
 
         // Update inactivity status based on days since login
@@ -140,7 +171,9 @@ export class UserLoginActivityService {
         }
       }
 
-      this.logger.log(`Inactivity status update completed. Updated ${updatedCount} users.`);
+      this.logger.log(
+        `Inactivity status update completed. Updated ${updatedCount} users.`,
+      );
     } catch (error) {
       this.logger.error('Error updating inactivity status:', error);
       throw error;
@@ -151,12 +184,13 @@ export class UserLoginActivityService {
    * Get inactive users by period for a specific community
    */
   async getInactiveUsersByPeriod(
-    communityId: string, 
+    communityId: string,
     inactivityPeriod: string,
     limit: number = 100,
   ): Promise<UserLoginActivityDocument[]> {
     try {
-      const { minDays, maxDays } = this.resolveInactivityRange(inactivityPeriod);
+      const { minDays, maxDays } =
+        this.resolveInactivityRange(inactivityPeriod);
       const effectiveLimit = Math.min(Math.max(limit || 100, 1), 1000);
 
       const rangeQuery: Record<string, number> = { $gte: minDays };
@@ -180,7 +214,10 @@ export class UserLoginActivityService {
       );
       return inactiveUsers;
     } catch (error) {
-      this.logger.error(`Error getting inactive users for period ${inactivityPeriod}:`, error);
+      this.logger.error(
+        `Error getting inactive users for period ${inactivityPeriod}:`,
+        error,
+      );
       throw error;
     }
   }
@@ -188,7 +225,10 @@ export class UserLoginActivityService {
   /**
    * Get all inactive users for a community (any period)
    */
-  async getAllInactiveUsers(communityId: string, limit: number = 1000): Promise<UserLoginActivityDocument[]> {
+  async getAllInactiveUsers(
+    communityId: string,
+    limit: number = 1000,
+  ): Promise<UserLoginActivityDocument[]> {
     try {
       const effectiveLimit = Math.min(Math.max(limit || 1000, 1), 1000);
       const inactiveUsers = await this.userLoginActivityModel
@@ -202,10 +242,15 @@ export class UserLoginActivityService {
         .limit(effectiveLimit)
         .exec();
 
-      this.logger.log(`Found ${inactiveUsers.length} total inactive users in community ${communityId}`);
+      this.logger.log(
+        `Found ${inactiveUsers.length} total inactive users in community ${communityId}`,
+      );
       return inactiveUsers;
     } catch (error) {
-      this.logger.error(`Error getting all inactive users for community ${communityId}:`, error);
+      this.logger.error(
+        `Error getting all inactive users for community ${communityId}:`,
+        error,
+      );
       throw error;
     }
   }
@@ -221,32 +266,38 @@ export class UserLoginActivityService {
           $group: {
             _id: '$inactivityStatus',
             count: { $sum: 1 },
-            avgDaysSinceLogin: { $avg: '$daysSinceLastLogin' }
-          }
-        }
+            avgDaysSinceLogin: { $avg: '$daysSinceLastLogin' },
+          },
+        },
       ]);
 
       const totalMembers = await this.userLoginActivityModel.countDocuments({
-        communityId: new Types.ObjectId(communityId)
+        communityId: new Types.ObjectId(communityId),
       });
 
       const result = {
         totalMembers,
-        activeUsers: stats.find(s => s._id === 'active')?.count || 0,
-        inactive7d: stats.find(s => s._id === 'inactive_7d')?.count || 0,
-        inactive15d: stats.find(s => s._id === 'inactive_15d')?.count || 0,
-        inactive30d: stats.find(s => s._id === 'inactive_30d')?.count || 0,
-        inactive60dPlus: stats.find(s => s._id === 'inactive_60d_plus')?.count || 0,
+        activeUsers: stats.find((s) => s._id === 'active')?.count || 0,
+        inactive7d: stats.find((s) => s._id === 'inactive_7d')?.count || 0,
+        inactive15d: stats.find((s) => s._id === 'inactive_15d')?.count || 0,
+        inactive30d: stats.find((s) => s._id === 'inactive_30d')?.count || 0,
+        inactive60dPlus:
+          stats.find((s) => s._id === 'inactive_60d_plus')?.count || 0,
         totalInactiveUsers: stats
-          .filter(s => s._id !== 'active')
+          .filter((s) => s._id !== 'active')
           .reduce((sum, s) => sum + s.count, 0),
-        breakdown: stats
+        breakdown: stats,
       };
 
-      this.logger.log(`Retrieved inactivity stats for community ${communityId}: ${result.totalInactiveUsers} inactive users`);
+      this.logger.log(
+        `Retrieved inactivity stats for community ${communityId}: ${result.totalInactiveUsers} inactive users`,
+      );
       return result;
     } catch (error) {
-      this.logger.error(`Error getting inactivity stats for community ${communityId}:`, error);
+      this.logger.error(
+        `Error getting inactivity stats for community ${communityId}:`,
+        error,
+      );
       throw error;
     }
   }
@@ -255,22 +306,24 @@ export class UserLoginActivityService {
    * Update reactivation email tracking
    */
   async updateReactivationEmailSent(
-    userId: string, 
-    communityId: string
+    userId: string,
+    communityId: string,
   ): Promise<void> {
     try {
       await this.userLoginActivityModel.updateOne(
         {
           userId: new Types.ObjectId(userId),
-          communityId: new Types.ObjectId(communityId)
+          communityId: new Types.ObjectId(communityId),
         },
         {
           $set: { lastReactivationEmailSent: new Date() },
-          $inc: { reactivationEmailCount: 1 }
-        }
+          $inc: { reactivationEmailCount: 1 },
+        },
       );
 
-      this.logger.log(`Updated reactivation email tracking for user ${userId} in community ${communityId}`);
+      this.logger.log(
+        `Updated reactivation email tracking for user ${userId} in community ${communityId}`,
+      );
     } catch (error) {
       this.logger.error(`Error updating reactivation email tracking:`, error);
       throw error;
@@ -280,12 +333,15 @@ export class UserLoginActivityService {
   /**
    * Get user activity for a specific user-community pair
    */
-  async getUserActivity(userId: string, communityId: string): Promise<UserLoginActivityDocument | null> {
+  async getUserActivity(
+    userId: string,
+    communityId: string,
+  ): Promise<UserLoginActivityDocument | null> {
     try {
       const activity = await this.userLoginActivityModel
         .findOne({
           userId: new Types.ObjectId(userId),
-          communityId: new Types.ObjectId(communityId)
+          communityId: new Types.ObjectId(communityId),
         })
         .populate('userId', 'name email')
         .populate('communityId', 'name slug')
@@ -319,37 +375,41 @@ export class UserLoginActivityService {
   async handleWeeklyInactivityReport(): Promise<void> {
     try {
       this.logger.log('📊 Starting weekly inactivity report generation...');
-      
-      // Get all communities with inactive users
-      const communitiesWithInactiveUsers = await this.userLoginActivityModel.aggregate([
-        {
-          $match: {
-            inactivityStatus: { $ne: 'active' },
-            isReactivationTarget: true
-          }
-        },
-        {
-          $group: {
-            _id: '$communityId',
-            inactiveCount: { $sum: 1 }
-          }
-        }
-      ]);
 
-      this.logger.log(`Found ${communitiesWithInactiveUsers.length} communities with inactive users`);
-      
+      // Get all communities with inactive users
+      const communitiesWithInactiveUsers =
+        await this.userLoginActivityModel.aggregate([
+          {
+            $match: {
+              inactivityStatus: { $ne: 'active' },
+              isReactivationTarget: true,
+            },
+          },
+          {
+            $group: {
+              _id: '$communityId',
+              inactiveCount: { $sum: 1 },
+            },
+          },
+        ]);
+
+      this.logger.log(
+        `Found ${communitiesWithInactiveUsers.length} communities with inactive users`,
+      );
+
       // TODO: Implement email reports to community creators
       // This would send weekly reports about inactive users to community creators
-      
+
       this.logger.log('✅ Weekly inactivity report generation completed');
     } catch (error) {
       this.logger.error('❌ Error in weekly inactivity report:', error);
     }
   }
 
-  private resolveInactivityRange(
-    inactivityPeriod: string,
-  ): { minDays: number; maxDays?: number } {
+  private resolveInactivityRange(inactivityPeriod: string): {
+    minDays: number;
+    maxDays?: number;
+  } {
     switch (inactivityPeriod) {
       case 'last_7_days':
         return { minDays: 8, maxDays: 14 };

@@ -6,6 +6,7 @@ import { Community, CommunitySchema } from '../schema/community.schema';
 import { User, UserSchema } from '../schema/user.schema';
 import { Post, PostSchema } from '../schema/post.schema';
 import { CommunityPageContentModule } from '../community-page-content/community-page-content.module';
+import { LandingPagesModule } from '../landing-pages/landing-pages.module';
 import { UploadModule } from '../upload/upload.module';
 
 @Module({
@@ -16,10 +17,11 @@ import { UploadModule } from '../upload/upload.module';
       { name: Post.name, schema: PostSchema },
     ]),
     CommunityPageContentModule,
+    LandingPagesModule,
     UploadModule,
   ],
   controllers: [CommunitiesController],
   providers: [CommunitiesService],
   exports: [CommunitiesService],
 })
-export class CommunitiesModule { }
+export class CommunitiesModule {}

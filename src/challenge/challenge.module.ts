@@ -6,14 +6,21 @@ import { Challenge, ChallengeSchema } from '../schema/challenge.schema';
 import { Community, CommunitySchema } from '../schema/community.schema';
 import { User, UserSchema } from '../schema/user.schema';
 import { AuthModule } from '../auth/auth.module';
+import { GamificationModule } from '../gamification/gamification.module';
 import { TrackingModule } from '../common/modules/tracking.module';
 import { FeeModule } from '../common/modules/fee.module';
 import { OrderSchema } from '../schema/order.schema';
 import { PolicyModule } from '../common/modules/policy.module';
 import { UploadModule } from '../upload/upload.module';
 import { ContentProgressSchema } from '../schema/content-tracking.schema';
-import { ChallengeSubmission, ChallengeSubmissionSchema } from '../schema/challenge-submission.schema';
-import { AnalyticsDaily, AnalyticsDailySchema } from '../schema/analytics-daily.schema';
+import {
+  ChallengeSubmission,
+  ChallengeSubmissionSchema,
+} from '../schema/challenge-submission.schema';
+import {
+  AnalyticsDaily,
+  AnalyticsDailySchema,
+} from '../schema/analytics-daily.schema';
 
 @Module({
   imports: [
@@ -31,9 +38,10 @@ import { AnalyticsDaily, AnalyticsDailySchema } from '../schema/analytics-daily.
     FeeModule,
     PolicyModule,
     UploadModule,
+    GamificationModule,
   ],
   controllers: [ChallengeController],
   providers: [ChallengeService],
   exports: [ChallengeService],
 })
-export class ChallengeModule { }
+export class ChallengeModule {}

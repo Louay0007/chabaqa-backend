@@ -10,6 +10,7 @@ import {
 import { AiService } from './ai.service';
 import { AuthGuard } from '@nestjs/passport';
 import { AskQuestionDto } from './dto/ask-question.dto';
+import { ContentAssistDto } from './dto/content-assist.dto';
 
 @Controller('ai')
 @UseGuards(AuthGuard('jwt'))
@@ -37,6 +38,15 @@ export class AiController {
     @Param('chapterId') chapterId: string,
     @Request() req: any,
   ) {
-    return this.aiService.getChapterHistory(courseId, chapterId, req?.user?._id);
+    return this.aiService.getChapterHistory(
+      courseId,
+      chapterId,
+      req?.user?._id,
+    );
+  }
+
+  @Post('content/assist')
+  async assistContent(@Body() dto: ContentAssistDto) {
+    return this.aiService.assistContent(dto);
   }
 }

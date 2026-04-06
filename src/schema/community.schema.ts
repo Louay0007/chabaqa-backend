@@ -285,6 +285,7 @@ export interface CommunityDocument extends Document {
   inviteCode: string;
   inviteLink: string;
   cours: Types.ObjectId[];
+  homePageId?: Types.ObjectId;
 
   // ============ Champs supplémentaires pour compatibilité frontend ============
   longDescription?: string;
@@ -824,6 +825,12 @@ export class Community {
     default: false,
   })
   isSuspended?: boolean;
+
+  /**
+   * Reference to the community's landing-page-backed home page
+   */
+  @Prop({ type: Types.ObjectId, ref: 'LandingPage' })
+  homePageId?: Types.ObjectId;
 }
 
 /**
