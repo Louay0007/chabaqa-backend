@@ -42,14 +42,22 @@ import { EmailCampaignQueueService } from './email-campaign.queue';
 import { PolicyService } from '../common/services/policy.service';
 import { Subscription, SubscriptionDocument } from '../schema/subscription.schema';
 import { EmailCampaignSendJobPayload } from './email-campaign.jobs';
+import { EmailSuppressionService } from '../email-suppression/email-suppression.service';
+import { SuppressionReason, SuppressionSource } from '../schema/email-suppression.schema';
+import { EmailDeliverabilityService } from '../email-deliverability/email-deliverability.service';
+import { ContactActivityService } from '../contact-activity/contact-activity.service';
+import { ContactActivityType } from '../schema/contact-activity.schema';
+import { ContactProfileService } from '../contact-profile/contact-profile.service';
+import { AudienceSegmentService } from '../audience-segment/audience-segment.service';
 
 type RecipientsQuery = { page?: number; limit?: number; status?: string; opened?: boolean };
 type SendRecipientResult = { authenticationFailure: boolean };
-type TrackingEventType = 'open' | 'click';
+type TrackingEventType = 'open' | 'click' | 'unsubscribe';
 type TrackingTokenPayload = {
   v: 1;
   type: TrackingEventType;
   campaignId: string;
+  communityId?: string;
   recipientUserId: string;
   recipientEmail: string;
   exp: number;
@@ -82,6 +90,11 @@ export class EmailCampaignService {
     private readonly userLoginActivityService: UserLoginActivityService,
     private readonly emailCampaignQueueService: EmailCampaignQueueService,
     private readonly policyService: PolicyService,
+    private readonly emailSuppressionService: EmailSuppressionService,
+    private readonly emailDeliverabilityService: EmailDeliverabilityService,
+    private readonly contactActivityService: ContactActivityService,
+    private readonly contactProfileService: ContactProfileService,
+    private readonly audienceSegmentService: AudienceSegmentService,
   ) {}
 
   /**
@@ -126,7 +139,31 @@ export class EmailCampaignService {
 
   async createCampaign(creatorId: string, dto: CreateEmailCampaignDto): Promise<EmailCampaignDocument> {
     const community = await this.verifyCommunityAccess(creatorId, dto.communityId);
-    const recipients = await this.buildCommunityRecipients(community);
+
+    // Resolve recipients from segment if provided, otherwise use all community members
+    let recipients: EmailRecipient[];
+    if (dto.segmentId) {
+      const userIds = await this.audienceSegmentService.evaluate(dto.segmentId);
+      const users = await this.userModel.find({ _id: { $in: userIds } }).select('email name').lean().exec();
+      recipients = users.map((u) => ({
+        userId: u._id as Types.ObjectId,
+        email: u.email,
+        name: u.name,
+        status: 'pending',
+        opened: false,
+        clickCount: 0,
+      } as EmailRecipient));
+    } else {
+      recipients = await this.buildCommunityRecipients(community);
+    }
+
+    // Assign A/B variants if enabled
+    if (dto.abTest?.enabled && dto.abTest.splitPct > 0) {
+      const splitCount = Math.round((recipients.length * dto.abTest.splitPct) / 100);
+      recipients.forEach((r, i) => {
+        (r as any).abVariant = i < splitCount ? 'B' : 'A';
+      });
+    }
 
     // Enforce email campaign quota
     await this.validateEmailCampaignQuota(creatorId, recipients.length);
@@ -148,6 +185,13 @@ export class EmailCampaignService {
       trackOpens: dto.trackOpens !== false,
       trackClicks: dto.trackClicks !== false,
       metadata: dto.metadata || {},
+      abTest: dto.abTest ? {
+        enabled: dto.abTest.enabled,
+        splitPct: dto.abTest.splitPct,
+        variantB: dto.abTest.variantB,
+        variantAStats: { sent: 0, opens: 0, clicks: 0 },
+        variantBStats: { sent: 0, opens: 0, clicks: 0 },
+      } : undefined,
     });
 
     const savedCampaign = await campaign.save();
@@ -939,15 +983,40 @@ export class EmailCampaignService {
       return;
     }
 
+    // ── Suppression check ──────────────────────────────────────────────────────
+    // Filter out any recipients whose email is on the community suppression list.
+    const pendingEmails = recipientsToProcess.map((r) => r.email);
+    const suppressedEmails = await this.emailSuppressionService.getBulkSuppressed(
+      campaign.communityId,
+      pendingEmails,
+    );
+    if (suppressedEmails.size > 0) {
+      for (const recipient of recipientsToProcess) {
+        if (suppressedEmails.has(recipient.email.toLowerCase().trim())) {
+          recipient.status = 'failed';
+          recipient.errorMessage = 'Email address is suppressed (unsubscribed or bounced)';
+          this.logger.log(
+            `Skipping suppressed recipient ${recipient.email} for campaign ${campaignId}`,
+          );
+        }
+      }
+    }
+
+    const activeRecipients = recipientsToProcess.filter((r) => r.status === 'pending');
+
     const batchSize = 10;
-    const batches = this.chunkArray(recipientsToProcess, batchSize);
+    const batches = this.chunkArray(activeRecipients, batchSize);
     let authenticationFailureMessage: string | null = null;
+    let totalSentInRun = 0;
 
     for (let index = 0; index < batches.length; index += 1) {
       const batch = batches[index];
       const results = await Promise.all(
         batch.map((recipient) => this.sendEmailToRecipient(campaign, recipient, communityName)),
       );
+      const batchSentCount = results.filter((_, i) => batch[i].status === 'sent').length;
+      totalSentInRun += batchSentCount;
+
       const authFailureInBatch = results.some((result) => result.authenticationFailure);
       if (authFailureInBatch) {
         authenticationFailureMessage =
@@ -980,6 +1049,15 @@ export class EmailCampaignService {
     campaign.status =
       campaign.sentCount > 0 ? EmailCampaignStatus.SENT : EmailCampaignStatus.FAILED;
     await this.persistCampaignSendState(campaign);
+
+    // ── Deliverability tracking ────────────────────────────────────────────────
+    if (totalSentInRun > 0) {
+      this.emailDeliverabilityService
+        .incrementSent(campaign.communityId, totalSentInRun)
+        .catch((err: any) =>
+          this.logger.warn(`Failed to record deliverability sent count: ${err?.message}`),
+        );
+    }
 
     if (campaign.isInactiveUserCampaign) {
       await this.updateReactivationEmailTracking(campaign);
@@ -1361,6 +1439,23 @@ export class EmailCampaignService {
       })
       .exec();
 
+    if (recipientExists && payload.communityId) {
+      this.contactActivityService
+        .record({
+          communityId: payload.communityId,
+          userId: payload.recipientUserId,
+          type: ContactActivityType.EMAIL_OPEN,
+          campaignId: payload.campaignId,
+          metadata: { email: payload.recipientEmail },
+        })
+        .then(() =>
+          this.contactProfileService
+            .recalculateScore(payload.communityId!, payload.recipientUserId)
+            .catch(() => undefined),
+        )
+        .catch(() => undefined);
+    }
+
     return Boolean(recipientExists);
   }
 
@@ -1423,11 +1518,88 @@ export class EmailCampaignService {
       )
       .exec();
 
+    if (payload.communityId) {
+      this.contactActivityService
+        .record({
+          communityId: payload.communityId,
+          userId: payload.recipientUserId,
+          type: ContactActivityType.EMAIL_CLICK,
+          campaignId: payload.campaignId,
+          metadata: { url: payload.url, email: payload.recipientEmail },
+        })
+        .then(() =>
+          this.contactProfileService
+            .recalculateScore(payload.communityId!, payload.recipientUserId)
+            .catch(() => undefined),
+        )
+        .catch(() => undefined);
+    }
+
     return payload.url;
   }
 
   getOpenTrackingPixel(): Buffer {
     return TRANSPARENT_GIF_BUFFER;
+  }
+
+  async pickAbTestWinner(campaignId: string, creatorId: string, winner: 'A' | 'B'): Promise<EmailCampaignDocument> {
+    const campaign = await this.emailCampaignModel.findById(campaignId).exec();
+    if (!campaign) throw new NotFoundException('Campaign not found');
+    if (!campaign.creatorId.equals(creatorId)) throw new ForbiddenException('Access denied');
+    if (!campaign.abTest?.enabled) throw new BadRequestException('A/B test is not enabled on this campaign');
+
+    campaign.abTest.winnerVariant = winner;
+    await campaign.save();
+
+    this.logger.log(`A/B test winner for campaign ${campaignId} set to variant ${winner}`);
+    return campaign;
+  }
+
+  /**
+   * Validates an unsubscribe token and adds the recipient's email to the
+   * community suppression list.  Returns `true` on success, `false` if the
+   * token is invalid or already expired.
+   */
+  async recordUnsubscribeByToken(token?: string): Promise<boolean> {
+    const payload = this.parseTrackingToken(token, 'unsubscribe');
+    if (!payload) return false;
+
+    const communityId = payload.communityId;
+    if (!communityId) return false;
+
+    // Add to suppression list (idempotent — duplicate-key errors are swallowed inside the service)
+    await this.emailSuppressionService.add(
+      communityId,
+      payload.recipientEmail,
+      SuppressionReason.UNSUBSCRIBED,
+      SuppressionSource.LINK,
+    );
+
+    // Update deliverability counters
+    this.emailDeliverabilityService
+      .incrementUnsubscribe(communityId)
+      .catch((err: any) =>
+        this.logger.warn(`Failed to record unsubscribe in deliverability: ${err?.message}`),
+      );
+
+    // Mark recipient as bounced/unsubscribed on the campaign document (best-effort)
+    const recipientObjectId = this.parseRecipientObjectId(payload.recipientUserId);
+    if (recipientObjectId) {
+      await this.emailCampaignModel
+        .updateOne(
+          {
+            _id: payload.campaignId,
+            recipients: {
+              $elemMatch: { userId: recipientObjectId, email: payload.recipientEmail },
+            },
+          },
+          { $set: { 'recipients.$.status': 'bounced' } },
+        )
+        .exec();
+    }
+
+    this.logger.log(`Unsubscribe recorded for ${payload.recipientEmail} (campaign ${payload.campaignId})`);
+    return true;
   }
 
   private async verifyCommunityAccess(creatorId: string, communityId: string): Promise<CommunityDocument> {
@@ -1512,6 +1684,12 @@ export class EmailCampaignService {
     recipient: EmailRecipient,
     communityName: string,
   ): Promise<SendRecipientResult> {
+    // Use A/B variant subject/content if applicable
+    const abVariant = (recipient as any).abVariant as 'A' | 'B' | undefined;
+    const useVariantB = campaign.abTest?.enabled && abVariant === 'B' && campaign.abTest.variantB;
+    const rawSubject = useVariantB ? campaign.abTest!.variantB.subject : campaign.subject;
+    const rawContent = useVariantB ? campaign.abTest!.variantB.content : campaign.content;
+
     const variables = this.buildBaseVariables({
       recipientName: recipient.name,
       communityName,
@@ -1520,8 +1698,8 @@ export class EmailCampaignService {
       contentType: String(campaign.metadata?.contentType || ''),
     });
 
-    const subject = renderTemplate(campaign.subject, variables);
-    const content = renderTemplate(campaign.content, variables);
+    const subject = renderTemplate(rawSubject, variables);
+    const content = renderTemplate(rawContent, variables);
     const trackedContent = this.buildTrackedRecipientContent(campaign, recipient, content);
 
     try {
@@ -1560,10 +1738,26 @@ export class EmailCampaignService {
     const trackClicks = campaign.trackClicks !== false;
     const trackOpens = campaign.trackOpens !== false;
 
+    // Build the unsubscribe URL — always included for compliance
+    const unsubscribeUrl = this.buildUnsubscribeUrl(campaign, recipient);
+    const unsubscribeFooterHtml =
+      `<div style="text-align:center;font-size:12px;color:#999;margin-top:20px;padding-top:10px;` +
+      `border-top:1px solid #eee;">` +
+      `If you no longer wish to receive these emails, ` +
+      `<a href="${unsubscribeUrl}" style="color:#999;">unsubscribe here</a>.` +
+      `</div>`;
+    const unsubscribeFooterText = `\n\n---\nTo unsubscribe, visit: ${unsubscribeUrl}`;
+
     if (campaign.isHtml) {
       let trackedHtml = content;
       if (trackClicks) {
         trackedHtml = this.rewriteHtmlLinksWithTracking(trackedHtml, campaign, recipient);
+      }
+      // Inject unsubscribe footer before closing body tag (or append)
+      if (/<\/body>/i.test(trackedHtml)) {
+        trackedHtml = trackedHtml.replace(/<\/body>/i, `${unsubscribeFooterHtml}</body>`);
+      } else {
+        trackedHtml = `${trackedHtml}${unsubscribeFooterHtml}`;
       }
       if (trackOpens) {
         const openTrackingUrl = this.buildOpenTrackingUrl(campaign, recipient);
@@ -1576,13 +1770,18 @@ export class EmailCampaignService {
       ? this.rewritePlainTextLinksWithTracking(content, campaign, recipient)
       : content;
 
+    // Append plain-text unsubscribe footer
+    const trackedTextWithFooter = `${trackedText}${unsubscribeFooterText}`;
+
     let trackedHtml = this.renderPlainTextAsHtml(trackedText);
+    // Inject unsubscribe footer into HTML version
+    trackedHtml = `${trackedHtml}${unsubscribeFooterHtml}`;
     if (trackOpens) {
       const openTrackingUrl = this.buildOpenTrackingUrl(campaign, recipient);
       trackedHtml = this.injectOpenTrackingPixel(trackedHtml, openTrackingUrl);
     }
 
-    return { text: trackedText, html: trackedHtml };
+    return { text: trackedTextWithFooter, html: trackedHtml };
   }
 
   private rewriteHtmlLinksWithTracking(
@@ -1657,12 +1856,26 @@ export class EmailCampaignService {
       v: 1,
       type: 'click',
       campaignId: campaign._id.toString(),
+      communityId: campaign.communityId.toString(),
       recipientUserId: recipient.userId.toString(),
       recipientEmail: recipient.email,
       exp: Date.now() + TRACKING_TOKEN_TTL_MS,
       url: destinationUrl,
     });
     return `${this.getTrackingBaseUrl()}/click?t=${encodeURIComponent(token)}`;
+  }
+
+  private buildUnsubscribeUrl(campaign: EmailCampaignDocument, recipient: EmailRecipient): string {
+    const token = this.signTrackingPayload({
+      v: 1,
+      type: 'unsubscribe',
+      campaignId: campaign._id.toString(),
+      communityId: campaign.communityId.toString(),
+      recipientUserId: recipient.userId.toString(),
+      recipientEmail: recipient.email,
+      exp: Date.now() + TRACKING_TOKEN_TTL_MS,
+    });
+    return `${this.getTrackingBaseUrl()}/unsubscribe?t=${encodeURIComponent(token)}`;
   }
 
   private getTrackingBaseUrl(): string {

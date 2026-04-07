@@ -15,6 +15,7 @@ RUN npx nest build
 # ── Stage 3: Production image ────────────────────────────────────────────────
 FROM node:22-alpine AS runner
 WORKDIR /app
+RUN apk add --no-cache ffmpeg python3 make g++
 ENV NODE_ENV=production
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --prefer-offline && npm cache clean --force

@@ -13,6 +13,11 @@ import { PolicyModule } from '../common/modules/policy.module';
 import { EmailService } from '../common/services/email.service';
 import { EmailCampaignQueueService } from './email-campaign.queue';
 import { EmailCampaignProcessor } from './email-campaign.processor';
+import { EmailSuppressionModule } from '../email-suppression/email-suppression.module';
+import { EmailDeliverabilityModule } from '../email-deliverability/email-deliverability.module';
+import { ContactActivityModule } from '../contact-activity/contact-activity.module';
+import { ContactProfileModule } from '../contact-profile/contact-profile.module';
+import { AudienceSegmentModule } from '../audience-segment/audience-segment.module';
 
 /**
  * Module for managing email campaigns including inactive user targeting
@@ -28,6 +33,11 @@ import { EmailCampaignProcessor } from './email-campaign.processor';
     ]),
     UserLoginActivityModule,
     PolicyModule,
+    EmailSuppressionModule,
+    EmailDeliverabilityModule,
+    ContactActivityModule,
+    ContactProfileModule,
+    AudienceSegmentModule,
   ],
   controllers: [EmailCampaignController, EmailCampaignTrackingController],
   providers: [EmailCampaignService, EmailCampaignQueueService, EmailCampaignProcessor, EmailService],

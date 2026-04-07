@@ -18,6 +18,7 @@ import { NotificationModule } from '../notification/notification.module';
 import { AuthModule } from '../auth/auth.module';
 import { EmailCampaignModule } from '../email-campaign/email-campaign.module';
 import { DmModule } from '../dm/dm.module';
+import { AutomationWorkflowModule } from '../automation-workflow/automation-workflow.module';
 
 @Module({
   imports: [
@@ -36,9 +37,11 @@ import { DmModule } from '../dm/dm.module';
     AuthModule,
     EmailCampaignModule,
     DmModule,
+    AutomationWorkflowModule,
   ],
   controllers: [CommunityAffCreaJoinController],
   providers: [CommunityAffCreaJoinService],
   exports: [CommunityAffCreaJoinService],
 })
 export class CommunityAffCreaJoinModule {}
+

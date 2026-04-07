@@ -40,6 +40,8 @@ import {
   CommunityStaff,
   CommunityStaffDocument,
 } from '../schema/community-staff.schema';
+import { AutomationWorkflowService } from '../automation-workflow/automation-workflow.service';
+import { WorkflowTrigger } from '../schema/automation-workflow.schema';
 
 @Injectable()
 export class CommunityAffCreaJoinService implements OnModuleInit {
@@ -63,6 +65,7 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
     private readonly cacheService: CacheService,
     private readonly emailCampaignService: EmailCampaignService,
     private readonly dmService: DmService,
+    private readonly automationWorkflowService: AutomationWorkflowService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -1770,6 +1773,9 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
         userId,
         community._id.toString(),
       );
+      this.automationWorkflowService
+        .triggerEvent(community._id.toString(), WorkflowTrigger.MEMBER_JOINED, userId, {})
+        .catch(() => {});
       try {
         await this.trackingService.trackStart(
           userId,
@@ -1848,6 +1854,9 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
         userId,
         community._id.toString(),
       );
+      this.automationWorkflowService
+        .triggerEvent(community._id.toString(), WorkflowTrigger.MEMBER_JOINED, userId, {})
+        .catch(() => {});
       try {
         await this.trackingService.trackStart(
           userId,
@@ -1912,6 +1921,9 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
       userId,
       community._id.toString(),
     );
+    this.automationWorkflowService
+      .triggerEvent(community._id.toString(), WorkflowTrigger.MEMBER_JOINED, userId, {})
+      .catch(() => {});
     try {
       await this.trackingService.trackStart(
         userId,

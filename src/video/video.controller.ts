@@ -10,17 +10,23 @@ import {
   Request,
   Res,
   UseGuards,
+  Body,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { Response } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { VideoPlaybackService } from './video-playback.service';
+import { TranscriptionService } from '../transcription/transcription.service';
+import { TriggerTranscriptionDto } from '../transcription/dto/trigger-transcription.dto';
 
 @ApiTags('Video Playback')
 @Controller('video')
 export class VideoController {
-  constructor(private readonly videoPlaybackService: VideoPlaybackService) {}
+  constructor(
+    private readonly videoPlaybackService: VideoPlaybackService,
+    private readonly transcriptionService: TranscriptionService
+  ) {}
 
   private getUserId(req: any): string {
     const userId = (
@@ -226,5 +232,33 @@ export class VideoController {
 
     const count = await this.videoPlaybackService.revokeAllUserSessions(userId);
     return { success: true, data: { revokedCount: count } };
+  }
+
+  @Post('transcribe')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Trigger transcription for a video' })
+  async triggerTranscription(
+    @Request() req: any,
+    @Body() dto: TriggerTranscriptionDto,
+  ) {
+    const userId = this.getUserId(req);
+    const communityId = req?.user?.communityId || req?.body?.communityId;
+
+    if (!communityId) {
+      throw new BadRequestException('communityId is required');
+    }
+
+    const transcript = await this.transcriptionService.triggerTranscription(
+      dto,
+      userId,
+      communityId
+    );
+
+    return {
+      success: true,
+      message: 'Transcription triggered successfully',
+      data: transcript
+    };
   }
 }

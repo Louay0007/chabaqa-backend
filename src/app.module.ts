@@ -76,9 +76,9 @@ import { CommunityInvitationModule } from './community-invitation/community-invi
 import { AffiliateModule } from './affiliate/affiliate.module';
 import { CommunityAccessModule } from './community-access/community-access.module';
 import { VideoModule } from './video/video.module';
+import { TranscriptionModule } from './transcription/transcription.module';
 import { PaymentMethodModule } from './payment-methods/payment-method.module';
 import { PromoCodeModule } from './promo-code/promo-code.module';
-
 // Import new admin schemas
 import { AdminUser, AdminUserSchema } from './admin/schemas/admin-user.schema';
 import { AuditLog, AuditLogSchema } from './admin/schemas/audit-log.schema';
@@ -101,16 +101,28 @@ import {
 import { LandingPagesModule } from './landing-pages/landing-pages.module';
 import { FunnelsModule } from './funnels/funnels.module';
 import { GamificationModule } from './gamification/gamification.module';
+import { AutomationWorkflowModule } from './automation-workflow/automation-workflow.module';
+import { GdprModule } from './gdpr/gdpr.module';
+import { ContactActivityModule } from './contact-activity/contact-activity.module';
+import { ContactProfileModule } from './contact-profile/contact-profile.module';
+import { EmailSuppressionModule } from './email-suppression/email-suppression.module';
+import { EmailDeliverabilityModule } from './email-deliverability/email-deliverability.module';
+import { AudienceSegmentModule } from './audience-segment/audience-segment.module';
+import { EmailTemplateModule } from './email-template/email-template.module';
+import { ContactImportModule } from './contact-import/contact-import.module';
+import {
+  ConsentRecord,
+  ConsentRecordSchema,
+} from './schema/consent-record.schema';
+import { UserSession, UserSessionSchema } from './schema/user-session.schema';
+import { EmailSuppressionModule } from './email-suppression/email-suppression.module';
+import { EmailDeliverabilityModule } from './email-deliverability/email-deliverability.module';
 
 @Module({
   imports: [
     // 1) charge .env globalement
     ConfigModule.forRoot({ isGlobal: true }),
     ScheduleModule.forRoot(),
-
-    // 2) Configuration pour servir les fichiers statiques
-    // NOTE: Video files are served via X-Accel-Redirect through VideoModule.
-    // ServeStaticModule only serves images, documents, and audio.
     ServeStaticModule.forRoot({
       rootPath: join(process.cwd(), 'uploads'),
       serveRoot: '/uploads',
@@ -118,8 +130,6 @@ import { GamificationModule } from './gamification/gamification.module';
         index: false,
       },
     }),
-
-    // 3) connexion MongoDB + test immédiat
     MongooseModule.forRootAsync({
       useFactory: () => ({
         uri: process.env.MONGO_URI,
@@ -127,11 +137,8 @@ import { GamificationModule } from './gamification/gamification.module';
         socketTimeoutMS: 45000,
         connectTimeoutMS: 30000,
         connectionFactory: (connection) => {
-          // log OK / KO
           connection.on('connected', async () => {
             console.log('✅ MongoDB connected!');
-
-            /* --- test vivant : lister les collections --- */
             try {
               const cols = await connection.db.listCollections().toArray();
               console.log(
@@ -142,11 +149,9 @@ import { GamificationModule } from './gamification/gamification.module';
               console.error('❌ Test query failed:', err);
             }
           });
-
           connection.on('error', (err: any) =>
             console.error('❌ MongoDB connection error:', err),
           );
-
           return connection;
         },
       }),
@@ -171,7 +176,6 @@ import { GamificationModule } from './gamification/gamification.module';
       { name: Subscription.name, schema: SubscriptionSchema },
       { name: 'CourseEnrollment', schema: CourseEnrollmentSchema },
       { name: 'CourseProgress', schema: CourseProgressSchema },
-      // New admin schemas
       { name: AdminUser.name, schema: AdminUserSchema },
       { name: AuditLog.name, schema: AuditLogSchema },
       {
@@ -181,6 +185,8 @@ import { GamificationModule } from './gamification/gamification.module';
       { name: ChallengeSubmission.name, schema: ChallengeSubmissionSchema },
       { name: ProcessedWebhookEvent.name, schema: ProcessedWebhookEventSchema },
       { name: PaymentAuditLog.name, schema: PaymentAuditLogSchema },
+      { name: ConsentRecord.name, schema: ConsentRecordSchema },
+      { name: UserSession.name, schema: UserSessionSchema },
     ]),
     AuthModule,
     CommunityDomainModule,
@@ -207,11 +213,21 @@ import { GamificationModule } from './gamification/gamification.module';
     AffiliateModule,
     CommunityAccessModule,
     VideoModule,
+    TranscriptionModule,
     PaymentMethodModule,
     PromoCodeModule,
     LandingPagesModule,
     FunnelsModule,
     GamificationModule,
+    AutomationWorkflowModule,
+    GdprModule,
+    EmailSuppressionModule,
+    EmailDeliverabilityModule,
+    ContactActivityModule,
+    ContactProfileModule,
+    AudienceSegmentModule,
+    EmailTemplateModule,
+    ContactImportModule,
   ],
   controllers: [
     AppController,

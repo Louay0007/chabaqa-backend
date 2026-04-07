@@ -1,6 +1,7 @@
-import { Module, Global } from '@nestjs/common';
+import { Module, forwardRef, Global } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { MulterModule } from '@nestjs/platform-express';
+import { TranscriptionModule } from '../transcription/transcription.module';
 import { UploadController } from './upload.controller';
 import { UploadService } from './upload.service';
 import { PolicyModule } from '../common/modules/policy.module';
@@ -13,6 +14,7 @@ import { v4 as uuidv4 } from 'uuid';
 @Global()
 @Module({
   imports: [
+    TranscriptionModule,
     MongooseModule.forFeature([
       { name: StorageUsage.name, schema: StorageUsageSchema },
       { name: MediaAsset.name, schema: MediaAssetSchema },

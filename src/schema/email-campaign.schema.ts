@@ -47,6 +47,47 @@ export enum InactivityPeriod {
 }
 
 /**
+ * A/B test variant stats sub-schema
+ */
+@Schema({ _id: false })
+export class AbTestVariantStats {
+  @Prop({ default: 0 })
+  sent: number;
+
+  @Prop({ default: 0 })
+  opens: number;
+
+  @Prop({ default: 0 })
+  clicks: number;
+}
+export const AbTestVariantStatsSchema = SchemaFactory.createForClass(AbTestVariantStats);
+
+/**
+ * A/B test configuration sub-schema
+ */
+@Schema({ _id: false })
+export class AbTestConfig {
+  @Prop({ default: false })
+  enabled: boolean;
+
+  @Prop({ default: 50, min: 0, max: 100 })
+  splitPct: number;
+
+  @Prop({ type: Object, default: {} })
+  variantB: { subject: string; content: string };
+
+  @Prop({ type: String, enum: ['A', 'B'] })
+  winnerVariant?: 'A' | 'B';
+
+  @Prop({ type: AbTestVariantStatsSchema, default: () => ({ sent: 0, opens: 0, clicks: 0 }) })
+  variantAStats: AbTestVariantStats;
+
+  @Prop({ type: AbTestVariantStatsSchema, default: () => ({ sent: 0, opens: 0, clicks: 0 }) })
+  variantBStats: AbTestVariantStats;
+}
+export const AbTestConfigSchema = SchemaFactory.createForClass(AbTestConfig);
+
+/**
  * Schema for email recipients
  */
 @Schema({ _id: false })
@@ -89,6 +130,9 @@ export class EmailRecipient {
 
   @Prop({ required: false })
   personalizedSubject?: string;
+
+  @Prop({ type: String, enum: ['A', 'B'] })
+  abVariant?: 'A' | 'B';
 }
 
 export const EmailRecipientSchema = SchemaFactory.createForClass(EmailRecipient);
@@ -374,6 +418,12 @@ export class EmailCampaign {
   automationActive: boolean;
 
   /**
+   * A/B test configuration
+   */
+  @Prop({ type: AbTestConfigSchema })
+  abTest?: AbTestConfig;
+
+  /**
    * Campaign metadata
    */
   @Prop({ 
@@ -427,6 +477,7 @@ export interface EmailCampaignDocument extends Document {
   isAutomationTemplate: boolean;
   eventTrigger?: AutomationEventTrigger;
   automationActive: boolean;
+  abTest?: AbTestConfig;
   metadata?: Record<string, any>;
   createdAt: Date;
   updatedAt: Date;

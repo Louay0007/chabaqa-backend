@@ -426,4 +426,18 @@ export class EmailCampaignController {
   ): Promise<EmailCampaignDocument> {
     return this.emailCampaignService.toggleInactivityAutomation(automationId, req.user._id, active);
   }
+
+  @Post(':id/ab-test/pick-winner')
+  @UseGuards(CommunityPermissionGuard)
+  @RequireCommunityPermission(CommunityPermission.MARKETING_MANAGE)
+  @CommunityIdFrom({ type: 'entity', modelName: 'EmailCampaign', paramName: 'id' })
+  @ApiOperation({ summary: 'Pick A/B test winner variant' })
+  @ApiParam({ name: 'id' })
+  pickAbTestWinner(
+    @Request() req,
+    @Param('id') id: string,
+    @Body('winner') winner: 'A' | 'B',
+  ): Promise<EmailCampaignDocument> {
+    return this.emailCampaignService.pickAbTestWinner(id, req.user._id, winner);
+  }
 }

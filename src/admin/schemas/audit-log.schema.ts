@@ -16,13 +16,13 @@ export enum AdminAction {
   USER_VIEW = 'user_view',
   USER_UPDATE = 'user_update',
   USER_DELETE = 'user_delete',
-  
+
   // Community management actions
   COMMUNITY_APPROVE = 'community_approve',
   COMMUNITY_REJECT = 'community_reject',
   COMMUNITY_VIEW = 'community_view',
   COMMUNITY_MODERATE = 'community_moderate',
-  
+
   // Content moderation actions
   CONTENT_APPROVE = 'content_approve',
   CONTENT_REJECT = 'content_reject',
@@ -45,25 +45,25 @@ export enum AdminAction {
   CONTENT_BULK_MODERATION = 'content_bulk_moderation',
   CONTENT_PRIORITY_UPDATE = 'content_priority_update',
   CONTENT_ASSIGNMENT = 'content_assignment',
-  
+
   // Financial management actions
   PAYOUT_PROCESS = 'payout_process',
   FINANCIAL_VIEW = 'financial_view',
   DISPUTE_HANDLE = 'dispute_handle',
   FINANCIAL_REPORT_GENERATE = 'financial_report_generate',
-  
+
   // Analytics and reporting actions
   ANALYTICS_VIEW = 'analytics_view',
   DATA_EXPORT = 'data_export',
   ALERT_CONFIGURE = 'alert_configure',
-  
+
   // Security and audit actions
   AUDIT_LOG_VIEW = 'audit_log_view',
   AUDIT_LOG_EXPORT = 'audit_log_export',
   ADMIN_USER_CREATE = 'admin_user_create',
   ADMIN_USER_UPDATE = 'admin_user_update',
   ADMIN_USER_DELETE = 'admin_user_delete',
-  
+
   // Communication actions
   BULK_MESSAGE_SEND = 'bulk_message_send',
   EMAIL_CAMPAIGN_CREATE = 'email_campaign_create',
@@ -76,12 +76,20 @@ export enum AdminAction {
   EMAIL_TEMPLATE_UPDATE = 'email_template_update',
   EMAIL_TEMPLATE_DELETE = 'email_template_delete',
   EMAIL_TEMPLATE_TEST = 'email_template_test',
-  
+
   // System actions
   BULK_OPERATION = 'bulk_operation',
   SYSTEM_CONFIGURATION = 'system_configuration',
   LOGIN = 'login',
   LOGOUT = 'logout',
+
+  // User privacy and compliance actions
+  USER_DATA_EXPORT = 'user_data_export',
+  USER_ACCOUNT_DELETE = 'user_account_delete',
+  USER_2FA_ENABLE = 'user_2fa_enable',
+  USER_2FA_DISABLE = 'user_2fa_disable',
+  USER_CONSENT_UPDATE = 'user_consent_update',
+  USER_SESSION_REVOKE = 'user_session_revoke',
 }
 
 export type AuditLogDocument = AuditLog & Document;
@@ -157,7 +165,7 @@ AuditLogSchema.virtual('adminUser', {
   ref: 'AdminUser',
   localField: 'adminUserId',
   foreignField: '_id',
-  justOne: true
+  justOne: true,
 });
 
 // Ensure virtual fields are serialized

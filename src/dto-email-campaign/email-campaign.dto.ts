@@ -114,11 +114,21 @@ export class CreateEmailCampaignDto {
   @IsOptional()
   @IsObject()
   metadata?: Record<string, any>;
-}
 
-/**
- * DTO for creating an inactive user campaign
- */
+  @ApiPropertyOptional({ description: 'Audience segment ID to auto-resolve recipients' })
+  @IsOptional()
+  @IsString()
+  segmentId?: string;
+
+  @ApiPropertyOptional({ description: 'A/B test configuration' })
+  @IsOptional()
+  @IsObject()
+  abTest?: {
+    enabled: boolean;
+    splitPct: number;
+    variantB: { subject: string; content: string };
+  };
+}
 export class CreateInactiveUserCampaignDto {
   @ApiProperty({
     description: 'Campaign title',
@@ -313,6 +323,15 @@ export class UpdateEmailCampaignDto {
   @IsOptional()
   @IsObject()
   metadata?: Record<string, any>;
+
+  @ApiPropertyOptional({ description: 'A/B test configuration' })
+  @IsOptional()
+  @IsObject()
+  abTest?: {
+    enabled: boolean;
+    splitPct: number;
+    variantB: { subject: string; content: string };
+  };
 }
 
 /**

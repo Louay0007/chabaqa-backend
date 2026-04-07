@@ -49,7 +49,7 @@ export class AuditLogMiddleware implements NestMiddleware {
     let responseData: any;
 
     // Capture response data
-    res.send = function(data: any) {
+    res.send = function (data: any) {
       responseData = data;
       return originalSend.call(this, data);
     };
@@ -117,7 +117,10 @@ export class AuditLogMiddleware implements NestMiddleware {
     try {
       await this.securityMonitoringService.monitorAction(auditEntry as any);
     } catch (error) {
-      this.logger.error('Failed to monitor action for security threats:', error);
+      this.logger.error(
+        'Failed to monitor action for security threats:',
+        error,
+      );
       // Don't throw error to avoid breaking the main request
     }
   }
@@ -238,7 +241,10 @@ export class AuditLogMiddleware implements NestMiddleware {
   /**
    * Extract entity information from request
    */
-  private extractEntityInfo(req: AdminRequest): { entityType: string; entityId?: string } {
+  private extractEntityInfo(req: AdminRequest): {
+    entityType: string;
+    entityId?: string;
+  } {
     // Use explicitly set entity info if available
     if (req.entityType) {
       return {
@@ -248,13 +254,16 @@ export class AuditLogMiddleware implements NestMiddleware {
     }
 
     const pathSegments = req.path.split('/').filter(Boolean);
-    
+
     // Extract from path segments
     if (pathSegments.includes('users')) {
       const userIdIndex = pathSegments.indexOf('users') + 1;
       return {
         entityType: 'User',
-        entityId: pathSegments[userIdIndex] !== 'search' ? pathSegments[userIdIndex] : undefined,
+        entityId:
+          pathSegments[userIdIndex] !== 'search'
+            ? pathSegments[userIdIndex]
+            : undefined,
       };
     }
 
@@ -276,7 +285,7 @@ export class AuditLogMiddleware implements NestMiddleware {
 
     // Extract from request body or query parameters
     const entityId = req.params?.id || req.body?.id || req.query?.id;
-    
+
     return {
       entityType: 'System',
       entityId: entityId as string,
@@ -288,8 +297,8 @@ export class AuditLogMiddleware implements NestMiddleware {
    */
   private getClientIp(req: Request): string {
     return (
-      req.headers['x-forwarded-for'] as string ||
-      req.headers['x-real-ip'] as string ||
+      (req.headers['x-forwarded-for'] as string) ||
+      (req.headers['x-real-ip'] as string) ||
       req.connection.remoteAddress ||
       req.socket.remoteAddress ||
       'unknown'
@@ -300,8 +309,14 @@ export class AuditLogMiddleware implements NestMiddleware {
    * Sanitize request data for logging (remove sensitive information)
    */
   private sanitizeRequestData(req: AdminRequest): Record<string, any> {
-    const sensitiveFields = ['password', 'token', 'secret', 'key', 'authorization'];
-    
+    const sensitiveFields = [
+      'password',
+      'token',
+      'secret',
+      'key',
+      'authorization',
+    ];
+
     const sanitized: Record<string, any> = {
       method: req.method,
       path: req.path,
@@ -323,12 +338,15 @@ export class AuditLogMiddleware implements NestMiddleware {
     if (!responseData) return {};
 
     try {
-      const parsed = typeof responseData === 'string' ? JSON.parse(responseData) : responseData;
+      const parsed =
+        typeof responseData === 'string'
+          ? JSON.parse(responseData)
+          : responseData;
       const sensitiveFields = ['password', 'token', 'secret', 'key'];
-      
+
       const sanitized = { ...parsed };
       this.removeSensitiveFields(sanitized, sensitiveFields);
-      
+
       return sanitized;
     } catch (error) {
       return { raw: String(responseData).substring(0, 1000) }; // Limit size
@@ -342,7 +360,11 @@ export class AuditLogMiddleware implements NestMiddleware {
     if (!obj || typeof obj !== 'object') return;
 
     for (const key in obj) {
-      if (sensitiveFields.some(field => key.toLowerCase().includes(field.toLowerCase()))) {
+      if (
+        sensitiveFields.some((field) =>
+          key.toLowerCase().includes(field.toLowerCase()),
+        )
+      ) {
         obj[key] = '[REDACTED]';
       } else if (typeof obj[key] === 'object') {
         this.removeSensitiveFields(obj[key], sensitiveFields);
@@ -367,7 +389,11 @@ export class AuditLogMiddleware implements NestMiddleware {
   /**
    * Generate human-readable description of the action
    */
-  private generateDescription(action: AdminAction, method: string, path: string): string {
+  private generateDescription(
+    action: AdminAction,
+    method: string,
+    path: string,
+  ): string {
     const actionDescriptions: Record<AdminAction, string> = {
       [AdminAction.USER_CREATE]: 'Created new user',
       [AdminAction.USER_SUSPEND]: 'Suspended user account',
@@ -398,10 +424,13 @@ export class AuditLogMiddleware implements NestMiddleware {
       [AdminAction.CONTENT_ESCALATE]: 'Escalated content',
       [AdminAction.CONTENT_MODERATE]: 'Moderated content',
       [AdminAction.CONTENT_VIEW]: 'Viewed content details',
-      [AdminAction.CONTENT_MODERATION_VIEW]: 'Viewed content moderation details',
-      [AdminAction.CONTENT_MODERATION_QUEUE_VIEW]: 'Viewed content moderation queue',
+      [AdminAction.CONTENT_MODERATION_VIEW]:
+        'Viewed content moderation details',
+      [AdminAction.CONTENT_MODERATION_QUEUE_VIEW]:
+        'Viewed content moderation queue',
       [AdminAction.CONTENT_BULK_MODERATE]: 'Performed bulk content moderation',
-      [AdminAction.CONTENT_BULK_MODERATION]: 'Performed bulk content moderation',
+      [AdminAction.CONTENT_BULK_MODERATION]:
+        'Performed bulk content moderation',
       [AdminAction.CONTENT_PRIORITY_UPDATE]: 'Updated content priority',
       [AdminAction.CONTENT_ASSIGNMENT]: 'Assigned content to moderator',
       [AdminAction.PAYOUT_PROCESS]: 'Processed creator payout',
@@ -420,9 +449,12 @@ export class AuditLogMiddleware implements NestMiddleware {
       [AdminAction.EMAIL_CAMPAIGN_CREATE]: 'Created email campaign',
       [AdminAction.EMAIL_CAMPAIGN_SEND]: 'Sent email campaign',
       [AdminAction.NOTIFICATION_CONFIGURE]: 'Configured notifications',
-      [AdminAction.NOTIFICATION_CONFIG_CREATE]: 'Created notification configuration',
-      [AdminAction.NOTIFICATION_CONFIG_UPDATE]: 'Updated notification configuration',
-      [AdminAction.NOTIFICATION_CONFIG_DELETE]: 'Deleted notification configuration',
+      [AdminAction.NOTIFICATION_CONFIG_CREATE]:
+        'Created notification configuration',
+      [AdminAction.NOTIFICATION_CONFIG_UPDATE]:
+        'Updated notification configuration',
+      [AdminAction.NOTIFICATION_CONFIG_DELETE]:
+        'Deleted notification configuration',
       [AdminAction.EMAIL_TEMPLATE_CREATE]: 'Created email template',
       [AdminAction.EMAIL_TEMPLATE_UPDATE]: 'Updated email template',
       [AdminAction.EMAIL_TEMPLATE_DELETE]: 'Deleted email template',
@@ -431,6 +463,14 @@ export class AuditLogMiddleware implements NestMiddleware {
       [AdminAction.SYSTEM_CONFIGURATION]: 'Modified system configuration',
       [AdminAction.LOGIN]: 'Admin login',
       [AdminAction.LOGOUT]: 'Admin logout',
+      [AdminAction.USER_DATA_EXPORT]: 'Exported user personal data',
+      [AdminAction.USER_ACCOUNT_DELETE]: 'Deleted user account (GDPR)',
+      [AdminAction.USER_2FA_ENABLE]:
+        'Enabled two-factor authentication for user',
+      [AdminAction.USER_2FA_DISABLE]:
+        'Disabled two-factor authentication for user',
+      [AdminAction.USER_CONSENT_UPDATE]: 'Updated user consent settings',
+      [AdminAction.USER_SESSION_REVOKE]: 'Revoked user session',
     };
 
     return actionDescriptions[action] || `${method} ${path}`;
@@ -443,7 +483,10 @@ export class AuditLogMiddleware implements NestMiddleware {
     if (!responseData) return 'Unknown error';
 
     try {
-      const parsed = typeof responseData === 'string' ? JSON.parse(responseData) : responseData;
+      const parsed =
+        typeof responseData === 'string'
+          ? JSON.parse(responseData)
+          : responseData;
       return parsed.message || parsed.error?.message || 'Unknown error';
     } catch (error) {
       return String(responseData).substring(0, 500);
@@ -468,12 +511,12 @@ export class AuditLogMiddleware implements NestMiddleware {
         '/api/admin/static',
         '/api/admin/favicon',
       ];
-      
-      if (noisePatterns.some(pattern => path.startsWith(pattern))) {
+
+      if (noisePatterns.some((pattern) => path.startsWith(pattern))) {
         return true;
       }
     }
 
-    return skipPatterns.some(pattern => path.startsWith(pattern));
+    return skipPatterns.some((pattern) => path.startsWith(pattern));
   }
 }

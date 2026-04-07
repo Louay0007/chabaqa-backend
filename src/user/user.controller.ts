@@ -1,5 +1,30 @@
-import { Controller, Post, Get, Put, Delete, Body, Param, HttpStatus, Res, Response, ConflictException, UseGuards, Request, ForbiddenException, BadRequestException, UseInterceptors } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBody, ApiBearerAuth, ApiParam } from '@nestjs/swagger';
+import {
+  Controller,
+  Post,
+  Get,
+  Put,
+  Delete,
+  Body,
+  Param,
+  HttpStatus,
+  Res,
+  Response,
+  ConflictException,
+  UseGuards,
+  Request,
+  ForbiddenException,
+  BadRequestException,
+  UnauthorizedException,
+  UseInterceptors,
+} from '@nestjs/common';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBody,
+  ApiBearerAuth,
+  ApiParam,
+} from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { UserService } from './user.service';
 import { CreateUserDto } from '../dto-user/create-user.dto';
@@ -17,13 +42,13 @@ import { PublicThrottlerGuard } from '../common/guards/public-throttler.guard';
 @Controller('user')
 export class UserController {
   constructor(private readonly userService: UserService) {}
-  
+
   //signup
   @Post('signup')
   @ApiOperation({
     summary: 'User Registration',
     description: 'Register a new user account in the system.',
-    tags: ['Users']
+    tags: ['Users'],
   })
   @ApiBody({
     type: CreateUserDto,
@@ -35,8 +60,8 @@ export class UserController {
           name: 'John Doe',
           email: 'john@example.com',
           password: 'password123',
-          role: 'user'
-        }
+          role: 'user',
+        },
       },
       'Complete Registration': {
         summary: 'Complete user registration with all fields',
@@ -52,10 +77,10 @@ export class UserController {
           ville: 'Tunis',
           code_postal: '1000',
           adresse: '123 Main Street',
-          bio: 'Software developer passionate about learning'
-        }
-      }
-    }
+          bio: 'Software developer passionate about learning',
+        },
+      },
+    },
   })
   @ApiResponse({
     status: 201,
@@ -71,11 +96,11 @@ export class UserController {
             username: 'john-doe',
             email: 'john@example.com',
             role: 'user',
-            createdAt: '2023-07-01T10:00:00.000Z'
-          }
-        }
-      }
-    }
+            createdAt: '2023-07-01T10:00:00.000Z',
+          },
+        },
+      },
+    },
   })
   @ApiResponse({
     status: 409,
@@ -85,15 +110,16 @@ export class UserController {
         example: {
           success: false,
           status: 409,
-          message: "L'email 'john@example.com' est déjà utilisé par un autre compte",
+          message:
+            "L'email 'john@example.com' est déjà utilisé par un autre compte",
           error: 'CONFLICT',
           details: {
             field: 'email',
-            value: 'john@example.com'
-          }
-        }
-      }
-    }
+            value: 'john@example.com',
+          },
+        },
+      },
+    },
   })
   @ApiResponse({
     status: 400,
@@ -105,70 +131,76 @@ export class UserController {
           status: 400,
           message: 'Données de validation invalides',
           error: 'VALIDATION_ERROR',
-          details: 'email must be an email'
-        }
-      }
-    }
+          details: 'email must be an email',
+        },
+      },
+    },
   })
-    async signup(@Res() response, @Body() createUserDto: CreateUserDto) {
-      try {
-        console.log('Backend: Received signup request:', { ...createUserDto, password: '[REDACTED]' });
-        const user = await this.userService.createUser(createUserDto);
-        console.log('Backend: User created successfully:', { _id: user._id, name: user.name, email: user.email });
-        return response.status(HttpStatus.CREATED).json({
-          success: true,
-          message: 'Compte créé avec succès',
-          user: {
-            _id: user._id,
-            name: user.name,
-            username: (user as any).username,
-            email: user.email,
-            role: user.role,
-            createdAt: user.createdAt
+  async signup(@Res() response, @Body() createUserDto: CreateUserDto) {
+    try {
+      console.log('Backend: Received signup request:', {
+        ...createUserDto,
+        password: '[REDACTED]',
+      });
+      const user = await this.userService.createUser(createUserDto);
+      console.log('Backend: User created successfully:', {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+      });
+      return response.status(HttpStatus.CREATED).json({
+        success: true,
+        message: 'Compte créé avec succès',
+        user: {
+          _id: user._id,
+          name: user.name,
+          username: (user as any).username,
+          email: user.email,
+          role: user.role,
+          createdAt: user.createdAt,
+        },
+      });
+    } catch (err) {
+      // Gérer les erreurs de conflit (email ou nom déjà existant)
+      if (err instanceof ConflictException) {
+        console.error('Backend: Conflict error:', err.message);
+        return response.status(HttpStatus.CONFLICT).json({
+          success: false,
+          status: 409,
+          message: err.message,
+          error: 'CONFLICT',
+          details: {
+            field: 'email',
+            value: createUserDto.email,
           },
         });
-      } catch (err) {
-        // Gérer les erreurs de conflit (email ou nom déjà existant)
-        if (err instanceof ConflictException) {
-          console.error('Backend: Conflict error:', err.message);
-          return response.status(HttpStatus.CONFLICT).json({
-            success: false,
-            status: 409,
-            message: err.message,
-            error: 'CONFLICT',
-            details: {
-              field: 'email',
-              value: createUserDto.email
-            }
-          });
-        }
+      }
 
-        // Gérer les autres erreurs de validation
-        if (err.name === 'ValidationError') {
-          console.error('Backend: Validation error:', err.message);
-          return response.status(HttpStatus.BAD_REQUEST).json({
-            success: false,
-            status: 400,
-            message: 'Données de validation invalides',
-            error: 'VALIDATION_ERROR',
-            details: err.message
-          });
-        }
-
-        // Erreur générale
-        console.error('Backend: General error:', err);
+      // Gérer les autres erreurs de validation
+      if (err.name === 'ValidationError') {
+        console.error('Backend: Validation error:', err.message);
         return response.status(HttpStatus.BAD_REQUEST).json({
           success: false,
           status: 400,
-          message: 'Erreur lors de la création du compte',
-          error: 'BAD_REQUEST',
-          details: err.message
+          message: 'Données de validation invalides',
+          error: 'VALIDATION_ERROR',
+          details: err.message,
         });
       }
+
+      // Erreur générale
+      console.error('Backend: General error:', err);
+      return response.status(HttpStatus.BAD_REQUEST).json({
+        success: false,
+        status: 400,
+        message: 'Erreur lors de la création du compte',
+        error: 'BAD_REQUEST',
+        details: err.message,
+      });
+    }
   }
 
   // Mettre à jour le mot de passe (sécurisé)
-
 
   // Mettre à jour son propre mot de passe (sans ID dans l'URL)
   @Put('change-password')
@@ -176,7 +208,7 @@ export class UserController {
   @ApiOperation({
     summary: 'Change User Password',
     description: 'Change password for the currently authenticated user.',
-    tags: ['Users']
+    tags: ['Users'],
   })
   @ApiBearerAuth('JWT-auth')
   @ApiBody({
@@ -187,10 +219,10 @@ export class UserController {
         summary: 'Change user password',
         value: {
           currentPassword: 'currentpassword123',
-          newPassword: 'newpassword123'
-        }
-      }
-    }
+          newPassword: 'newpassword123',
+        },
+      },
+    },
   })
   @ApiResponse({
     status: 200,
@@ -200,9 +232,9 @@ export class UserController {
         example: {
           success: true,
           message: 'Mot de passe change avec succes',
-        }
-      }
-    }
+        },
+      },
+    },
   })
   @ApiResponse({
     status: 400,
@@ -213,10 +245,10 @@ export class UserController {
           success: false,
           status: 400,
           message: 'Le mot de passe est requis',
-          error: 'BAD_REQUEST'
-        }
-      }
-    }
+          error: 'BAD_REQUEST',
+        },
+      },
+    },
   })
   @ApiResponse({
     status: 401,
@@ -226,15 +258,15 @@ export class UserController {
         example: {
           statusCode: 401,
           message: 'Unauthorized',
-          error: 'Unauthorized'
-        }
-      }
-    }
+          error: 'Unauthorized',
+        },
+      },
+    },
   })
   async changePassword(
     @Res() response,
     @Request() req,
-    @Body() changePasswordDto: ChangePasswordDto
+    @Body() changePasswordDto: ChangePasswordDto,
   ) {
     try {
       const userId = req.user.sub || req.user._id;
@@ -245,52 +277,54 @@ export class UserController {
         message: 'Mot de passe change avec succes',
       });
     } catch (err) {
-      const status = err?.getStatus?.() || err?.status || HttpStatus.BAD_REQUEST;
+      const status =
+        err?.getStatus?.() || err?.status || HttpStatus.BAD_REQUEST;
       return response.status(status).json({
         success: false,
         status,
         message: err?.message || 'Erreur lors du changement de mot de passe',
-        error: status === HttpStatus.UNAUTHORIZED ? 'UNAUTHORIZED' : 'BAD_REQUEST',
-        details: err.message
+        error:
+          status === HttpStatus.UNAUTHORIZED ? 'UNAUTHORIZED' : 'BAD_REQUEST',
+        details: err.message,
       });
     }
   }
 
   //get all users
   @Get('all-users')
-    async getAllUsers(@Res() response) {
-      try {
-        const users = await this.userService.getAllUsers();
-        return response.status(HttpStatus.OK).json({
-          message: 'Users fetched successfully',
-          users,
-        });
-      } catch (err) {
-        return response.status(HttpStatus.BAD_REQUEST).json({
-          status: 400,
-          message: 'Error fetching users',
-          error: 'bad request'
-        });
-      }
+  async getAllUsers(@Res() response) {
+    try {
+      const users = await this.userService.getAllUsers();
+      return response.status(HttpStatus.OK).json({
+        message: 'Users fetched successfully',
+        users,
+      });
+    } catch (err) {
+      return response.status(HttpStatus.BAD_REQUEST).json({
+        status: 400,
+        message: 'Error fetching users',
+        error: 'bad request',
+      });
     }
+  }
 
   //get user by id
   @Get('user/:id')
-    async getUserById(@Res() response, @Param('id') id: string) {
-      try {
-        const user = await this.userService.getUserById(id);
-        return response.status(HttpStatus.OK).json({
-          message: 'User fetched successfully',
-          user,
-        });
-      } catch (err) {
-        return response.status(HttpStatus.BAD_REQUEST).json({
-          status: 400,
-          message: 'Error fetching user',
-          error: 'bad request'
-        });
-      }
+  async getUserById(@Res() response, @Param('id') id: string) {
+    try {
+      const user = await this.userService.getUserById(id);
+      return response.status(HttpStatus.OK).json({
+        message: 'User fetched successfully',
+        user,
+      });
+    } catch (err) {
+      return response.status(HttpStatus.BAD_REQUEST).json({
+        status: 400,
+        message: 'Error fetching user',
+        error: 'bad request',
+      });
     }
+  }
 
   //get user by username/handle
   @Get('by-username/:handle')
@@ -299,12 +333,12 @@ export class UserController {
   @ApiOperation({
     summary: 'Get User by Username/Handle',
     description: 'Fetch user profile by username handle',
-    tags: ['Users']
+    tags: ['Users'],
   })
   @ApiParam({
     name: 'handle',
     description: 'Username/handle (example: john-doe)',
-    example: 'john-doe'
+    example: 'john-doe',
   })
   @ApiResponse({
     status: 200,
@@ -324,11 +358,11 @@ export class UserController {
             ville: 'Tunis',
             pays: 'Tunisia',
             bio: 'Software developer',
-            createdAt: '2023-07-01T10:00:00.000Z'
-          }
-        }
-      }
-    }
+            createdAt: '2023-07-01T10:00:00.000Z',
+          },
+        },
+      },
+    },
   })
   @ApiResponse({
     status: 404,
@@ -339,10 +373,10 @@ export class UserController {
           success: false,
           status: 404,
           message: "User with handle 'john' not found",
-          error: 'NOT_FOUND'
-        }
-      }
-    }
+          error: 'NOT_FOUND',
+        },
+      },
+    },
   })
   async getUserByUsername(@Res() response, @Param('handle') handle: string) {
     try {
@@ -358,7 +392,7 @@ export class UserController {
           success: false,
           status: 404,
           message: err.message,
-          error: 'NOT_FOUND'
+          error: 'NOT_FOUND',
         });
       }
       return response.status(HttpStatus.BAD_REQUEST).json({
@@ -366,146 +400,228 @@ export class UserController {
         status: 400,
         message: 'Error fetching user profile',
         error: 'BAD_REQUEST',
-        details: err.message
+        details: err.message,
       });
     }
   }
 
-    
-    //delete user by id
-    @Delete('user/:id')
-    async deleteUser(@Res() response, @Param('id') id: string) {
-      try {
-        const user = await this.userService.deleteUser(id);
-        return response.status(HttpStatus.OK).json({
-          message: 'User deleted successfully',
-          user,
-        });
-      } catch (err) {
-        return response.status(HttpStatus.BAD_REQUEST).json({
-          status: 400,
-          message: 'Error deleting user',
-          error: 'bad request'
-        });
-      }
+  //delete user by id
+  @Delete('user/:id')
+  async deleteUser(@Res() response, @Param('id') id: string) {
+    try {
+      const user = await this.userService.deleteUser(id);
+      return response.status(HttpStatus.OK).json({
+        message: 'User deleted successfully',
+        user,
+      });
+    } catch (err) {
+      return response.status(HttpStatus.BAD_REQUEST).json({
+        status: 400,
+        message: 'Error deleting user',
+        error: 'bad request',
+      });
     }
+  }
 
-    // Delete own account (authenticated user)
-    @Delete('delete-account')
-    @UseGuards(JwtAuthGuard)
-    @ApiBearerAuth('JWT-auth')
-    @ApiOperation({
-      summary: 'Delete Own Account',
-      description: 'Permanently delete the authenticated user account and all associated data. This action cannot be undone.',
-      tags: ['Users']
-    })
-    @ApiResponse({
-      status: 200,
-      description: 'Account deleted successfully',
-      content: {
-        'application/json': {
-          example: {
-            success: true,
-            message: 'Your account and all associated data have been permanently deleted'
-          }
-        }
-      }
-    })
-    @ApiResponse({
-      status: 401,
-      description: 'Unauthorized - Invalid token',
-      content: {
-        'application/json': {
-          example: {
-            statusCode: 401,
-            message: 'Unauthorized',
-            error: 'Unauthorized'
-          }
-        }
-      }
-    })
-    @ApiResponse({
-      status: 400,
-      description: 'Bad request - Error during deletion',
-      content: {
-        'application/json': {
-          example: {
-            success: false,
-            status: 400,
-            message: 'Error deleting account',
-            error: 'BAD_REQUEST',
-            details: 'Error message'
-          }
-        }
-      }
-    })
-    @ApiBody({
-      type: DeleteAccountDto,
-      description: 'Delete account confirmation payload',
-      examples: {
-        'Delete Account': {
-          summary: 'Delete authenticated account',
-          value: {
-            currentPassword: 'currentpassword123',
-            confirmText: 'DELETE'
-          }
-        }
-      }
-    })
-    async deleteOwnAccount(@Res() response, @Request() req, @Body() deleteAccountDto: DeleteAccountDto) {
-      try {
-        const userId = req.user.sub || req.user._id;
-        if ((deleteAccountDto.confirmText || '').trim() !== 'DELETE') {
-          throw new BadRequestException('Le texte de confirmation doit etre DELETE');
-        }
-
-        await this.userService.deleteUserAccount(userId, deleteAccountDto);
-
-        return response.status(HttpStatus.OK).json({
+  // Delete own account (authenticated user)
+  @Delete('delete-account')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: 'Delete Own Account',
+    description:
+      'Permanently delete the authenticated user account and all associated data. This action cannot be undone.',
+    tags: ['Users'],
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Account deleted successfully',
+    content: {
+      'application/json': {
+        example: {
           success: true,
-          message: 'Your account and all associated data have been permanently deleted',
-        });
-      } catch (err) {
-        const status = err?.getStatus?.() || err?.status || HttpStatus.BAD_REQUEST;
-        return response.status(status).json({
-          success: false,
-          status,
-          message: err?.message || 'Error deleting account',
-          error: status === HttpStatus.UNAUTHORIZED ? 'UNAUTHORIZED' : 'BAD_REQUEST',
-          details: err.message
-        });
-      }
-    }
-
-    // Mettre à jour son propre profil (sans ID dans l'URL)
-    @Put('update-profile')
-    @UseGuards(JwtAuthGuard)
-    async updateProfile(@Res() response, @Request() req, @Body() updateUserDto: UpdateUserDto) {
-      try {
-        // Récupérer l'ID de l'utilisateur connecté depuis le token JWT
-        const userId = req.user.sub || req.user._id;
-        
-        // Exclure le champ password de la mise à jour
-        const { password, ...updateData } = updateUserDto;
-        
-        const user = await this.userService.updateUser(userId, updateData);
-        return response.status(HttpStatus.OK).json({
-          success: true,
-          message: 'Profil mis à jour avec succès',
-          user,
-        });
-      } catch (err) {
-        return response.status(HttpStatus.BAD_REQUEST).json({
+          message:
+            'Your account and all associated data have been permanently deleted',
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized - Invalid token',
+    content: {
+      'application/json': {
+        example: {
+          statusCode: 401,
+          message: 'Unauthorized',
+          error: 'Unauthorized',
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad request - Error during deletion',
+    content: {
+      'application/json': {
+        example: {
           success: false,
           status: 400,
-          message: 'Erreur lors de la mise à jour du profil',
+          message: 'Error deleting account',
           error: 'BAD_REQUEST',
-          details: err.message
-        });
+          details: 'Error message',
+        },
+      },
+    },
+  })
+  @ApiBody({
+    type: DeleteAccountDto,
+    description: 'Delete account confirmation payload',
+    examples: {
+      'Delete Account': {
+        summary: 'Delete authenticated account',
+        value: {
+          currentPassword: 'currentpassword123',
+          confirmText: 'DELETE',
+        },
+      },
+    },
+  })
+  async deleteOwnAccount(
+    @Res() response,
+    @Request() req,
+    @Body() deleteAccountDto: DeleteAccountDto,
+  ) {
+    try {
+      const userId = req.user.sub || req.user._id;
+      if ((deleteAccountDto.confirmText || '').trim() !== 'DELETE') {
+        throw new BadRequestException(
+          'Le texte de confirmation doit etre DELETE',
+        );
       }
+
+      await this.userService.deleteUserAccount(userId, deleteAccountDto);
+
+      return response.status(HttpStatus.OK).json({
+        success: true,
+        message:
+          'Your account and all associated data have been permanently deleted',
+      });
+    } catch (err) {
+      const status =
+        err?.getStatus?.() || err?.status || HttpStatus.BAD_REQUEST;
+      return response.status(status).json({
+        success: false,
+        status,
+        message: err?.message || 'Error deleting account',
+        error:
+          status === HttpStatus.UNAUTHORIZED ? 'UNAUTHORIZED' : 'BAD_REQUEST',
+        details: err.message,
+      });
     }
+  }
 
+  // ─── Private helpers ─────────────────────────────────────────────────────────
 
+  private resolveRequestUserId(req: any): string | null {
+    return req?.user?.sub || req?.user?._id || null;
+  }
+
+  // ─── GDPR Data Export ─────────────────────────────────────────────────────────
+
+  @Get('me/export')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Export all personal data (GDPR Article 20)' })
+  @Throttle({ default: { limit: 3, ttl: 3600000 } } as any) // 3 per hour
+  async exportMyData(@Request() req: any) {
+    const userId = this.resolveRequestUserId(req);
+    if (!userId) throw new UnauthorizedException();
+    const data = await this.userService.exportUserData(userId);
+    return { success: true, data };
+  }
+
+  // ─── Session Management ───────────────────────────────────────────────────────
+
+  @Get('me/sessions')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'List all active sessions' })
+  async getMySessions(@Request() req: any) {
+    const userId = this.resolveRequestUserId(req);
+    if (!userId) throw new UnauthorizedException();
+    const sessions = await this.userService.getActiveSessions(userId);
+    const currentSessionId = req.user?.sessionId;
+    return {
+      success: true,
+      data: sessions.map((s: any) => ({
+        sessionId: s.sessionId,
+        deviceInfo: s.deviceInfo,
+        ipAddress: s.ipAddress,
+        createdAt: s.createdAt,
+        lastActiveAt: s.lastActiveAt,
+        isCurrent: s.sessionId === currentSessionId,
+      })),
+    };
+  }
+
+  @Delete('me/sessions/:sessionId')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Revoke a specific session' })
+  async revokeSession(
+    @Request() req: any,
+    @Param('sessionId') sessionId: string,
+  ) {
+    const userId = this.resolveRequestUserId(req);
+    if (!userId) throw new UnauthorizedException();
+    await this.userService.revokeSession(userId, sessionId);
+    return { success: true, message: 'Session revoked' };
+  }
+
+  @Delete('me/sessions')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Revoke all other sessions (keep current)' })
+  async revokeAllOtherSessions(@Request() req: any) {
+    const userId = this.resolveRequestUserId(req);
+    if (!userId) throw new UnauthorizedException();
+    const currentSessionId = req.user?.sessionId || '';
+    await this.userService.revokeAllOtherSessions(userId, currentSessionId);
+    return { success: true, message: 'All other sessions revoked' };
+  }
+
+  // Mettre à jour son propre profil (sans ID dans l'URL)
+  @Put('update-profile')
+  @UseGuards(JwtAuthGuard)
+  async updateProfile(
+    @Res() response,
+    @Request() req,
+    @Body() updateUserDto: UpdateUserDto,
+  ) {
+    try {
+      // Récupérer l'ID de l'utilisateur connecté depuis le token JWT
+      const userId = req.user.sub || req.user._id;
+
+      // Exclure le champ password de la mise à jour
+      const { password, ...updateData } = updateUserDto;
+
+      const user = await this.userService.updateUser(userId, updateData);
+      return response.status(HttpStatus.OK).json({
+        success: true,
+        message: 'Profil mis à jour avec succès',
+        user,
+      });
+    } catch (err) {
+      return response.status(HttpStatus.BAD_REQUEST).json({
+        success: false,
+        status: 400,
+        message: 'Erreur lors de la mise à jour du profil',
+        error: 'BAD_REQUEST',
+        details: err.message,
+      });
+    }
+  }
 
   // Demande de mot de passe oublié
   @Post('forgot-password')
@@ -514,7 +630,7 @@ export class UserController {
   @ApiOperation({
     summary: 'Request Password Reset',
     description: 'Request password reset and send verification code to email.',
-    tags: ['Users']
+    tags: ['Users'],
   })
   @ApiBody({
     type: ForgotPasswordDto,
@@ -523,10 +639,10 @@ export class UserController {
       'Forgot Password': {
         summary: 'Request password reset',
         value: {
-          email: 'user@example.com'
-        }
-      }
-    }
+          email: 'user@example.com',
+        },
+      },
+    },
   })
   @ApiResponse({
     status: 200,
@@ -535,10 +651,11 @@ export class UserController {
       'application/json': {
         example: {
           success: true,
-          message: 'Si cet email existe dans notre base de données, vous recevrez un code de vérification.'
-        }
-      }
-    }
+          message:
+            'Si cet email existe dans notre base de données, vous recevrez un code de vérification.',
+        },
+      },
+    },
   })
   @ApiResponse({
     status: 400,
@@ -549,12 +666,15 @@ export class UserController {
           success: false,
           status: 400,
           message: "Erreur lors de l'envoi de l'email: SMTP connection failed",
-          error: 'BAD_REQUEST'
-        }
-      }
-    }
+          error: 'BAD_REQUEST',
+        },
+      },
+    },
   })
-  async forgotPassword(@Res() response, @Body() forgotPasswordDto: ForgotPasswordDto) {
+  async forgotPassword(
+    @Res() response,
+    @Body() forgotPasswordDto: ForgotPasswordDto,
+  ) {
     try {
       const result = await this.userService.forgotPassword(forgotPasswordDto);
       return response.status(HttpStatus.OK).json({
@@ -566,7 +686,7 @@ export class UserController {
         success: false,
         status: 400,
         message: err.message,
-        error: 'BAD_REQUEST'
+        error: 'BAD_REQUEST',
       });
     }
   }
@@ -578,7 +698,7 @@ export class UserController {
   @ApiOperation({
     summary: 'Reset Password with Verification Code',
     description: 'Reset password using verification code sent to email.',
-    tags: ['Users']
+    tags: ['Users'],
   })
   @ApiBody({
     type: ResetPasswordDto,
@@ -589,10 +709,10 @@ export class UserController {
         value: {
           email: 'user@example.com',
           verificationCode: '123456',
-          newPassword: 'newpassword123'
-        }
-      }
-    }
+          newPassword: 'newpassword123',
+        },
+      },
+    },
   })
   @ApiResponse({
     status: 200,
@@ -601,26 +721,30 @@ export class UserController {
       'application/json': {
         example: {
           success: true,
-          message: 'Mot de passe réinitialisé avec succès'
-        }
-      }
-    }
+          message: 'Mot de passe réinitialisé avec succès',
+        },
+      },
+    },
   })
   @ApiResponse({
     status: 400,
-    description: 'Bad request - invalid code, expired code, or validation errors',
+    description:
+      'Bad request - invalid code, expired code, or validation errors',
     content: {
       'application/json': {
         example: {
           success: false,
           status: 400,
           message: 'Code de vérification invalide ou expiré',
-          error: 'BAD_REQUEST'
-        }
-      }
-    }
+          error: 'BAD_REQUEST',
+        },
+      },
+    },
   })
-  async resetPassword(@Res() response, @Body() resetPasswordDto: ResetPasswordDto) {
+  async resetPassword(
+    @Res() response,
+    @Body() resetPasswordDto: ResetPasswordDto,
+  ) {
     try {
       const result = await this.userService.resetPassword(resetPasswordDto);
       return response.status(HttpStatus.OK).json({
@@ -632,7 +756,7 @@ export class UserController {
         success: false,
         status: 400,
         message: err.message,
-        error: 'BAD_REQUEST'
+        error: 'BAD_REQUEST',
       });
     }
   }

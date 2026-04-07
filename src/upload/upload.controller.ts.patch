@@ -1,0 +1,46 @@
+--- backend/src/upload/upload.controller.ts
++++ backend/src/upload/upload.controller.ts
+@@ -16,6 +16,7 @@
+ import { extname, join } from 'path';
+ import { v4 as uuidv4 } from 'uuid';
+ import { MediaPurpose, MediaVisibility } from '../media/media.types';
++import { TranscriptionService } from '../transcription/transcription.service';
+ 
+ /**
+  * Shared logic for determining upload destination
+@@ -62,7 +63,10 @@
+ @UseGuards(JwtAuthGuard)
+ @ApiBearerAuth('JWT-auth')
+ export class UploadController {
+-  constructor(private readonly uploadService: UploadService) {}
++  constructor(
++    private readonly uploadService: UploadService,
++    private readonly transcriptionService: TranscriptionService,
++  ) {}
+ 
+   /**
+    * Upload d'un seul fichier
+@@ -213,6 +217,7 @@
+   async uploadVideo(
+     @UploadedFile() file: Express.Multer.File,
+     @Request() req: any,
++    @Body() body?: { chapterId?: string; courseId?: string; language?: 'ar'|'fr'|'en'|'auto' },
+   ): Promise<UploadResponseDto> {
+     if (!file) {
+       throw new BadRequestException('Aucune vidéo fournie');
+@@ -239,6 +244,15 @@
+     console.log('   🔗 Generated URL:', result.url);
+     console.log('   📝 Filename:', result.filename);
+ 
++    if (body?.chapterId && body?.courseId) {
++      const videoStorageKey = `video/${result.filename}`;
++      this.transcriptionService.triggerTranscription(
++        body.chapterId,
++        body.courseId,
++        videoStorageKey,
++        body.language || 'auto'
++      ).catch(err => console.error('Transcription start failed:', err));
++    }
++
+     return {
+       assetId: result.assetId,

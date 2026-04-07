@@ -1,9 +1,31 @@
-import { Controller, Post, Body, HttpCode, HttpStatus, UseGuards, Get, Req, Res, UnauthorizedException } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Body,
+  HttpCode,
+  HttpStatus,
+  UseGuards,
+  Get,
+  Req,
+  Res,
+  Request,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { Response } from 'express';
-import { ApiTags, ApiOperation, ApiResponse, ApiBody, ApiBearerAuth } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBody,
+  ApiBearerAuth,
+} from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
-import { AuthService, UserAuthPayload, UserRefreshPayload } from './auth.service';
+import {
+  AuthService,
+  UserAuthPayload,
+  UserRefreshPayload,
+} from './auth.service';
 import { LoginDto } from '../dto-user/login.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { RegisterDto } from '../dto-user/register.dto';
@@ -18,10 +40,13 @@ import { RefreshTokenDto } from './dto/refresh-token.dto';
 @ApiTags('Authentication')
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) { }
+  constructor(private readonly authService: AuthService) {}
 
   private getFrontendBaseUrl(): string {
-    const baseUrl = process.env.FRONTEND_URL || process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:8080';
+    const baseUrl =
+      process.env.FRONTEND_URL ||
+      process.env.NEXT_PUBLIC_APP_URL ||
+      'http://localhost:8080';
     return baseUrl.replace(/\/+$/, '');
   }
 
@@ -64,10 +89,13 @@ export class AuthController {
     schema: {
       type: 'object',
       properties: {
-        accessToken: { type: 'string', example: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...' },
-        user: { type: 'object' }
-      }
-    }
+        accessToken: {
+          type: 'string',
+          example: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+        },
+        user: { type: 'object' },
+      },
+    },
   })
   @ApiResponse({ status: 401, description: 'Invalid credentials' })
   async login(
@@ -76,7 +104,12 @@ export class AuthController {
   ): Promise<UserAuthPayload> {
     const result = await this.authService.login(loginDto);
     if (result?.accessToken && result?.refreshToken) {
-      CookieUtil.setTokenCookies(res as any, result.accessToken, result.refreshToken, !!result.rememberMe);
+      CookieUtil.setTokenCookies(
+        res as any,
+        result.accessToken,
+        result.refreshToken,
+        !!result.rememberMe,
+      );
     }
     return result;
   }
@@ -85,7 +118,8 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Refresh user access token',
-    description: 'Refresh a user access token using a refresh token from the request body or cookies.',
+    description:
+      'Refresh a user access token using a refresh token from the request body or cookies.',
   })
   @ApiBody({ type: RefreshTokenDto, required: false })
   async refreshToken(
@@ -102,11 +136,11 @@ export class AuthController {
     user: any;
   }> {
     const refreshToken = (
-      body?.refreshToken
-      || body?.refresh_token
-      || req.cookies?.refreshToken
-      || req.cookies?.refresh_token
-      || ''
+      body?.refreshToken ||
+      body?.refresh_token ||
+      req.cookies?.refreshToken ||
+      req.cookies?.refresh_token ||
+      ''
     ).trim();
 
     if (!refreshToken) {
@@ -115,7 +149,11 @@ export class AuthController {
 
     const result = await this.authService.refreshToken(refreshToken);
     if (result?.accessToken) {
-      CookieUtil.setAccessTokenCookie(res as any, result.accessToken, !!result.rememberMe);
+      CookieUtil.setAccessTokenCookie(
+        res as any,
+        result.accessToken,
+        !!result.rememberMe,
+      );
     }
 
     return {
@@ -136,7 +174,10 @@ export class AuthController {
     description: 'Get current authenticated user profile information.',
   })
   @ApiBearerAuth('JWT-auth')
-  @ApiResponse({ status: 200, description: 'User profile retrieved successfully' })
+  @ApiResponse({
+    status: 200,
+    description: 'User profile retrieved successfully',
+  })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   async getProfile(@Req() req) {
     try {
@@ -160,7 +201,9 @@ export class AuthController {
       if (error instanceof UnauthorizedException) {
         throw error;
       }
-      throw new UnauthorizedException('Erreur lors de la récupération du profil');
+      throw new UnauthorizedException(
+        'Erreur lors de la récupération du profil',
+      );
     }
   }
 
@@ -173,15 +216,15 @@ export class AuthController {
   @ApiResponse({ status: 200, description: 'Logout successful' })
   async logout(@Req() req, @Res({ passthrough: true }) res: Response) {
     const accessToken = (
-      req.headers?.authorization?.replace('Bearer ', '')
-      || req.cookies?.accessToken
-      || req.cookies?.access_token
-      || ''
+      req.headers?.authorization?.replace('Bearer ', '') ||
+      req.cookies?.accessToken ||
+      req.cookies?.access_token ||
+      ''
     ).trim();
     const refreshToken = (
-      req.cookies?.refreshToken
-      || req.cookies?.refresh_token
-      || ''
+      req.cookies?.refreshToken ||
+      req.cookies?.refresh_token ||
+      ''
     ).trim();
 
     await this.authService.logout(accessToken, refreshToken);
@@ -203,15 +246,15 @@ export class AuthController {
   @ApiResponse({ status: 200, description: 'Tokens revoked successfully' })
   async revokeAllTokens(@Req() req, @Res({ passthrough: true }) res: Response) {
     const accessToken = (
-      req.headers?.authorization?.replace('Bearer ', '')
-      || req.cookies?.accessToken
-      || req.cookies?.access_token
-      || ''
+      req.headers?.authorization?.replace('Bearer ', '') ||
+      req.cookies?.accessToken ||
+      req.cookies?.access_token ||
+      ''
     ).trim();
     const refreshToken = (
-      req.cookies?.refreshToken
-      || req.cookies?.refresh_token
-      || ''
+      req.cookies?.refreshToken ||
+      req.cookies?.refresh_token ||
+      ''
     ).trim();
 
     try {
@@ -237,18 +280,21 @@ export class AuthController {
     description:
       'Revokes auth tokens, clears all auth cookies, and redirects the browser to the signin page. Intended for window.location.href navigation from the frontend.',
   })
-  @ApiResponse({ status: 302, description: 'Redirected to signin page after clearing cookies' })
+  @ApiResponse({
+    status: 302,
+    description: 'Redirected to signin page after clearing cookies',
+  })
   async signout(@Req() req, @Res() res: Response) {
     const accessToken = (
-      req.headers?.authorization?.replace('Bearer ', '')
-      || req.cookies?.accessToken
-      || req.cookies?.access_token
-      || ''
+      req.headers?.authorization?.replace('Bearer ', '') ||
+      req.cookies?.accessToken ||
+      req.cookies?.access_token ||
+      ''
     ).trim();
     const refreshToken = (
-      req.cookies?.refreshToken
-      || req.cookies?.refresh_token
-      || ''
+      req.cookies?.refreshToken ||
+      req.cookies?.refresh_token ||
+      ''
     ).trim();
 
     // Revoke tokens — idempotent, errors swallowed intentionally
@@ -260,7 +306,8 @@ export class AuthController {
     // Redirect browser to the frontend signin page (locale-aware)
     const frontendBaseUrl = this.getFrontendBaseUrl();
     const localeCookie: string = (req.cookies?.NEXT_LOCALE || '').toLowerCase();
-    const locale = (localeCookie === 'ar' || localeCookie === 'en') ? localeCookie : 'en';
+    const locale =
+      localeCookie === 'ar' || localeCookie === 'en' ? localeCookie : 'en';
     return res.redirect(`${frontendBaseUrl}/${locale}/signin`);
   }
 
@@ -268,8 +315,13 @@ export class AuthController {
   @UseGuards(PublicThrottlerGuard)
   @Throttle({ default: { ttl: 900000, limit: 3 } } as any)
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Forgot Password', description: 'Send password reset code to user email.' })
-  @ApiBody({ schema: { type: 'object', properties: { email: { type: 'string' } } } })
+  @ApiOperation({
+    summary: 'Forgot Password',
+    description: 'Send password reset code to user email.',
+  })
+  @ApiBody({
+    schema: { type: 'object', properties: { email: { type: 'string' } } },
+  })
   async forgotPassword(@Body('email') email: string) {
     return this.authService.forgotPassword(email);
   }
@@ -278,10 +330,17 @@ export class AuthController {
   @UseGuards(PublicThrottlerGuard)
   @Throttle({ default: { ttl: 900000, limit: 3 } } as any)
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Reset Password', description: 'Reset password using code sent to email.' })
+  @ApiOperation({
+    summary: 'Reset Password',
+    description: 'Reset password using code sent to email.',
+  })
   @ApiBody({ type: ResetPasswordDto })
   async resetPassword(@Body() body: ResetPasswordDto) {
-    return this.authService.resetPassword(body.email, body.verificationCode, body.newPassword);
+    return this.authService.resetPassword(
+      body.email,
+      body.verificationCode,
+      body.newPassword,
+    );
   }
 
   @Get('google')
@@ -297,16 +356,27 @@ export class AuthController {
   async googleAuthCallback(@Req() req, @Res() res: Response) {
     try {
       const result = await (this.authService as any).loginWithGoogle(req.user);
-      CookieUtil.setTokenCookies(res as any, result.accessToken, result.refreshToken, !!result.rememberMe);
+      CookieUtil.setTokenCookies(
+        res as any,
+        result.accessToken,
+        result.refreshToken,
+        !!result.rememberMe,
+      );
       const frontendBaseUrl = this.getFrontendBaseUrl();
 
-      const stateParam = Array.isArray(req.query?.state) ? req.query.state[0] : req.query?.state;
+      const stateParam = Array.isArray(req.query?.state)
+        ? req.query.state[0]
+        : req.query?.state;
       const requestedRedirect = this.normalizeRedirectPath(stateParam);
-      const redirectPath = requestedRedirect && requestedRedirect !== '/signin'
-        ? requestedRedirect
-        : this.defaultRedirectForRole(result?.user?.role);
+      const redirectPath =
+        requestedRedirect && requestedRedirect !== '/signin'
+          ? requestedRedirect
+          : this.defaultRedirectForRole(result?.user?.role);
 
-      const userPayload = Buffer.from(JSON.stringify(result.user || {}), 'utf8').toString('base64url');
+      const userPayload = Buffer.from(
+        JSON.stringify(result.user || {}),
+        'utf8',
+      ).toString('base64url');
       const hashParams = new URLSearchParams({
         access_token: result.access_token,
         user: userPayload,
@@ -316,14 +386,18 @@ export class AuthController {
       return res.redirect(`${frontendBaseUrl}/signin#${hashParams.toString()}`);
     } catch (error) {
       const frontendBaseUrl = this.getFrontendBaseUrl();
-      return res.redirect(`${frontendBaseUrl}/signin?message=${encodeURIComponent('Google sign-in failed. Please try again.')}`);
+      return res.redirect(
+        `${frontendBaseUrl}/signin?message=${encodeURIComponent('Google sign-in failed. Please try again.')}`,
+      );
     }
   }
 
   @Post('google/mobile')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Mobile Google Sign-In' })
-  @ApiBody({ schema: { type: 'object', properties: { idToken: { type: 'string' } } } })
+  @ApiBody({
+    schema: { type: 'object', properties: { idToken: { type: 'string' } } },
+  })
   async googleMobileAuth(@Body() body: { idToken: string }) {
     return this.authService.loginWithGoogleMobile(body.idToken);
   }
@@ -353,7 +427,10 @@ export class AuthController {
   @ApiOperation({ summary: 'Verify Registration OTP and Create Account' })
   @ApiBody({ type: VerifyEmailOtpDto })
   async verifyRegistrationOtp(@Body() body: VerifyEmailOtpDto) {
-    return this.authService.verifyRegistrationOtp(body.email, body.verificationCode);
+    return this.authService.verifyRegistrationOtp(
+      body.email,
+      body.verificationCode,
+    );
   }
 
   @Post('register/resend-otp')
@@ -364,5 +441,48 @@ export class AuthController {
   @ApiBody({ type: ResendEmailOtpDto })
   async resendRegistrationOtp(@Body() body: ResendEmailOtpDto) {
     return this.authService.resendRegistrationOtp(body.email);
+  }
+
+  @Post('2fa/verify-login')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Complete login with 2FA code' })
+  async verify2FALogin(@Body() body: { userId: string; code: string }) {
+    const data = await this.authService.verify2FALogin(body.userId, body.code);
+    return { success: true, ...data };
+  }
+
+  @Post('2fa/setup')
+  @UseGuards(AuthGuard('jwt'))
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Request 2FA setup OTP' })
+  async setup2FA(@Request() req: any) {
+    const userId = req.user?.sub || req.user?._id || req.user?.id;
+    const data = await this.authService.setup2FARequest(userId);
+    return { success: true, ...data };
+  }
+
+  @Post('2fa/verify-setup')
+  @UseGuards(AuthGuard('jwt'))
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Verify 2FA setup OTP and enable 2FA' })
+  async verify2FASetup(@Request() req: any, @Body() body: { code: string }) {
+    const userId = req.user?.sub || req.user?._id || req.user?.id;
+    const data = await this.authService.verify2FASetup(userId, body.code);
+    return { success: true, ...data };
+  }
+
+  @Post('2fa/disable')
+  @UseGuards(AuthGuard('jwt'))
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Disable 2FA (sends confirmation code if no code provided)',
+  })
+  async disable2FA(@Request() req: any, @Body() body: { code?: string }) {
+    const userId = req.user?.sub || req.user?._id || req.user?.id;
+    const data = await this.authService.disable2FA(userId, body.code || '');
+    return { success: true, ...data };
   }
 }

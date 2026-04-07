@@ -14,6 +14,7 @@ import {
   HttpStatus,
   HttpCode,
   Request,
+  Body,
 } from '@nestjs/common';
 import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import { ApiTags, ApiOperation, ApiResponse, ApiBody, ApiBearerAuth, ApiParam, ApiQuery, ApiConsumes } from '@nestjs/swagger';
@@ -24,6 +25,7 @@ import { diskStorage } from 'multer';
 import { extname, join } from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { MediaPurpose, MediaVisibility } from '../media/media.types';
+import { TranscriptionService } from '../transcription/transcription.service';
 
 /**
  * Shared logic for determining upload destination
@@ -69,7 +71,10 @@ const commonMulterOptions = {
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth('JWT-auth')
 export class UploadController {
-  constructor(private readonly uploadService: UploadService) {}
+  constructor(
+    private readonly uploadService: UploadService,
+    private readonly transcriptionService: TranscriptionService
+  ) {}
 
   /**
    * Upload d'un seul fichier
@@ -224,7 +229,7 @@ export class UploadController {
 
     const userId = req?.user?._id || req?.user?.sub;
     const result = await this.uploadService.processUploadedFile(file, file.filename, { userId });
-    
+
     return {
       assetId: result.assetId,
       filename: result.filename,
@@ -253,6 +258,7 @@ export class UploadController {
   async uploadVideo(
     @UploadedFile() file: Express.Multer.File,
     @Request() req: any,
+    @Body() body?: { chapterId?: string; courseId?: string; language?: 'ar'|'fr'|'en'|'auto' }
   ): Promise<UploadResponseDto> {
     if (!file) {
       throw new BadRequestException('Aucune vidéo fournie');
@@ -275,6 +281,16 @@ export class UploadController {
     
     const result = await this.uploadService.processUploadedFile(file, file.filename, { userId });
     
+    if (body?.chapterId && body?.courseId) {
+      const videoStorageKey = `video/${result.filename}`;
+      this.transcriptionService.triggerTranscription(
+        body.chapterId,
+        body.courseId,
+        videoStorageKey,
+        body.language || 'auto'
+      ).catch(err => console.error('Transcription error:', err));
+    }
+
     console.log('✅ [VIDEO UPLOAD ENDPOINT] Upload processed successfully');
     console.log('   🔗 Generated URL:', result.url);
     console.log('   📝 Filename:', result.filename);

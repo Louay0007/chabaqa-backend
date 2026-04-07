@@ -1,4 +1,10 @@
-import { Injectable, UnauthorizedException, BadRequestException, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  Optional,
+  UnauthorizedException,
+  BadRequestException,
+  Logger,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -8,13 +14,22 @@ import { User, UserDocument, AuthProvider } from '../schema/user.schema';
 import { LoginDto } from '../dto-user/login.dto';
 import { LoginResponseDto } from '../dto-user/login-response.dto';
 import { EmailService } from '../common/services/email.service';
-import { VerificationCode, VerificationCodeDocument } from '../schema/verification-code.schema';
+import {
+  VerificationCode,
+  VerificationCodeDocument,
+} from '../schema/verification-code.schema';
 import { UserLoginActivityService } from '../user-login-activity/user-login-activity.service';
 import { RegisterDto } from '../dto-user/register.dto';
 import { UploadService } from '../upload/upload.service';
 import { generateUniqueUsername } from '../common/utils/username.util';
 import { TokenBlacklistService } from '../common/services/token-blacklist.service';
-import { getJwtRefreshSecret, getJwtSecret } from '../common/utils/security-config.util';
+import {
+  getJwtRefreshSecret,
+  getJwtSecret,
+} from '../common/utils/security-config.util';
+import { GdprService } from '../gdpr/gdpr.service';
+import { ContactActivityService } from '../contact-activity/contact-activity.service';
+import { ContactActivityType } from '../schema/contact-activity.schema';
 
 type RegistrationRole = 'user' | 'creator';
 
@@ -67,10 +82,14 @@ export class AuthService {
     private userLoginActivityService: UserLoginActivityService,
     private uploadService: UploadService,
     private tokenBlacklistService: TokenBlacklistService,
-  ) { }
+    @Optional() private readonly gdprService?: GdprService,
+    @Optional() private readonly contactActivityService?: ContactActivityService,
+  ) {}
 
   private normalizeEmail(email: string): string {
-    return String(email || '').trim().toLowerCase();
+    return String(email || '')
+      .trim()
+      .toLowerCase();
   }
 
   private normalizeName(name: string): string {
@@ -97,7 +116,9 @@ export class AuthService {
       username: (user as any).username,
       email: user.email,
       role: user.role,
-      avatar: this.uploadService.ensureAbsoluteUrl(user.profile_picture || user.photo_profil || ''),
+      avatar: this.uploadService.ensureAbsoluteUrl(
+        user.profile_picture || user.photo_profil || '',
+      ),
       createdAt: user.createdAt,
       authProvider: (user as any).authProvider || 'local',
       hasLocalPassword: (user as any).hasLocalPassword !== false,
@@ -136,9 +157,16 @@ export class AuthService {
     let user = await this.userModel.findOne({ email: normalizedEmail });
 
     if (!user) {
-      const candidateName = this.normalizeName(String(oauthUser.name || 'Google User'));
-      const passwordHash = await this.hashPassword(`google:${oauthUser.providerId}:${Date.now()}`);
-      const username = await generateUniqueUsername(this.userModel, candidateName);
+      const candidateName = this.normalizeName(
+        String(oauthUser.name || 'Google User'),
+      );
+      const passwordHash = await this.hashPassword(
+        `google:${oauthUser.providerId}:${Date.now()}`,
+      );
+      const username = await generateUniqueUsername(
+        this.userModel,
+        candidateName,
+      );
       user = await this.userModel.create({
         name: candidateName,
         username,
@@ -148,17 +176,26 @@ export class AuthService {
         authProvider: AuthProvider.GOOGLE,
         hasLocalPassword: false,
       });
+      // Record consent for new Google signups
+      if (this.gdprService) {
+        await this.gdprService
+          .recordSignupConsents(user._id.toString())
+          .catch(() => {});
+      }
     }
 
     const tokens = this.generateTokens(user, true);
 
-    await this.userLoginActivityService.trackUserLoginForAllCommunities(user._id.toString());
+    await this.userLoginActivityService.trackUserLoginForAllCommunities(
+      user._id.toString(),
+    );
 
     return this.buildAuthPayload(user, tokens, 'Connexion réussie avec Google');
   }
 
   async loginWithGoogleMobile(idToken: string): Promise<LoginResponseDto> {
-    const googleAuthClientId = process.env.GOOGLE_AUTH_CLIENT_ID || process.env.GOOGLE_CLIENT_ID;
+    const googleAuthClientId =
+      process.env.GOOGLE_AUTH_CLIENT_ID || process.env.GOOGLE_CLIENT_ID;
     const client = new OAuth2Client(googleAuthClientId);
     const ticket = await client.verifyIdToken({
       idToken,
@@ -182,7 +219,10 @@ export class AuthService {
     const normalizedEmail = this.normalizeEmail(email);
     const escapedEmail = normalizedEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-    let user = await this.userModel.findOne({ email: normalizedEmail }).select('+password').exec();
+    let user = await this.userModel
+      .findOne({ email: normalizedEmail })
+      .select('+password')
+      .exec();
     if (!user) {
       user = await this.userModel
         .findOne({ email: { $regex: `^${escapedEmail}$`, $options: 'i' } })
@@ -202,14 +242,19 @@ export class AuthService {
     return user as UserDocument;
   }
 
-  private generateTokens(user: UserDocument, rememberMe = false): UserTokenPair {
+  private generateTokens(
+    user: UserDocument,
+    rememberMe = false,
+  ): UserTokenPair {
     const currentTime = Date.now();
     const accessTokenId = `${user._id}-access-${currentTime}`;
     const refreshTokenId = `${user._id}-refresh-${currentTime}`;
     const accessExpiresIn = rememberMe ? '4h' : '2h';
     const refreshExpiresIn = rememberMe ? '30d' : '7d';
     const accessExpiresInSeconds = rememberMe ? 4 * 60 * 60 : 2 * 60 * 60;
-    const refreshExpiresInSeconds = rememberMe ? 30 * 24 * 60 * 60 : 7 * 24 * 60 * 60;
+    const refreshExpiresInSeconds = rememberMe
+      ? 30 * 24 * 60 * 60
+      : 7 * 24 * 60 * 60;
     const payload = {
       sub: user._id,
       email: user.email,
@@ -255,7 +300,9 @@ export class AuthService {
   async revokeToken(token: string): Promise<void> {
     const parsed = token?.trim();
     if (!parsed) return;
-    const payload: any = this.jwtService.verify(parsed, { secret: getJwtSecret() });
+    const payload: any = this.jwtService.verify(parsed, {
+      secret: getJwtSecret(),
+    });
     if (!payload?.sub) return;
     await this.tokenBlacklistService.revokeTokenFromJWT(
       new Types.ObjectId(payload.sub),
@@ -267,7 +314,9 @@ export class AuthService {
   async revokeRefreshToken(token: string): Promise<void> {
     const parsed = token?.trim();
     if (!parsed) return;
-    const payload: any = this.jwtService.verify(parsed, { secret: getJwtRefreshSecret() });
+    const payload: any = this.jwtService.verify(parsed, {
+      secret: getJwtRefreshSecret(),
+    });
     if (!payload?.sub) return;
     await this.tokenBlacklistService.revokeTokenFromJWT(
       new Types.ObjectId(payload.sub),
@@ -278,13 +327,17 @@ export class AuthService {
 
   async revokeAllTokensForUser(userId: string): Promise<void> {
     if (!Types.ObjectId.isValid(userId)) return;
-    await this.tokenBlacklistService.revokeAllUserTokens(new Types.ObjectId(userId));
+    await this.tokenBlacklistService.revokeAllUserTokens(
+      new Types.ObjectId(userId),
+    );
   }
 
   async revokeAllTokensFromAccessToken(token: string): Promise<void> {
     const parsed = token?.trim();
     if (!parsed) return;
-    const payload: any = this.jwtService.verify(parsed, { secret: getJwtSecret() });
+    const payload: any = this.jwtService.verify(parsed, {
+      secret: getJwtSecret(),
+    });
     const userId = payload?.sub ? String(payload.sub) : '';
     if (!userId) return;
     await this.revokeAllTokensForUser(userId);
@@ -293,7 +346,9 @@ export class AuthService {
   async revokeAllTokensFromRefreshToken(token: string): Promise<void> {
     const parsed = token?.trim();
     if (!parsed) return;
-    const payload: any = this.jwtService.verify(parsed, { secret: getJwtRefreshSecret() });
+    const payload: any = this.jwtService.verify(parsed, {
+      secret: getJwtRefreshSecret(),
+    });
     const userId = payload?.sub ? String(payload.sub) : '';
     if (!userId) return;
     await this.revokeAllTokensForUser(userId);
@@ -304,7 +359,10 @@ export class AuthService {
       secret: getJwtRefreshSecret(),
     });
     const tokenId = payload?.jti || `${payload?.sub}-${payload?.iat}`;
-    const isRevoked = await this.tokenBlacklistService.isTokenRevoked(tokenId, String(payload?.sub || ''));
+    const isRevoked = await this.tokenBlacklistService.isTokenRevoked(
+      tokenId,
+      String(payload?.sub || ''),
+    );
     if (isRevoked) {
       throw new UnauthorizedException('Token de rafraîchissement révoqué');
     }
@@ -313,10 +371,191 @@ export class AuthService {
 
   async login(loginDto: LoginDto): Promise<UserAuthPayload> {
     const user = await this.validateUser(loginDto.email, loginDto.password);
+
+    // Check if 2FA is enabled for this user
+    if (user.twoFactorEnabled) {
+      // Send OTP email
+      const otpCode = this.generateOtpCode();
+      const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+      await this.verificationCodeModel.deleteMany({
+        userId: user._id,
+        type: '2fa_login',
+        isUsed: false,
+      });
+
+      await this.verificationCodeModel.create({
+        userId: user._id,
+        email: user.email,
+        code: otpCode,
+        type: '2fa_login',
+        expiresAt,
+        isUsed: false,
+        rememberMe: Boolean(loginDto.remember_me),
+      });
+
+      await this.emailService.send2FACode(user.email, otpCode, user.name);
+
+      return {
+        requires2FA: true,
+        message: '2FA code sent to your email.',
+        userId: user._id.toString(),
+      } as any;
+    }
+
     const tokens = this.generateTokens(user, !!loginDto.remember_me);
-    await this.userLoginActivityService.trackUserLoginForAllCommunities(user._id.toString());
+    await this.userLoginActivityService.trackUserLoginForAllCommunities(
+      user._id.toString(),
+    );
+
+    this.recordLoginActivity(user._id.toString()).catch(() => undefined);
 
     return this.buildAuthPayload(user, tokens, 'Connexion réussie');
+  }
+
+  async verify2FALogin(userId: string, code: string): Promise<UserAuthPayload> {
+    const user = await this.userModel.findById(userId).exec();
+    if (!user) throw new UnauthorizedException('User not found');
+
+    const record = await this.verificationCodeModel.findOne({
+      userId: new Types.ObjectId(userId),
+      code: code.trim(),
+      type: '2fa_login',
+      isUsed: false,
+      expiresAt: { $gt: new Date() },
+    });
+
+    if (!record) {
+      throw new UnauthorizedException('Invalid or expired 2FA code');
+    }
+
+    const rememberMe = record.rememberMe || false;
+    await this.verificationCodeModel.deleteMany({
+      userId: new Types.ObjectId(userId),
+      type: '2fa_login',
+    });
+
+    const tokens = this.generateTokens(user, rememberMe);
+    await this.userLoginActivityService.trackUserLoginForAllCommunities(
+      user._id.toString(),
+    );
+
+    return this.buildAuthPayload(user, tokens, '2FA verification successful');
+  }
+
+  async setup2FARequest(userId: string): Promise<{ message: string }> {
+    const user = await this.userModel.findById(userId).exec();
+    if (!user) throw new UnauthorizedException('User not found');
+
+    if (user.twoFactorEnabled) {
+      throw new BadRequestException('2FA is already enabled');
+    }
+
+    const otpCode = this.generateOtpCode();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+    await this.verificationCodeModel.deleteMany({
+      userId: new Types.ObjectId(userId),
+      type: '2fa',
+    });
+
+    await this.verificationCodeModel.create({
+      userId: new Types.ObjectId(userId),
+      email: user.email,
+      code: otpCode,
+      type: '2fa',
+      expiresAt,
+      isUsed: false,
+    });
+
+    await this.emailService.send2FACode(user.email, otpCode, user.name);
+
+    return { message: '2FA setup code sent to your email' };
+  }
+
+  async verify2FASetup(
+    userId: string,
+    code: string,
+  ): Promise<{ message: string }> {
+    const user = await this.userModel.findById(userId).exec();
+    if (!user) throw new UnauthorizedException('User not found');
+
+    const record = await this.verificationCodeModel.findOne({
+      userId: new Types.ObjectId(userId),
+      code: code.trim(),
+      type: '2fa',
+      isUsed: false,
+      expiresAt: { $gt: new Date() },
+    });
+
+    if (!record) {
+      throw new UnauthorizedException('Invalid or expired code');
+    }
+
+    await this.verificationCodeModel.deleteMany({
+      userId: new Types.ObjectId(userId),
+      type: '2fa',
+    });
+
+    user.twoFactorEnabled = true;
+    await user.save();
+
+    return { message: '2FA enabled successfully' };
+  }
+
+  async disable2FA(userId: string, code: string): Promise<{ message: string }> {
+    const user = await this.userModel.findById(userId).exec();
+    if (!user) throw new UnauthorizedException('User not found');
+
+    if (!user.twoFactorEnabled) {
+      throw new BadRequestException('2FA is not enabled');
+    }
+
+    // Send confirmation OTP first (then user calls this with the received code)
+    // If code is provided, verify it; otherwise send code
+    if (!code) {
+      const otpCode = this.generateOtpCode();
+      const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+      await this.verificationCodeModel.deleteMany({
+        userId: new Types.ObjectId(userId),
+        type: '2fa',
+      });
+
+      await this.verificationCodeModel.create({
+        userId: new Types.ObjectId(userId),
+        email: user.email,
+        code: otpCode,
+        type: '2fa',
+        expiresAt,
+        isUsed: false,
+      });
+
+      await this.emailService.send2FACode(user.email, otpCode, user.name);
+      return { message: 'Confirmation code sent to your email' };
+    }
+
+    const record = await this.verificationCodeModel.findOne({
+      userId: new Types.ObjectId(userId),
+      code: code.trim(),
+      type: '2fa',
+      isUsed: false,
+      expiresAt: { $gt: new Date() },
+    });
+
+    if (!record) {
+      throw new UnauthorizedException('Invalid or expired code');
+    }
+
+    await this.verificationCodeModel.deleteMany({
+      userId: new Types.ObjectId(userId),
+      type: '2fa',
+    });
+
+    user.twoFactorEnabled = false;
+    await user.save();
+
+    return { message: '2FA disabled successfully' };
   }
 
   async refreshToken(refreshToken: string): Promise<UserRefreshPayload> {
@@ -357,7 +596,10 @@ export class AuthService {
     }
   }
 
-  async logout(accessToken?: string, refreshToken?: string): Promise<{ message: string; revokedTokens: number }> {
+  async logout(
+    accessToken?: string,
+    refreshToken?: string,
+  ): Promise<{ message: string; revokedTokens: number }> {
     let revokedCount = 0;
 
     try {
@@ -385,13 +627,20 @@ export class AuthService {
   }
 
   async getUserById(userId: string): Promise<UserDocument | null> {
-    const user = await this.userModel.findById(userId).select('-password').exec();
+    const user = await this.userModel
+      .findById(userId)
+      .select('-password')
+      .exec();
     if (!user) return null;
 
     const userObject = user.toObject();
 
-    const normalizedPhotoProfil = this.uploadService.ensureAbsoluteUrl(userObject.photo_profil || '');
-    const normalizedProfilePicture = this.uploadService.ensureAbsoluteUrl(userObject.profile_picture || '');
+    const normalizedPhotoProfil = this.uploadService.ensureAbsoluteUrl(
+      userObject.photo_profil || '',
+    );
+    const normalizedProfilePicture = this.uploadService.ensureAbsoluteUrl(
+      userObject.profile_picture || '',
+    );
     const normalizedAvatar = this.uploadService.ensureAbsoluteUrl(
       userObject.profile_picture || userObject.photo_profil || '',
     );
@@ -413,13 +662,22 @@ export class AuthService {
   private async savePendingRegistration(
     registerDto: RegisterDto,
     role: RegistrationRole,
-  ): Promise<{ email: string; code: string; name: string; expiresInMinutes: number }> {
+  ): Promise<{
+    email: string;
+    code: string;
+    name: string;
+    expiresInMinutes: number;
+  }> {
     const normalizedEmail = this.normalizeEmail(registerDto.email);
     const normalizedName = this.normalizeName(registerDto.name);
 
-    const existingUser = await this.userModel.findOne({ email: normalizedEmail }).lean();
+    const existingUser = await this.userModel
+      .findOne({ email: normalizedEmail })
+      .lean();
     if (existingUser) {
-      throw new BadRequestException('Un utilisateur avec cet email existe déjà.');
+      throw new BadRequestException(
+        'Un utilisateur avec cet email existe déjà.',
+      );
     }
 
     const verificationCode = this.generateOtpCode();
@@ -461,11 +719,22 @@ export class AuthService {
   async requestRegistrationOtp(
     registerDto: RegisterDto,
     role: RegistrationRole = 'user',
-  ): Promise<{ success: boolean; message: string; email: string; expiresInMinutes: number }> {
-    const { email, code, name, expiresInMinutes } = await this.savePendingRegistration(registerDto, role);
+  ): Promise<{
+    success: boolean;
+    message: string;
+    email: string;
+    expiresInMinutes: number;
+  }> {
+    const { email, code, name, expiresInMinutes } =
+      await this.savePendingRegistration(registerDto, role);
     this.logger.log(`OTP d'inscription généré pour ${email} (${role})`);
 
-    await this.emailService.sendRegistrationOtpEmail(email, code, name, expiresInMinutes);
+    await this.emailService.sendRegistrationOtpEmail(
+      email,
+      code,
+      name,
+      expiresInMinutes,
+    );
 
     return {
       success: true,
@@ -475,13 +744,24 @@ export class AuthService {
     };
   }
 
-  async resendRegistrationOtp(email: string): Promise<{ success: boolean; message: string; email: string; expiresInMinutes: number }> {
+  async resendRegistrationOtp(email: string): Promise<{
+    success: boolean;
+    message: string;
+    email: string;
+    expiresInMinutes: number;
+  }> {
     const normalizedEmail = this.normalizeEmail(email);
-    this.logger.log(`Demande de renvoi OTP d'inscription pour ${normalizedEmail}`);
+    this.logger.log(
+      `Demande de renvoi OTP d'inscription pour ${normalizedEmail}`,
+    );
 
-    const existingUser = await this.userModel.findOne({ email: normalizedEmail }).lean();
+    const existingUser = await this.userModel
+      .findOne({ email: normalizedEmail })
+      .lean();
     if (existingUser) {
-      throw new BadRequestException('Ce compte est déjà vérifié. Veuillez vous connecter.');
+      throw new BadRequestException(
+        'Ce compte est déjà vérifié. Veuillez vous connecter.',
+      );
     }
 
     const pendingRecord = await this.verificationCodeModel
@@ -494,7 +774,9 @@ export class AuthService {
       .lean();
 
     if (!pendingRecord?.metadata) {
-      throw new BadRequestException('Aucune demande d\'inscription en attente pour cet email.');
+      throw new BadRequestException(
+        "Aucune demande d'inscription en attente pour cet email.",
+      );
     }
 
     const metadata = pendingRecord.metadata as PendingRegistrationMetadata;
@@ -536,7 +818,12 @@ export class AuthService {
   async verifyRegistrationOtp(
     email: string,
     verificationCode: string,
-  ): Promise<{ success: boolean; message: string; user?: any; error?: string }> {
+  ): Promise<{
+    success: boolean;
+    message: string;
+    user?: any;
+    error?: string;
+  }> {
     const normalizedEmail = this.normalizeEmail(email);
     const normalizedCode = String(verificationCode || '').trim();
 
@@ -549,7 +836,11 @@ export class AuthService {
     });
 
     if (!verificationRecord || !verificationRecord.metadata) {
-      return { success: false, error: 'Code de vérification invalide ou expiré.', message: '' };
+      return {
+        success: false,
+        error: 'Code de vérification invalide ou expiré.',
+        message: '',
+      };
     }
 
     const metadata = verificationRecord.metadata as PendingRegistrationMetadata;
@@ -557,12 +848,15 @@ export class AuthService {
     if (!metadata.passwordHash || !metadata.name || !metadata.email) {
       return {
         success: false,
-        error: 'Données d\'inscription invalides. Veuillez recommencer le processus.',
+        error:
+          "Données d'inscription invalides. Veuillez recommencer le processus.",
         message: '',
       };
     }
 
-    const existingUser = await this.userModel.findOne({ email: normalizedEmail }).lean();
+    const existingUser = await this.userModel
+      .findOne({ email: normalizedEmail })
+      .lean();
     if (existingUser) {
       await this.verificationCodeModel.deleteMany({
         email: normalizedEmail,
@@ -570,12 +864,16 @@ export class AuthService {
       });
       return {
         success: false,
-        error: 'Un utilisateur avec cet email existe déjà. Veuillez vous connecter.',
+        error:
+          'Un utilisateur avec cet email existe déjà. Veuillez vous connecter.',
         message: '',
       };
     }
 
-    const username = await generateUniqueUsername(this.userModel, this.normalizeName(metadata.name));
+    const username = await generateUniqueUsername(
+      this.userModel,
+      this.normalizeName(metadata.name),
+    );
 
     const newUser = await this.userModel.create({
       name: this.normalizeName(metadata.name),
@@ -591,6 +889,12 @@ export class AuthService {
       email: normalizedEmail,
       type: 'email_verification',
     });
+    // Record GDPR consent for terms + privacy on signup
+    if (this.gdprService) {
+      await this.gdprService
+        .recordSignupConsents(newUser._id.toString())
+        .catch(() => {});
+    }
     this.logger.log(`Email vérifié et compte créé pour ${normalizedEmail}`);
 
     return {
@@ -607,12 +911,17 @@ export class AuthService {
     };
   }
 
-  async forgotPassword(email: string): Promise<{ success: boolean; message?: string; error?: string }> {
+  async forgotPassword(
+    email: string,
+  ): Promise<{ success: boolean; message?: string; error?: string }> {
     const normalizedEmail = this.normalizeEmail(email);
     const user = await this.userModel.findOne({ email: normalizedEmail });
 
     if (!user) {
-      return { success: false, error: 'Aucun utilisateur trouvé avec cet email.' };
+      return {
+        success: false,
+        error: 'Aucun utilisateur trouvé avec cet email.',
+      };
     }
 
     const resetCode = this.generateOtpCode();
@@ -634,9 +943,17 @@ export class AuthService {
       isUsed: false,
     });
 
-    await this.emailService.sendPasswordResetEmail(user.email, resetCode, user.name, expiresInMinutes);
+    await this.emailService.sendPasswordResetEmail(
+      user.email,
+      resetCode,
+      user.name,
+      expiresInMinutes,
+    );
 
-    return { success: true, message: 'Code de réinitialisation envoyé par email.' };
+    return {
+      success: true,
+      message: 'Code de réinitialisation envoyé par email.',
+    };
   }
 
   async resetPassword(
@@ -647,7 +964,10 @@ export class AuthService {
     const normalizedEmail = this.normalizeEmail(email);
     const user = await this.userModel.findOne({ email: normalizedEmail });
     if (!user) {
-      return { success: false, error: 'Aucun utilisateur trouvé avec cet email.' };
+      return {
+        success: false,
+        error: 'Aucun utilisateur trouvé avec cet email.',
+      };
     }
 
     const verificationRecord = await this.verificationCodeModel.findOne({
@@ -659,7 +979,10 @@ export class AuthService {
     });
 
     if (!verificationRecord) {
-      return { success: false, error: 'Code de réinitialisation invalide ou expiré.' };
+      return {
+        success: false,
+        error: 'Code de réinitialisation invalide ou expiré.',
+      };
     }
 
     user.password = await this.hashPassword(newPassword);
@@ -676,11 +999,39 @@ export class AuthService {
     return { success: true, message: 'Mot de passe réinitialisé avec succès.' };
   }
 
-  async register(registerDto: RegisterDto): Promise<{ success: boolean; message: string; email?: string; expiresInMinutes?: number }> {
+  async register(registerDto: RegisterDto): Promise<{
+    success: boolean;
+    message: string;
+    email?: string;
+    expiresInMinutes?: number;
+  }> {
     return this.requestRegistrationOtp(registerDto, 'user');
   }
 
-  async registerCreator(registerDto: RegisterDto): Promise<{ success: boolean; message: string; email?: string; expiresInMinutes?: number }> {
+  async registerCreator(registerDto: RegisterDto): Promise<{
+    success: boolean;
+    message: string;
+    email?: string;
+    expiresInMinutes?: number;
+  }> {
     return this.requestRegistrationOtp(registerDto, 'creator');
+  }
+
+  private async recordLoginActivity(userId: string): Promise<void> {
+    if (!this.contactActivityService) return;
+    try {
+      // Get all communities the user belongs to and record login activity for each
+      const activities = await this.userLoginActivityService.getUserCommunities(userId).catch(() => []);
+      for (const communityId of activities) {
+        await this.contactActivityService.record({
+          communityId,
+          userId,
+          type: ContactActivityType.LOGIN,
+          metadata: {},
+        });
+      }
+    } catch {
+      // fire-and-forget, never throw
+    }
   }
 }
