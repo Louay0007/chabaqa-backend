@@ -24,6 +24,7 @@ import { TokenBlacklistService } from '../common/services/token-blacklist.servic
 import { UserLoginActivityModule } from '../user-login-activity/user-login-activity.module';
 import { UploadModule } from '../upload/upload.module';
 import { GdprModule } from '../gdpr/gdpr.module';
+import { ContactActivityModule } from '../contact-activity/contact-activity.module';
 import { getJwtSecret } from '../common/utils/security-config.util';
 
 @Module({
@@ -45,6 +46,7 @@ import { getJwtSecret } from '../common/utils/security-config.util';
     UserLoginActivityModule,
     UploadModule,
     GdprModule,
+    ContactActivityModule,
   ],
   controllers: [AuthController],
   providers: [

@@ -10,8 +10,8 @@ export enum EmailTemplateCategory {
   CUSTOM = 'custom',
 }
 
-@Schema({ timestamps: true })
-export class EmailTemplate {
+@Schema({ timestamps: true, collection: 'crm_email_templates' })
+export class CrmEmailTemplate {
   @Prop({ required: true, type: Types.ObjectId, ref: 'Community', index: true })
   communityId: Types.ObjectId;
 
@@ -46,6 +46,11 @@ export class EmailTemplate {
   updatedAt: Date;
 }
 
-export interface EmailTemplateDocument extends EmailTemplate, Document {}
+export interface EmailTemplateDocument extends CrmEmailTemplate, Document {}
 
-export const EmailTemplateSchema = SchemaFactory.createForClass(EmailTemplate);
+export const CrmEmailTemplateSchema = SchemaFactory.createForClass(CrmEmailTemplate);
+
+// Keep backward compat alias
+export const EmailTemplate = CrmEmailTemplate;
+export const EmailTemplateSchema = CrmEmailTemplateSchema;
+

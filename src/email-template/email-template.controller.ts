@@ -3,7 +3,7 @@ import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { IsArray, IsBoolean, IsEnum, IsOptional, IsString } from 'class-validator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CommunityPermissionGuard } from '../community-access/community-permission.guard';
-import { RequireCommunityPermission } from '../community-access/community-permission.decorator';
+import { RequireCommunityPermission, CommunityIdFrom } from '../community-access/community-permission.decorator';
 import { CommunityPermission } from '../common/permissions';
 import { EmailTemplateService } from './email-template.service';
 import { EmailTemplateCategory } from '../schema/email-template.schema';
@@ -99,6 +99,7 @@ export class EmailTemplateController {
   @Put(':id')
   @UseGuards(CommunityPermissionGuard)
   @RequireCommunityPermission(CommunityPermission.MARKETING_MANAGE)
+  @CommunityIdFrom({ type: 'entity', modelName: 'CrmEmailTemplate', paramName: 'id' })
   @ApiOperation({ summary: 'Update email template' })
   update(@Param('id') id: string, @Body() dto: UpdateEmailTemplateDto) {
     return this.templateService.update(id, dto);
@@ -107,6 +108,7 @@ export class EmailTemplateController {
   @Delete(':id')
   @UseGuards(CommunityPermissionGuard)
   @RequireCommunityPermission(CommunityPermission.MARKETING_MANAGE)
+  @CommunityIdFrom({ type: 'entity', modelName: 'CrmEmailTemplate', paramName: 'id' })
   @ApiOperation({ summary: 'Delete email template' })
   async delete(@Param('id') id: string) {
     await this.templateService.delete(id);
@@ -116,8 +118,11 @@ export class EmailTemplateController {
   @Post(':id/use')
   @UseGuards(CommunityPermissionGuard)
   @RequireCommunityPermission(CommunityPermission.MARKETING_MANAGE)
+  @CommunityIdFrom({ type: 'entity', modelName: 'CrmEmailTemplate', paramName: 'id' })
   @ApiOperation({ summary: 'Increment usage count and return template' })
   use(@Param('id') id: string) {
     return this.templateService.incrementUsage(id);
   }
 }
+
+

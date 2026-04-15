@@ -4,7 +4,7 @@ import { IsArray, IsOptional, IsString, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CommunityPermissionGuard } from '../community-access/community-permission.guard';
-import { RequireCommunityPermission } from '../community-access/community-permission.decorator';
+import { RequireCommunityPermission, CommunityIdFrom } from '../community-access/community-permission.decorator';
 import { CommunityPermission } from '../common/permissions';
 import { AudienceSegmentService } from './audience-segment.service';
 import { SegmentFilter } from '../schema/audience-segment.schema';
@@ -51,6 +51,7 @@ export class AudienceSegmentController {
   @Post(':id/evaluate')
   @UseGuards(CommunityPermissionGuard)
   @RequireCommunityPermission(CommunityPermission.MARKETING_MANAGE)
+  @CommunityIdFrom({ type: 'entity', modelName: 'AudienceSegment', paramName: 'id' })
   @ApiOperation({ summary: 'Evaluate segment and return matching count + sample' })
   async evaluate(@Param('id') id: string) {
     const userIds = await this.segmentService.evaluate(id);
@@ -61,6 +62,7 @@ export class AudienceSegmentController {
   @Delete(':id')
   @UseGuards(CommunityPermissionGuard)
   @RequireCommunityPermission(CommunityPermission.MARKETING_MANAGE)
+  @CommunityIdFrom({ type: 'entity', modelName: 'AudienceSegment', paramName: 'id' })
   @ApiOperation({ summary: 'Delete an audience segment' })
   async delete(@Param('id') id: string) {
     await this.segmentService.delete(id);

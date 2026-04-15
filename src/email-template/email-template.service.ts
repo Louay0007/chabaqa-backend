@@ -1,12 +1,12 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { EmailTemplate, EmailTemplateDocument, EmailTemplateCategory } from '../schema/email-template.schema';
+import { CrmEmailTemplate, EmailTemplateDocument, EmailTemplateCategory } from '../schema/email-template.schema';
 
 @Injectable()
 export class EmailTemplateService {
   constructor(
-    @InjectModel(EmailTemplate.name)
+    @InjectModel(CrmEmailTemplate.name)
     private readonly templateModel: Model<EmailTemplateDocument>,
   ) {}
 
@@ -56,7 +56,7 @@ export class EmailTemplateService {
     return template;
   }
 
-  async update(id: string, patch: Partial<Pick<EmailTemplate, 'name' | 'category' | 'subject' | 'content' | 'thumbnail' | 'variables'>>): Promise<EmailTemplateDocument> {
+  async update(id: string, patch: Partial<Pick<CrmEmailTemplate, 'name' | 'category' | 'subject' | 'content' | 'thumbnail' | 'variables'>>): Promise<EmailTemplateDocument> {
     const template = await this.templateModel.findByIdAndUpdate(id, { $set: patch }, { new: true });
     if (!template) throw new NotFoundException('Template not found');
     return template;

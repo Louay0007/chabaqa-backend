@@ -8,6 +8,8 @@ import {
   IsUrl,
   ArrayMaxSize,
   ValidateNested,
+  IsEnum,
+  IsDateString,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
@@ -158,4 +160,21 @@ export class CreatePostDto {
   @ValidateNested({ each: true })
   @Type(() => PostLinkDto)
   links?: PostLinkDto[];
+
+  @ApiPropertyOptional({
+    description: 'Mode de publication: "publish" pour immédiat, "schedule" pour planifié',
+    example: 'schedule',
+    enum: ['publish', 'schedule'],
+  })
+  @IsEnum(['publish', 'schedule'], { message: 'publishMode must be "publish" or "schedule"' })
+  @IsOptional()
+  publishMode?: 'publish' | 'schedule';
+
+  @ApiPropertyOptional({
+    description: 'Date et heure de publication planifiée (ISO 8601). Requis si publishMode est "schedule".',
+    example: '2026-04-20T10:00:00.000Z',
+  })
+  @IsDateString({}, { message: 'scheduledAt must be a valid ISO 8601 date string' })
+  @IsOptional()
+  scheduledAt?: string;
 }

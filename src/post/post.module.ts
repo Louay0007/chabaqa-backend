@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { PostService } from './post.service';
 import { PostController } from './post.controller';
+import { PostScheduler } from './post.scheduler';
 import { Post, PostSchema } from '../schema/post.schema';
 import { Community, CommunitySchema } from '../schema/community.schema';
 import { User, UserSchema } from '../schema/user.schema';
@@ -23,7 +24,7 @@ import { GamificationModule } from '../gamification/gamification.module';
     GamificationModule,
   ],
   controllers: [PostController],
-  providers: [PostService],
+  providers: [PostService, PostScheduler],
   exports: [PostService],
 })
 export class PostModule {}

@@ -169,6 +169,28 @@ export class Post {
   isPublished: boolean;
 
   /**
+   * Statut de publication du post
+   */
+  @Prop({
+    type: String,
+    enum: ['published', 'scheduled', 'draft'],
+    default: 'published',
+  })
+  status: 'published' | 'scheduled' | 'draft';
+
+  /**
+   * Date à laquelle le post doit être publié automatiquement
+   */
+  @Prop({ type: Date })
+  scheduledAt?: Date;
+
+  /**
+   * Date effective de publication du post
+   */
+  @Prop({ type: Date, default: null })
+  publishedAt?: Date;
+
+  /**
    * Nombre de likes du post
    */
   @Prop({
@@ -385,6 +407,9 @@ export interface PostDocument extends Document {
   communityId: string;
   authorId: Types.ObjectId;
   isPublished: boolean;
+  status: 'published' | 'scheduled' | 'draft';
+  scheduledAt?: Date;
+  publishedAt?: Date;
   likes: number;
   shareCount: number;
   comments: PostComment[];
@@ -442,6 +467,9 @@ PostSchema.index({ authorId: 1, isPublished: 1 });
 PostSchema.index({ tags: 1 });
 PostSchema.index({ likes: -1 });
 PostSchema.index({ 'comments.userId': 1 });
+// Scheduled posts indexes
+PostSchema.index({ status: 1, scheduledAt: 1 });
+PostSchema.index({ communityId: 1, status: 1 });
 
 // Middleware pour générer l'ID unique avant sauvegarde
 PostSchema.pre('save', function (next) {

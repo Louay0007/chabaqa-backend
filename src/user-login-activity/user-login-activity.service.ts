@@ -96,6 +96,14 @@ export class UserLoginActivityService {
    * Track user login for all communities they're member of
    * Call this after successful authentication
    */
+  async getUserCommunities(userId: string): Promise<string[]> {
+    const userCommunities = await this.communityModel
+      .find({ members: new Types.ObjectId(userId) })
+      .select('_id')
+      .lean();
+    return userCommunities.map((c) => c._id.toString());
+  }
+
   async trackUserLoginForAllCommunities(userId: string): Promise<void> {
     try {
       // Get all communities where user is a member

@@ -913,4 +913,59 @@ export class PostController {
     const stats = await this.postService.getPostStats(postId, effectiveUserId);
     return { success: true, data: stats };
   }
+
+  // ============= SCHEDULED POSTS ENDPOINTS =============
+
+  @Get('scheduled/:communityId')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get all scheduled posts for a community' })
+  @ApiResponse({ status: 200, description: 'Scheduled posts retrieved successfully', type: [PostResponseDto] })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  async getScheduledPosts(
+    @Param('communityId') communityId: string,
+    @Request() req,
+  ): Promise<{ success: boolean; data: PostResponseDto[] }> {
+    const userId = this.resolveRequestUserId(req);
+    if (!userId) throw new UnauthorizedException();
+    const posts = await this.postService.getScheduledPosts(communityId, userId);
+    return { success: true, data: posts };
+  }
+
+  @Patch(':id/schedule')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Reschedule a scheduled post to a new date/time' })
+  @ApiResponse({ status: 200, description: 'Post rescheduled successfully', type: PostResponseDto })
+  @ApiResponse({ status: 400, description: 'Invalid date or post not scheduled' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Post not found' })
+  async reschedulePost(
+    @Param('id') postId: string,
+    @Body() body: { scheduledAt: string },
+    @Request() req,
+  ): Promise<{ success: boolean; data: PostResponseDto }> {
+    const userId = this.resolveRequestUserId(req);
+    if (!userId) throw new UnauthorizedException();
+    const post = await this.postService.reschedulePost(postId, body.scheduledAt, userId);
+    return { success: true, data: post };
+  }
+
+  @Delete(':id/schedule')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Cancel a scheduled post (reverts to draft)' })
+  @ApiResponse({ status: 200, description: 'Scheduled post cancelled successfully' })
+  @ApiResponse({ status: 400, description: 'Post is not scheduled' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Post not found' })
+  async cancelScheduledPost(
+    @Param('id') postId: string,
+    @Request() req,
+  ): Promise<{ success: boolean; message: string }> {
+    const userId = this.resolveRequestUserId(req);
+    if (!userId) throw new UnauthorizedException();
+    await this.postService.cancelScheduledPost(postId, userId);
+    return { success: true, message: 'Scheduled post cancelled successfully' };
+  }
 }

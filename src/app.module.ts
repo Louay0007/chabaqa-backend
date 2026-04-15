@@ -115,8 +115,6 @@ import {
   ConsentRecordSchema,
 } from './schema/consent-record.schema';
 import { UserSession, UserSessionSchema } from './schema/user-session.schema';
-import { EmailSuppressionModule } from './email-suppression/email-suppression.module';
-import { EmailDeliverabilityModule } from './email-deliverability/email-deliverability.module';
 
 @Module({
   imports: [

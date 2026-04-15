@@ -100,7 +100,7 @@ export class ContactImportController {
         );
 
         // Try to find a userId by email
-        const user = await this.userModel.findOne({ email }).select('_id').lean();
+        const user = await this.userModel.findOne({ email }).select('_id').lean() as any;
         if (user) {
           await this.activityService.record({
             communityId,
@@ -135,7 +135,7 @@ export class ContactImportController {
       .lean();
 
     const userIds = activities.map((a) => a.userId);
-    const users = await this.userModel.find({ _id: { $in: userIds } }).select('email name').lean();
+    const users = await this.userModel.find({ _id: { $in: userIds } }).select('email name').lean() as any[];
     const userMap = new Map(users.map((u) => [u._id.toString(), u]));
 
     const leads = await this.leadModel
@@ -163,8 +163,8 @@ export class ContactImportController {
 
     const csv = header + rows.join('\n');
 
-    res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', `attachment; filename="contacts-${communityId}.csv"`);
-    res.status(200).send(csv);
+    res!.setHeader('Content-Type', 'text/csv');
+    res!.setHeader('Content-Disposition', `attachment; filename="contacts-${communityId}.csv"`);
+    res!.status(200).send(csv);
   }
 }

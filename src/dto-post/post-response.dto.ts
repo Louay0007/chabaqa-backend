@@ -273,6 +273,25 @@ export class PostResponseDto {
     example: '2024-02-10T10:00:00.000Z'
   })
   updatedAt: string;
+
+  @ApiPropertyOptional({
+    description: 'Statut de publication du post',
+    example: 'published',
+    enum: ['published', 'scheduled', 'draft'],
+  })
+  status?: 'published' | 'scheduled' | 'draft';
+
+  @ApiPropertyOptional({
+    description: 'Date de publication planifiée (ISO 8601)',
+    example: '2026-04-20T10:00:00.000Z',
+  })
+  scheduledAt?: string;
+
+  @ApiPropertyOptional({
+    description: 'Date effective de publication',
+    example: '2026-04-20T10:00:00.000Z',
+  })
+  publishedAt?: string;
 }
 
 /**

@@ -376,7 +376,12 @@ export class PostService {
       thumbnail: createPostDto.thumbnail,
       communityId: createPostDto.communityId,
       authorId: authorObjectId,
-      isPublished: true, // Toujours publié directement
+      isPublished: createPostDto.publishMode === 'schedule' ? false : true,
+      status: createPostDto.publishMode === 'schedule' ? 'scheduled' : 'published',
+      scheduledAt: createPostDto.publishMode === 'schedule' && createPostDto.scheduledAt
+        ? new Date(createPostDto.scheduledAt)
+        : undefined,
+      publishedAt: createPostDto.publishMode === 'schedule' ? null : new Date(),
       likes: 0,
       shareCount: 0,
       comments: [],
@@ -411,27 +416,31 @@ export class PostService {
       authorEmail: (populatedPost!.authorId as any)?.email,
     });
 
-    // Gamification: post created
-    if (this.gamificationService) {
-      this.gamificationService
-        .recordEvent({
-          eventType: GamificationEventType.POST_CREATED,
-          actorUserId: userId,
-          communityId: createPostDto.communityId,
-          sourceType: 'post',
-          sourceId: savedPost.id || savedPost._id.toString(),
-        })
-        .catch((err) => console.error('Gamification post_created error:', err));
-    }
+    // Only run notifications and gamification for immediately published posts
+    const isScheduled = createPostDto.publishMode === 'schedule';
+    if (!isScheduled) {
+      // Gamification: post created
+      if (this.gamificationService) {
+        this.gamificationService
+          .recordEvent({
+            eventType: GamificationEventType.POST_CREATED,
+            actorUserId: userId,
+            communityId: createPostDto.communityId,
+            sourceType: 'post',
+            sourceId: savedPost.id || savedPost._id.toString(),
+          })
+          .catch((err) => console.error('Gamification post_created error:', err));
+      }
 
-    await this.notifyMentionedUsers({
-      actorUserId: userId,
-      postId: savedPost.id,
-      communityId: savedPost.communityId,
-      content: savedPost.content,
-      community,
-      resolvedMentionedUserIds: savedPost.mentionedUserIds,
-    });
+      await this.notifyMentionedUsers({
+        actorUserId: userId,
+        postId: savedPost.id,
+        communityId: savedPost.communityId,
+        content: savedPost.content,
+        community,
+        resolvedMentionedUserIds: savedPost.mentionedUserIds,
+      });
+    }
 
     return await this.transformToResponseDto(populatedPost!, community);
   }
@@ -457,7 +466,7 @@ export class PostService {
       search,
     });
 
-    const query: any = { isPublished: true };
+    const query: any = { isPublished: true, status: { $ne: 'scheduled' } };
 
     // Filtres
     if (communityId) {
@@ -707,6 +716,165 @@ export class PostService {
 
     await this.postModel.deleteOne({ _id: post._id });
     return { message: 'Post supprimé avec succès' };
+  }
+
+  // ============= SCHEDULED POSTS METHODS =============
+
+  /**
+   * Get scheduled posts for a community (creator only)
+   */
+  async getScheduledPosts(communityId: string, creatorId: string): Promise<PostResponseDto[]> {
+    const community = await this.communityModel.findById(communityId);
+    if (!community) {
+      throw new NotFoundException('Communauté non trouvée');
+    }
+
+    // Only the creator can see all scheduled posts; members can only see their own
+    const isCreator = community.createur.toString() === creatorId;
+    const query: any = { communityId, status: 'scheduled' };
+    if (!isCreator) {
+      query.authorId = new Types.ObjectId(creatorId);
+    }
+
+    const posts = await this.postModel
+      .find(query)
+      .sort({ scheduledAt: 1 })
+      .populate('authorId', 'name email profile_picture photo_profil')
+      .exec();
+
+    return Promise.all(posts.map((p) => this.transformToResponseDto(p, community)));
+  }
+
+  /**
+   * Cancel a scheduled post (revert to draft)
+   */
+  async cancelScheduledPost(postId: string, userId: string): Promise<void> {
+    const post = await this.resolvePostByIdentifier(postId);
+    if (!post) throw new NotFoundException('Post non trouvé');
+
+    if ((post as any).status !== 'scheduled') {
+      throw new BadRequestException('Only scheduled posts can be cancelled');
+    }
+
+    const community = await this.communityModel.findById(post.communityId);
+    const isCreator = community && community.createur.toString() === userId;
+    const isAuthor = post.authorId.toString() === userId;
+
+    if (!isCreator && !isAuthor) {
+      throw new ForbiddenException('Vous ne pouvez annuler que vos propres posts planifiés');
+    }
+
+    await this.postModel.updateOne(
+      { _id: post._id },
+      { $set: { status: 'draft', isPublished: false, scheduledAt: null } },
+    );
+  }
+
+  /**
+   * Reschedule (change the scheduledAt time) of a scheduled post
+   */
+  async reschedulePost(postId: string, scheduledAt: string, userId: string): Promise<PostResponseDto> {
+    const post = await this.resolvePostByIdentifier(postId);
+    if (!post) throw new NotFoundException('Post non trouvé');
+
+    if ((post as any).status !== 'scheduled') {
+      throw new BadRequestException('Only scheduled posts can be rescheduled');
+    }
+
+    const isAuthor = post.authorId.toString() === userId;
+    const community = await this.communityModel.findById(post.communityId);
+    const isCreator = community && community.createur.toString() === userId;
+
+    if (!isAuthor && !isCreator) {
+      throw new ForbiddenException('Vous ne pouvez modifier que vos propres posts planifiés');
+    }
+
+    const newDate = new Date(scheduledAt);
+    const minDate = new Date(Date.now() + 5 * 60 * 1000);
+    const maxDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+
+    if (newDate < minDate) {
+      throw new BadRequestException('scheduledAt must be at least 5 minutes in the future');
+    }
+    if (newDate > maxDate) {
+      throw new BadRequestException('scheduledAt cannot be more than 30 days in the future');
+    }
+
+    await this.postModel.updateOne({ _id: post._id }, { $set: { scheduledAt: newDate } });
+
+    const updated = await this.postModel
+      .findById(post._id)
+      .populate('authorId', 'name email profile_picture photo_profil')
+      .exec();
+    return this.transformToResponseDto(updated!, community || undefined);
+  }
+
+  /**
+   * Called by the CRON scheduler every minute — publishes any due scheduled posts
+   */
+  async publishDuePosts(): Promise<void> {
+    const now = new Date();
+    const duePosts = await this.postModel
+      .find({ status: 'scheduled', scheduledAt: { $lte: now } })
+      .exec();
+
+    if (duePosts.length === 0) return;
+
+    this.logger.log(`[POST-SCHEDULER] Publishing ${duePosts.length} due post(s)`);
+
+    for (const post of duePosts) {
+      try {
+        await this.postModel.updateOne(
+          { _id: post._id },
+          { $set: { status: 'published', isPublished: true, publishedAt: now } },
+        );
+
+        const community = await this.communityModel.findById(post.communityId);
+
+        // Trigger gamification + notifications as if it were freshly published
+        if (this.gamificationService) {
+          this.gamificationService
+            .recordEvent({
+              eventType: GamificationEventType.POST_CREATED,
+              actorUserId: post.authorId.toString(),
+              communityId: post.communityId,
+              sourceType: 'post',
+              sourceId: post.id || post._id.toString(),
+            })
+            .catch((err) => this.logError('Gamification scheduled post error:', err));
+        }
+
+        if (community) {
+          await this.notifyMentionedUsers({
+            actorUserId: post.authorId.toString(),
+            postId: post.id,
+            communityId: post.communityId,
+            content: post.content,
+            community,
+          });
+        }
+
+        // Notify the post author that their scheduled post was published
+        try {
+          await this.notificationService.createNotification({
+            recipient: post.authorId.toString(),
+            sender: post.authorId.toString(),
+            type: 'system',
+            title: 'Your scheduled post has been published',
+            body: post.title
+              ? `"${post.title}" is now live in your community.`
+              : 'Your scheduled post is now live in your community.',
+            data: { postId: post.id, communityId: post.communityId },
+          });
+        } catch (notifErr) {
+          this.logError('Failed to notify author about scheduled post publish:', notifErr);
+        }
+
+        this.logger.log(`[POST-SCHEDULER] Published post ${post.id}`);
+      } catch (err) {
+        this.logError(`[POST-SCHEDULER] Failed to publish post ${post.id}:`, err);
+      }
+    }
   }
 
   /**
@@ -1662,6 +1830,9 @@ export class PostService {
           role: authorRole,
         },
         isPublished: post.isPublished,
+        status: (post as any).status || 'published',
+        scheduledAt: (post as any).scheduledAt ? (post as any).scheduledAt.toISOString() : undefined,
+        publishedAt: (post as any).publishedAt ? (post as any).publishedAt.toISOString() : undefined,
         likes: post.likes || 0,
         reactions: this.buildReactionsResponse(post, userId),
         isLikedByUser,
@@ -1718,6 +1889,9 @@ export class PostService {
           profile_picture: '',
         },
         isPublished: post.isPublished || false,
+        status: (post as any).status || 'published',
+        scheduledAt: (post as any).scheduledAt ? (post as any).scheduledAt.toISOString() : undefined,
+        publishedAt: (post as any).publishedAt ? (post as any).publishedAt.toISOString() : undefined,
         likes: post.likes || 0,
         reactions: [],
         isBookmarkedByUser: false,

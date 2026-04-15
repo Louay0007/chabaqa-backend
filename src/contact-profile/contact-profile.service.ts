@@ -62,7 +62,7 @@ export class ContactProfileService {
         type: 'email_open',
         occurredAt: { $gte: thirtyDaysAgo },
       }),
-      this.loginActivityModel.findOne({ communityId: communityOid, userId: userOid }).lean(),
+      this.loginActivityModel.findOne({ communityId: communityOid, userId: userOid }).lean() as Promise<any>,
     ]);
 
     const loginCount = loginActivity?.loginCount ?? 0;
