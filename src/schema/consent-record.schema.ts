@@ -7,6 +7,10 @@ export enum ConsentType {
   MARKETING = 'marketing',
   ANALYTICS = 'analytics',
   COOKIES = 'cookies',
+  // CCPA-specific consent types
+  CCPA_OPT_OUT = 'ccpa_opt_out',
+  CCPA_DO_NOT_SELL = 'ccpa_do_not_sell',
+  CALIFORNIA_RESIDENT = 'california_resident',
 }
 
 export interface ConsentRecordDocument extends Document {

@@ -115,6 +115,8 @@ import {
   ConsentRecordSchema,
 } from './schema/consent-record.schema';
 import { UserSession, UserSessionSchema } from './schema/user-session.schema';
+import { SSOModule } from './sso/sso.module';
+import { DataResidencyModule } from './data-residency/data-residency.module';
 
 @Module({
   imports: [
@@ -226,6 +228,8 @@ import { UserSession, UserSessionSchema } from './schema/user-session.schema';
     AudienceSegmentModule,
     EmailTemplateModule,
     ContactImportModule,
+    SSOModule,
+    DataResidencyModule,
   ],
   controllers: [
     AppController,
