@@ -117,6 +117,8 @@ import {
 import { UserSession, UserSessionSchema } from './schema/user-session.schema';
 import { SSOModule } from './sso/sso.module';
 import { DataResidencyModule } from './data-residency/data-residency.module';
+import { ApiKeyModule } from './api-key/api-key.module';
+import { WebhookModule } from './webhook/webhook.module';
 
 @Module({
   imports: [
@@ -230,6 +232,8 @@ import { DataResidencyModule } from './data-residency/data-residency.module';
     ContactImportModule,
     SSOModule,
     DataResidencyModule,
+    ApiKeyModule,
+    WebhookModule,
   ],
   controllers: [
     AppController,
