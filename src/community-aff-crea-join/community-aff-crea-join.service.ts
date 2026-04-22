@@ -928,7 +928,7 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
   async getAllCommunities(): Promise<any[]> {
     try {
       const communities = await this.communityModel
-        .find({ isActive: true, isPrivate: false })
+        .find({ isActive: true })
         .populate('createur', 'name email profile_picture photo_profil avatar photo')
         .populate('members', 'name email profile_picture photo_profil avatar photo')
         .populate('admins', 'name email profile_picture photo_profil avatar photo')

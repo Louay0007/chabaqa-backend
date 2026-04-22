@@ -8,6 +8,7 @@ import { join } from 'path';
 
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { SeedTunisianUsers } from './common/scripts/seed-tunisian-users';
 import { User, UserSchema } from './schema/user.schema';
 import { VerificationCode, VerificationCodeSchema } from './schema/verification-code.schema';
 import { RevokedToken, RevokedTokenSchema } from './schema/revoked-token.schema';
@@ -183,6 +184,7 @@ import { PaymentAuditLog, PaymentAuditLogSchema } from './schema/payment-audit-l
     PromoService,
     FeeService,
     ManualPaymentService,
+    SeedTunisianUsers,
   ],
   exports: [EmailService],
 })

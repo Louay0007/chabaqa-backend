@@ -1,6 +1,6 @@
 import { IsString, IsEmail, MinLength, IsOptional, IsDateString, IsEnum, IsUrl, ValidateNested } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Type, Transform } from 'class-transformer';
 import { UpdateUserSocialLinksDto } from './update-user-social-links.dto';
 
 export class UpdateUserDto {
@@ -123,6 +123,7 @@ export class UpdateUserDto {
     format: 'uri'
   })
   @IsOptional()
+  @Transform(({ value }) => (value === '' || value === undefined ? undefined : value))
   @IsUrl({ require_protocol: true }, { message: 'Le lien Instagram doit être une URL valide (http/https)' })
   readonly lien_instagram?: string;
 
