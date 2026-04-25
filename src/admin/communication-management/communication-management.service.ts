@@ -27,10 +27,10 @@ import { NotificationService } from '../../notification/notification.service';
 import { AuditLogService } from '../common/services/audit-log.service';
 import { AdminAction } from '../schemas/audit-log.schema';
 import {
-  CreateEmailCampaignDto,
+  AdminCreateEmailCampaignDto,
   AudienceTargetType,
 } from './dto/create-email-campaign.dto';
-import { UpdateEmailCampaignDto } from './dto/update-email-campaign.dto';
+import { AdminUpdateEmailCampaignDto } from './dto/update-email-campaign.dto';
 import { BulkMessageDto, MessageChannel } from './dto/bulk-message.dto';
 import {
   CampaignFiltersDto,
@@ -48,8 +48,8 @@ import {
   CommunicationAnalyticsQueryDto,
 } from './dto/communication-analytics.dto';
 import {
-  CreateEmailTemplateDto,
-  UpdateEmailTemplateDto,
+  AdminCreateEmailTemplateDto,
+  AdminUpdateEmailTemplateDto,
   TestEmailTemplateDto,
 } from './dto/email-template.dto';
 
@@ -77,7 +77,7 @@ export class CommunicationManagementService {
    * Create email campaign with template selection and audience targeting
    */
   async createEmailCampaign(
-    dto: CreateEmailCampaignDto,
+    dto: AdminCreateEmailCampaignDto,
     adminId: string,
     ipAddress: string,
     userAgent: string,
@@ -312,7 +312,7 @@ export class CommunicationManagementService {
    */
   async updateCampaign(
     id: string,
-    dto: UpdateEmailCampaignDto,
+    dto: AdminUpdateEmailCampaignDto,
     adminId: string,
     ipAddress: string,
     userAgent: string,
@@ -1037,7 +1037,7 @@ export class CommunicationManagementService {
   /**
    * Helper: Get target audience for email campaign
    */
-  private async getTargetAudience(dto: CreateEmailCampaignDto): Promise<any[]> {
+  private async getTargetAudience(dto: AdminCreateEmailCampaignDto): Promise<any[]> {
     const query: any = {};
 
     switch (dto.audienceTarget) {
@@ -1250,7 +1250,7 @@ export class CommunicationManagementService {
    * Create email template
    */
   async createEmailTemplate(
-    dto: CreateEmailTemplateDto,
+    dto: AdminCreateEmailTemplateDto,
     adminId: string,
     ipAddress: string,
     userAgent: string,
@@ -1372,7 +1372,7 @@ export class CommunicationManagementService {
    */
   async updateEmailTemplate(
     id: string,
-    dto: UpdateEmailTemplateDto,
+    dto: AdminUpdateEmailTemplateDto,
     adminId: string,
     ipAddress: string,
     userAgent: string,

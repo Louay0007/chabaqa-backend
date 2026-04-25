@@ -95,6 +95,11 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
         { $unset: { inviteCode: '', inviteLink: '' } },
       );
 
+      await collection.updateMany(
+        { inviteCode: '' },
+        { $unset: { inviteCode: '', inviteLink: '' } },
+      );
+
       const indexes = await collection.indexes();
       const inviteIndex = indexes.find(
         (index: any) =>
@@ -110,7 +115,7 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
         Boolean(inviteIndex) &&
         inviteIndex.unique === true &&
         partial.$type === 'string' &&
-        partial.$ne === '';
+        partial.$exists === true;
 
       if (
         inviteIndex &&
@@ -127,7 +132,7 @@ export class CommunityAffCreaJoinService implements OnModuleInit {
             name: 'inviteCode_1',
             unique: true,
             partialFilterExpression: {
-              inviteCode: { $type: 'string', $ne: '' },
+              inviteCode: { $exists: true, $type: 'string' },
             },
           },
         );

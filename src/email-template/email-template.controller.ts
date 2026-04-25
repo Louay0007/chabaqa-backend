@@ -8,7 +8,7 @@ import { CommunityPermission } from '../common/permissions';
 import { EmailTemplateService } from './email-template.service';
 import { EmailTemplateCategory } from '../schema/email-template.schema';
 
-class CreateEmailTemplateDto {
+class CommunityCreateEmailTemplateDto {
   @IsString()
   communityId: string;
 
@@ -39,7 +39,7 @@ class CreateEmailTemplateDto {
   isGlobal?: boolean;
 }
 
-class UpdateEmailTemplateDto {
+class CommunityUpdateEmailTemplateDto {
   @IsOptional()
   @IsString()
   name?: string;
@@ -76,7 +76,7 @@ export class EmailTemplateController {
   @UseGuards(CommunityPermissionGuard)
   @RequireCommunityPermission(CommunityPermission.MARKETING_MANAGE)
   @ApiOperation({ summary: 'Create email template' })
-  create(@Request() req, @Body() dto: CreateEmailTemplateDto) {
+  create(@Request() req, @Body() dto: CommunityCreateEmailTemplateDto) {
     return this.templateService.create(req.user._id, dto);
   }
 
@@ -101,7 +101,7 @@ export class EmailTemplateController {
   @RequireCommunityPermission(CommunityPermission.MARKETING_MANAGE)
   @CommunityIdFrom({ type: 'entity', modelName: 'CrmEmailTemplate', paramName: 'id' })
   @ApiOperation({ summary: 'Update email template' })
-  update(@Param('id') id: string, @Body() dto: UpdateEmailTemplateDto) {
+  update(@Param('id') id: string, @Body() dto: CommunityUpdateEmailTemplateDto) {
     return this.templateService.update(id, dto);
   }
 
@@ -124,5 +124,4 @@ export class EmailTemplateController {
     return this.templateService.incrementUsage(id);
   }
 }
-
 

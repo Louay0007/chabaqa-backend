@@ -31,7 +31,7 @@ export enum AudienceTargetType {
   USER_ROLE = 'user_role',
 }
 
-export class CreateEmailCampaignDto {
+export class AdminCreateEmailCampaignDto {
   @ApiProperty({
     description: 'Campaign title',
     example: 'Welcome to Our Platform',

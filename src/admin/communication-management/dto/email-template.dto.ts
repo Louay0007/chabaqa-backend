@@ -21,7 +21,7 @@ export enum TemplateCategory {
   CUSTOM = 'custom',
 }
 
-export class CreateEmailTemplateDto {
+export class AdminCreateEmailTemplateDto {
   @ApiProperty({
     description: 'Template name',
     example: 'Welcome Email',
@@ -108,7 +108,7 @@ export class CreateEmailTemplateDto {
   metadata?: Record<string, any>;
 }
 
-export class UpdateEmailTemplateDto {
+export class AdminUpdateEmailTemplateDto {
   @ApiPropertyOptional({
     description: 'Template name',
     example: 'Welcome Email',

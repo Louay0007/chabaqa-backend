@@ -23,8 +23,8 @@ import { AdminAuthGuard } from '../common/guards/admin-auth.guard';
 import { AdminRolesGuard } from '../common/guards/admin-roles.guard';
 import { RequireAdminRoles } from '../common/decorators/admin-roles.decorator';
 import { AdminRole } from '../schemas/admin-user.schema';
-import { CreateEmailCampaignDto } from './dto/create-email-campaign.dto';
-import { UpdateEmailCampaignDto } from './dto/update-email-campaign.dto';
+import { AdminCreateEmailCampaignDto } from './dto/create-email-campaign.dto';
+import { AdminUpdateEmailCampaignDto } from './dto/update-email-campaign.dto';
 import { BulkMessageDto } from './dto/bulk-message.dto';
 import { CampaignFiltersDto } from './dto/campaign-filters.dto';
 import {
@@ -39,8 +39,8 @@ import {
   CommunicationAnalyticsQueryDto,
 } from './dto/communication-analytics.dto';
 import {
-  CreateEmailTemplateDto,
-  UpdateEmailTemplateDto,
+  AdminCreateEmailTemplateDto,
+  AdminUpdateEmailTemplateDto,
   TestEmailTemplateDto,
   TemplateCategory,
 } from './dto/email-template.dto';
@@ -79,7 +79,7 @@ export class CommunicationManagementController {
     description: 'Forbidden - Insufficient permissions',
   })
   async createEmailCampaign(
-    @Body() dto: CreateEmailCampaignDto,
+    @Body() dto: AdminCreateEmailCampaignDto,
     @Req() req,
   ) {
     const adminId = req.user.sub;
@@ -222,7 +222,7 @@ export class CommunicationManagementController {
   })
   async updateCampaign(
     @Param('id') id: string,
-    @Body() dto: UpdateEmailCampaignDto,
+    @Body() dto: AdminUpdateEmailCampaignDto,
     @Req() req: any,
   ) {
     const adminId = req.user.sub;
@@ -697,7 +697,7 @@ export class CommunicationManagementController {
     description: 'Forbidden - Insufficient permissions',
   })
   async createEmailTemplate(
-    @Body() dto: CreateEmailTemplateDto,
+    @Body() dto: AdminCreateEmailTemplateDto,
     @Req() req: any,
   ) {
     const adminId = req.user.sub;
@@ -805,7 +805,7 @@ export class CommunicationManagementController {
   })
   async updateEmailTemplate(
     @Param('id') id: string,
-    @Body() dto: UpdateEmailTemplateDto,
+    @Body() dto: AdminUpdateEmailTemplateDto,
     @Req() req: any,
   ) {
     const adminId = req.user.sub;

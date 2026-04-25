@@ -117,6 +117,18 @@ export class SubscriptionController {
     return this.subscriptionService.reactivateSubscription(creatorId);
   }
 
+  @Post('retry-payment')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Retry payment for a past_due or incomplete subscription' })
+  @ApiResponse({ status: 200, description: 'Payment result returned' })
+  @ApiResponse({ status: 400, description: 'Subscription is not in a retryable state' })
+  @ApiResponse({ status: 404, description: 'Subscription not found' })
+  async retryPayment(@Request() req: any) {
+    const creatorId = req.user._id || req.user.sub;
+    return this.subscriptionService.retryPayment(creatorId);
+  }
+
   // New endpoints for comprehensive subscription management
 
   @Get('stats')

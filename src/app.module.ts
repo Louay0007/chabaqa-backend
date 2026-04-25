@@ -119,6 +119,7 @@ import { SSOModule } from './sso/sso.module';
 import { DataResidencyModule } from './data-residency/data-residency.module';
 import { ApiKeyModule } from './api-key/api-key.module';
 import { WebhookModule } from './webhook/webhook.module';
+import { LiveStreamingModule } from './live-streaming/live-streaming.module';
 
 @Module({
   imports: [
@@ -234,6 +235,7 @@ import { WebhookModule } from './webhook/webhook.module';
     DataResidencyModule,
     ApiKeyModule,
     WebhookModule,
+    LiveStreamingModule,
   ],
   controllers: [
     AppController,

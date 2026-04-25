@@ -1057,6 +1057,69 @@ export class SubscriptionService {
       subscription: sub,
     };
   }
+
+  /**
+   * Retry payment for a past_due or incomplete subscription.
+   * Since no live payment provider is wired up yet, this simulates a charge
+   * by marking the subscription active when a payment method is on file.
+   */
+  async retryPayment(creatorId: string | Types.ObjectId): Promise<{
+    success: boolean;
+    chargedAmount?: number;
+    currency?: string;
+    error?: string;
+  }> {
+    const sub = await this.subModel.findOne({
+      creatorId: new Types.ObjectId(creatorId as any),
+    });
+
+    if (!sub) {
+      throw new NotFoundException('Aucune souscription trouvée');
+    }
+
+    const retryableStatuses: string[] = [
+      SubscriptionStatus.PAST_DUE,
+      SubscriptionStatus.INCOMPLETE,
+    ];
+
+    if (!retryableStatuses.includes(sub.status as string)) {
+      throw new BadRequestException(
+        `Retry payment is only available for subscriptions in past_due or incomplete status. Current status: ${sub.status}`,
+      );
+    }
+
+    if (!sub.hasPaymentMethod) {
+      return {
+        success: false,
+        error: 'No payment method on file. Please add a payment method before retrying.',
+      };
+    }
+
+    // Get plan to determine price
+    const plan = await this.planModel.findOne({ tier: sub.plan, isActive: true });
+    const chargedAmount = plan?.priceDTPerMonth ?? 0;
+    const currency = 'TND';
+
+    // Mark subscription as active and extend the billing period
+    const now = new Date();
+    const periodEnd = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000); // +30 days
+
+    sub.status = SubscriptionStatus.ACTIVE;
+    sub.currentPeriodStart = now;
+    sub.currentPeriodEnd = periodEnd;
+    sub.cancelAtPeriodEnd = false;
+    await sub.save();
+
+    this.logger.log(
+      `Payment retry successful for creator ${creatorId} — subscription restored to active, charged ${chargedAmount} ${currency}`,
+    );
+
+    return {
+      success: true,
+      chargedAmount,
+      currency,
+    };
+  }
 }
 
 

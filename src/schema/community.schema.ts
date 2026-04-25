@@ -863,7 +863,7 @@ CommunitySchema.index(
   {
     unique: true,
     partialFilterExpression: {
-      inviteCode: { $type: 'string', $ne: '' },
+      inviteCode: { $exists: true, $type: 'string' },
     },
   },
 );
@@ -873,7 +873,7 @@ CommunitySchema.index(
     unique: true,
     sparse: true,
     partialFilterExpression: {
-      'settings.customDomain': { $exists: true, $type: 'string', $ne: '' },
+      'settings.customDomain': { $exists: true, $type: 'string' },
     },
     collation: { locale: 'en', strength: 2 },
   },
@@ -889,6 +889,19 @@ CommunitySchema.pre('save', function (next) {
     this.settings.customDomain = this.settings.customDomain
       .trim()
       .toLowerCase();
+
+    if (!this.settings.customDomain) {
+      this.settings.customDomain = undefined as any;
+    }
+  }
+
+  if (typeof this.inviteCode === 'string') {
+    this.inviteCode = this.inviteCode.trim();
+
+    if (!this.inviteCode) {
+      this.inviteCode = undefined as any;
+      this.inviteLink = undefined as any;
+    }
   }
 
   // Génération automatique du slug à partir du nom si pas défini
